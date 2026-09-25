@@ -1,0 +1,60 @@
+# Se copia solo en la primera instalación. Nunca se sobrescriben tus NPC al reiniciar.
+# Cada ID debe ser único: minúsculas, números, _ o -.
+npcs:
+  thurg:
+    enabled: true
+    name: '&2Thurg'
+    name-visible: true
+    location:
+      # El UUID tiene prioridad sobre el nombre. Para usar otro mundo, cambia ambos
+      # o ejecuta /mdvnpc movehere thurg desde el lugar deseado.
+      world: ''
+      world-uuid: 'eafd8793-7fca-495e-9950-68b276c0f21f'
+      x: -12.5
+      y: 205.0
+      z: -90.5
+      yaw: -60.8893
+      pitch: -21.8119
+    skin:
+      name: HAL0_W1ZARD
+      uuid: 'd8947670-ead8-44da-95ec-4dd5e724e9f1'
+      # Textura firmada original: no necesita consultar la skin por nombre.
+      # Para obtener otra skin por nombre, deja texture y signature vacíos.
+      texture: 'ewogICJ0aW1lc3RhbXAiIDogMTc4NDUyNDM0NDgyNSwKICAicHJvZmlsZUlkIiA6ICJkODk0NzY3MGVhZDg0NGRhOTVlYzRkZDVlNzI0ZTlmMSIsCiAgInByb2ZpbGVOYW1lIiA6ICJIQUwwX1cxWkFSRCIsCiAgInNpZ25hdHVyZVJlcXVpcmVkIiA6IHRydWUsCiAgInRleHR1cmVzIiA6IHsKICAgICJTS0lOIiA6IHsKICAgICAgInVybCIgOiAiaHR0cDovL3RleHR1cmVzLm1pbmVjcmFmdC5uZXQvdGV4dHVyZS9lNTk2MzI5MjhmYWJiMzFkNDY3ZjE5MTUyM2Y5ODQzNTgyYTkxMmE0NGQwMWFkYjEwMDYyYTg4ZDA1ZThhY2MyIgogICAgfSwKICAgICJDQVBFIiA6IHsKICAgICAgInVybCIgOiAiaHR0cDovL3RleHR1cmVzLm1pbmVjcmFmdC5uZXQvdGV4dHVyZS8yMzQwYzBlMDNkZDI0YTExYjE1YThiMzNjMmE3ZTllMzJhYmIyMDUxYjI0ODFkMGJhN2RlZmQ2MzVjYTdhOTMzIgogICAgfQogIH0KfQ=='
+      signature: 'E/KY2LyST5ER+LTpU/Gp/51pzKqVgrWxoTy/sk9XZYk3OJlXwdBE5DWnNxxZhlX3xCOfVf+99vHbAJTc8gKnuwo5gehm0X7CYb9EjDZhJbel5QHoat69GTN5sR8GRkI2m2iu8I2U8o5eF4q8JLavPhAJTu/6Lt26WlEtj5o4mecna7bqzaB3/GIoadMDFI4M65fJFLv/cg24ZnHehjdBuVTTZRLXxJ/fE1lnEMgKDGEDCkfNJxWqSTDq6qjZ14ILpgxWwkyT7X2jaLDpR9pknKXNXgjT6mjsX7XGwRzfT0szaXwkkcU1nmkrofiZzfPEVrVBdkwZZeM+voT+wpYL7uoB2r+O8gU/f0yAgk4gRQwfPc2MnOWwzQIkq3k4+8ms8CTX1qIpx9AlSA8BxbPg40d5mVmVs8G+SAOKulChwUGqOcfDTxd1W0x/TuAyq4MJHlb33ZPNL5nRRNRoGgkoCl+rSBnqICK0WoWGep2RPgsdGL+mKrHl91xYxXFcBcgqxWOBRTzz+KJAItiMl+p5iEB6QUipgvQX2eLkqptZSpM5RlAL0nHwxle9y7IYv0tnF5VpTis2EakExO9Ucnarj9yY7E0fJD/JF1kzOwatAco6CNFEp7j7Jgs3tJU3Gq/crsgjrTRpzmR++O1ZS5q+5KxwhsmH2t6a5BDSwLncnJw='
+    look:
+      enabled: true
+      range: 6.0
+      require-line-of-sight: false
+      reset-when-alone: true
+    dialogue:
+      enabled: true
+      range: 6.0
+      # Segundos reales, no ticks. Pausa independiente por NPC y jugador.
+      interval-seconds: 40.0
+      initial-delay-seconds: 2.0
+      random: true
+      require-line-of-sight: false
+      lines:
+        - '&7&l[&6Maestro de los Contratos&7&l] &2Thurg &f» &7Aventurero... ¿buscas contratos? Tengo trabajo para manos capaces.'
+        - '&7&l[&6Maestro de los Contratos&7&l] &2Thurg &f» &7Ah, &e<player>&7... llegas justo a tiempo. Los encargos vuelven a acumularse.'
+        - '&7&l[&6Maestro de los Contratos&7&l] &2Thurg &f» &7Los caminos, los bosques y las cuevas están llenos de problemas. Revisa los contratos.'
+        - '&7&l[&6Maestro de los Contratos&7&l] &2Thurg &f» &7¿Vienes por gloria, recompensa o necesidad? Aquí siempre hay trabajo para un aventurero.'
+        - '&7&l[&6Maestro de los Contratos&7&l] &2Thurg &f» &7No todos regresan de estos encargos. Elige bien y asegúrate de estar preparado.'
+        - '&7&l[&6Maestro de los Contratos&7&l] &2Thurg &f» &7Cumple el contrato y regresa conmigo. Aquí se recompensa el trabajo bien hecho.'
+        - '&7&l[&6Maestro de los Contratos&7&l] &2Thurg &f» &7Las criaturas no descansan, aventurero. Nosotros tampoco podemos hacerlo.'
+        - '&7&l[&6Maestro de los Contratos&7&l] &2Thurg &f» &7El gremio recuerda a quienes cumplen su palabra... y también a quienes abandonan sus encargos.'
+        - '&7&l[&6Maestro de los Contratos&7&l] &2Thurg &f» &7Cada contrato tiene un precio, &e<player>&7. Algunos se pagan con monedas... otros con sangre.'
+        - '&7&l[&6Maestro de los Contratos&7&l] &2Thurg &f» &7Las recompensas esperan a los valientes. Los cobardes solo encuentran excusas.'
+    interaction:
+      range: 6.0
+      cooldown-seconds: 2.0
+      require-line-of-sight: true
+      permission: ''
+      # click: RIGHT, LEFT o BOTH. executor: CONSOLE o PLAYER.
+      # PLAYER conserva los permisos normales del jugador; no le otorga OP.
+      # Sin / inicial. Variables: <p>, <player>, {player}, {uuid}, {npc}, {npc_id}.
+      commands:
+        - click: RIGHT
+          executor: CONSOLE
+          command: 'mdvquest npc <p>'

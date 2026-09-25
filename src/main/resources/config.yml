@@ -1,0 +1,31 @@
+# Purpur 1.21.6 / Java 21 / LibsDisguises 11.0.18
+# Un único reloj compartido; 10 ticks = 2 actualizaciones por segundo a 20 TPS.
+update-interval-ticks: 10
+# No consultar jugadores invisibles ni espectadores para mirada/diálogos/clics.
+ignore-invisible-players: true
+ignore-spectators: true
+# Cambio mínimo de ángulo antes de enviar una rotación nueva.
+rotation-threshold-degrees: 3.0
+messages:
+  prefix: '&8[&2MDVNPC&8] &7'
+  no-permission: '&cNo tienes permiso.'
+  player-only: '&cEste comando requiere un jugador.'
+  reloaded: '&aConfiguración recargada. NPC configurados: &f{count}'
+  saved: '&aNPC &f{npc}&a guardado.'
+  deleted: '&aNPC &f{npc}&a eliminado.'
+  error: '&cNo se pudo completar: &f{error}'
+  not-found: '&cNo existe ese NPC.'
+  list: '&7NPC: &f{npcs}'
+  status: '&7Configurados: &f{count}&7. Activos: &f{active}&7. Intervalo: &f{ticks} ticks&7.'
+  cooldown: '&7Espera &e{seconds}s&7 antes de volver a interactuar.'
+  action-denied: '&cNo tienes permiso para interactuar con este NPC.'
+  help:
+    - '&e/mdvnpc list &7- Ver los NPC.'
+    - '&e/mdvnpc status &7- Ver cuántos están activos.'
+    - '&e/mdvnpc create <id> <skin> [nombre] &7- Crear aquí.'
+    - '&e/mdvnpc movehere <id> &7- Mover aquí.'
+    - '&e/mdvnpc delete <id> &7- Eliminar.'
+    - '&e/mdvnpc rename <id> <nombre> &7- Cambiar nombre.'
+    - '&e/mdvnpc skin <id> <jugador> &7- Cambiar skin.'
+    - '&e/mdvnpc enable <id> <true|false> &7- Activar/desactivar.'
+    - '&e/mdvnpc reload &7- Leer config.yml y npcs.yml.'

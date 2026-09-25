@@ -1,0 +1,16 @@
+name: MDVNPC
+version: '${project.version}'
+main: com.mdvcraft.mdvnpc.MdvNpcPlugin
+api-version: '1.21.6'
+description: NPC estáticos, diálogos y comandos para MDVCRAFT.
+authors: [MDVCRAFT]
+depend: [LibsDisguises]
+softdepend: [MDVQuest]
+commands:
+  mdvnpc:
+    description: Administrar NPC de MDVCRAFT
+    usage: /mdvnpc help
+permissions:
+  mdvnpc.admin:
+    description: Crear, editar, mover, eliminar y recargar NPC
+    default: op
