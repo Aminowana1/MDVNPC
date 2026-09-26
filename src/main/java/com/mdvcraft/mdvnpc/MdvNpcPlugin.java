@@ -3,6 +3,7 @@ package com.mdvcraft.mdvnpc;
 import com.mdvcraft.mdvnpc.command.NpcCommand;
 import com.mdvcraft.mdvnpc.config.Settings;
 import com.mdvcraft.mdvnpc.listener.NpcListener;
+import com.mdvcraft.mdvnpc.integration.WorldGuardSpawnHook;
 import com.mdvcraft.mdvnpc.runtime.NpcManager;
 import com.mdvcraft.mdvnpc.storage.NpcRepository;
 import com.mdvcraft.mdvnpc.model.NpcDefinition;
@@ -26,6 +27,11 @@ public final class MdvNpcPlugin extends JavaPlugin {
             repository = new NpcRepository(getDataFolder().toPath());
             reloadNpcs();
             getServer().getPluginManager().registerEvents(new NpcListener(this), this);
+            if (getServer().getPluginManager().isPluginEnabled("WorldGuard")) {
+                getServer().getPluginManager().registerEvents(new WorldGuardSpawnHook(this), this);
+                getLogger().info("WorldGuard detectado: excepción de mob-spawning/deny-spawn "
+                        + "activada únicamente para NPC propios durante su aparición.");
+            }
             NpcCommand command = new NpcCommand(this);
             Objects.requireNonNull(getCommand("mdvnpc")).setExecutor(command);
             getCommand("mdvnpc").setTabCompleter(command);

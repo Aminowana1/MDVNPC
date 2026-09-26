@@ -6,6 +6,7 @@ import com.mdvcraft.mdvnpc.skin.DisguiseService;
 import org.bukkit.*;
 import org.bukkit.entity.*;
 import org.bukkit.persistence.PersistentDataType;
+import org.bukkit.event.entity.CreatureSpawnEvent;
 import org.bukkit.scheduler.BukkitTask;
 import java.util.*;
 import java.util.logging.Level;
@@ -17,6 +18,10 @@ public final class NpcManager {
     private final DisguiseService skins = new DisguiseService();
     private final Map<String, ActiveNpc> active = new LinkedHashMap<>();
     private final Map<UUID, ActiveNpc> byEntity = new HashMap<>();
+    // A spawn callback marks the entity before it has been inserted in the active map.
+    // Keep it protected from our own stale-entity cleanup until spawn/disguise completes.
+    private final Set<UUID> spawning = new HashSet<>();
+    private final Map<UUID, String> spawnOutcomes = new HashMap<>();
     private final Map<ChunkKey, List<NpcDefinition>> byChunk = new HashMap<>();
     private final Set<ChunkKey> pending = new HashSet<>();
     private Map<String, NpcDefinition> definitions = Map.of();
@@ -45,7 +50,7 @@ public final class NpcManager {
         generation++;
         if (ticker != null) { ticker.cancel(); ticker = null; }
         for (ActiveNpc npc : List.copyOf(active.values())) remove(npc);
-        active.clear(); byEntity.clear(); byChunk.clear(); pending.clear();
+        active.clear(); byEntity.clear(); spawning.clear(); spawnOutcomes.clear(); byChunk.clear(); pending.clear();
         dialogue.clear(); interactions.clear();
     }
     private void indexWorlds() {
@@ -94,8 +99,12 @@ public final class NpcManager {
             return;
         }
         Villager entity = null;
+        UUID[] spawningId = new UUID[1];
+        String stage = "generar la entidad base";
         try {
             entity = world.spawn(anchor, Villager.class, org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason.CUSTOM, villager -> {
+                spawningId[0] = villager.getUniqueId();
+                spawning.add(spawningId[0]);
                 villager.getPersistentDataContainer().set(marker, PersistentDataType.STRING, definition.id());
                 villager.addScoreboardTag("MDVNPC");
                 villager.setAI(false);
@@ -110,14 +119,28 @@ public final class NpcManager {
                 villager.setRemoveWhenFarAway(false);
                 villager.setPersistent(false);
             });
-            if (!entity.isValid()) throw new IllegalStateException("Otro plugin canceló la aparición de la entidad");
+            if (entity == null || !entity.isValid()) {
+                String outcome = spawningId[0] == null ? "no se ejecutó el callback de creación"
+                        : spawnOutcomes.getOrDefault(spawningId[0], "no se observó el estado final de CreatureSpawnEvent");
+                throw new IllegalStateException("El aldeano base no está en el mundo: " + outcome
+                        + ". Comprueba las flags mob-spawning/deny-spawn de WorldGuard en "
+                        + world.getName() + " y los plugins de control de entidades.");
+            }
+            stage = "aplicar el disfraz de LibsDisguises";
             var disguise = skins.apply(entity, definition);
             ActiveNpc npc = new ActiveNpc(definition, anchor, entity, disguise);
             active.put(definition.id(), npc);
             byEntity.put(entity.getUniqueId(), npc);
         } catch (RuntimeException | LinkageError ex) {
             if (entity != null) entity.remove();
-            plugin.getLogger().log(Level.SEVERE, "No se pudo crear NPC " + definition.id() + ". Revisa LibsDisguises y usa /mdvnpc reload.", ex);
+            plugin.getLogger().log(Level.SEVERE, "No se pudo crear NPC " + definition.id() + " en "
+                    + world.getName() + " [" + p.x() + ", " + p.y() + ", " + p.z() + "] al "
+                    + stage + ". /mdvnpc reload solo reintentará la aparición.", ex);
+        } finally {
+            if (spawningId[0] != null) {
+                spawning.remove(spawningId[0]);
+                spawnOutcomes.remove(spawningId[0]);
+            }
         }
     }
     private void remove(ActiveNpc npc) {
@@ -135,7 +158,24 @@ public final class NpcManager {
         }
     }
     public void cleanupLoadedEntities(List<Entity> entities) {
-        for (Entity entity : entities) if (owned(entity) && !byEntity.containsKey(entity.getUniqueId())) entity.remove();
+        for (Entity entity : entities)
+            if (owned(entity) && !spawning.contains(entity.getUniqueId())
+                    && !byEntity.containsKey(entity.getUniqueId())) entity.remove();
+    }
+    /** Solo se reconocen UUID creados por nuestro propio callback de World.spawn. */
+    public boolean isSpawningNpc(Entity entity) {
+        return spawning.contains(entity.getUniqueId()) && owned(entity);
+    }
+    public String pendingNpcId(Entity entity) {
+        if (!isSpawningNpc(entity)) return "(desconocido)";
+        return entity.getPersistentDataContainer().get(marker, PersistentDataType.STRING);
+    }
+    /** Observe only our own in-flight entity, after WG's targeted region exception. */
+    public void observeSpawn(CreatureSpawnEvent event) {
+        UUID id = event.getEntity().getUniqueId();
+        if (!spawning.contains(id)) return;
+        spawnOutcomes.put(id, "CreatureSpawnEvent " + event.getSpawnReason() +
+                (event.isCancelled() ? " CANCELADO al terminar los listeners" : " no cancelado al terminar los listeners"));
     }
     public void entityUnloaded(Entity entity) {
         ActiveNpc npc = byEntity.get(entity.getUniqueId());

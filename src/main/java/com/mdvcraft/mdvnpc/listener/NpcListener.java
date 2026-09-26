@@ -62,6 +62,8 @@ public final class NpcListener implements Listener {
     public void transform(EntityTransformEvent event) { if (plugin.manager().owned(event.getEntity())) event.setCancelled(true); }
     @EventHandler(priority = EventPriority.HIGHEST)
     public void vehicle(VehicleEnterEvent event) { if (plugin.manager().owned(event.getEntered())) event.setCancelled(true); }
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void observeNpcSpawn(CreatureSpawnEvent event) { plugin.manager().observeSpawn(event); }
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void chunkLoad(ChunkLoadEvent event) { plugin.manager().chunkLoaded(event.getChunk()); }
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)

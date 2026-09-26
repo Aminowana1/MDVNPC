@@ -1,4 +1,4 @@
-# MDVNPC 1.0.0
+# MDVNPC 1.0.1
 
 NPC estáticos para MDVCRAFT: skins de jugador con LibsDisguises, mirada, mensajes por proximidad, comandos al hacer clic y persistencia YAML. Proyecto Maven con Java 21, preparado para Purpur 1.21.6 y LibsDisguises 11.0.18.
 
@@ -6,7 +6,7 @@ NPC estáticos para MDVCRAFT: skins de jugador con LibsDisguises, mirada, mensaj
 
 1. Crea un repositorio y sube **el contenido de esta carpeta**, incluyendo `.github/workflows/build.yml`. `pom.xml` debe quedar en la raíz del repositorio.
 2. Abre **Actions → Compilar MDVNPC**. El workflow corre con cada push; también permite **Run workflow**.
-3. Cuando termine, descarga el artefacto **MDVNPC-1.0.0**. Descomprímelo y usa `MDVNPC-1.0.0.jar`.
+3. Cuando termine, descarga el artefacto **MDVNPC-1.0.1**. Descomprímelo y usa `MDVNPC-1.0.1.jar`.
 
 Compilación local con JDK 21 y Maven 3.9 o superior:
 
@@ -14,13 +14,13 @@ Compilación local con JDK 21 y Maven 3.9 o superior:
 mvn --batch-mode --no-transfer-progress clean verify
 ```
 
-El JAR aparece en `target/MDVNPC-1.0.0.jar`. Las dependencias de servidor usan `provided`: no se empaquetan Paper, LibsDisguises ni PacketEvents dentro de MDVNPC. La API de PacketEvents se declara para compilar las firmas de LibsDisguises; MDVNPC no registra listeners de paquetes propios.
+El JAR aparece en `target/MDVNPC-1.0.1.jar`. Las dependencias de servidor usan `provided`: no se empaquetan Paper, LibsDisguises ni PacketEvents dentro de MDVNPC. La API de PacketEvents se declara para compilar las firmas de LibsDisguises; MDVNPC no registra listeners de paquetes propios.
 
 ## Instalación y Thurg
 
 1. Apaga el servidor. Conserva una copia de la carpeta de Citizens.
 2. Retira Citizens si ningún otro plugin lo necesita; si lo conservas, elimina o desactiva su Thurg para no ver dos NPC superpuestos.
-3. Copia `MDVNPC-1.0.0.jar` a `plugins/`. Conserva LibsDisguises 11.0.18 y la versión de PacketEvents compatible con tu instalación de LibsDisguises. MDVQuest debe estar instalado para que funcione el comando de Thurg.
+3. Copia `MDVNPC-1.0.1.jar` a `plugins/`. Conserva LibsDisguises 11.0.18 y la versión de PacketEvents compatible con tu instalación de LibsDisguises. MDVQuest debe estar instalado para que funcione el comando de Thurg.
 4. Inicia el servidor normalmente con Java 21. No uses gestores de carga en caliente para instalar el JAR.
 5. Acércate a **-12.5, 205, -90.5**, en el mundo con UUID **eafd8793-7fca-495e-9950-68b276c0f21f**.
 
@@ -122,3 +122,64 @@ com.mdvcraft.mdvnpc
 Después de instalar: comprueba la skin desde un cliente, mirada, saludo, clic derecho y pausa; reinicia y vuelve al NPC; aléjate lo suficiente para descargar su zona y regresa. Repite con dos jugadores y verifica que cada uno abre su propio menú. Para comparar rendimiento, toma perfiles de Spark con la misma cantidad de jugadores y la misma ubicación. Las pruebas automáticas no sustituyen esta comprobación visual y de integración con tu conjunto de plugins.
 
 Referencias de integración: [API de LibsDisguises](https://libraryaddict.github.io/LibsDisguises/javadoc/me/libraryaddict/disguise/disguisetypes/PlayerDisguise.html), [PacketEvents para Maven](https://docs.packetevents.com/introduction/development-setup/), [evento de ataque de Paper 1.21.6](https://jd.papermc.io/paper/1.21.6/io/papermc/paper/event/player/PrePlayerAttackEntityEvent.html).
+
+## Diagnóstico de aldeano que no aparece (1.0.1)
+
+La marca `mdvnpc:npc-id` se añade en el callback de `world.spawn`, antes de que el NPC esté
+registrado en `byEntity`. La limpieza de entidades propias ahora excluye los UUID que se
+están creando, evitando que un `EntitiesLoadEvent` reentrante borre nuestro NPC.
+
+Si el NPC sigue sin aparecer, MDVNPC muestra la etapa concreta y el estado observado de
+`CreatureSpawnEvent`. Si figura `CANCELADO`, revisa primero las regiones de WorldGuard
+(`mob-spawning`, `deny-spawn`) y plugins que impidan generar aldeanos. La observación
+no puede identificar automáticamente al plugin que lo canceló. No se fuerzan apariciones
+contra las protecciones de otros plugins ni se alteran las flags del servidor.
+
+Para aislar una región problemática, prueba `/mdvnpc movehere <id-de-prueba>` fuera
+de la región protegida, comprueba `/mdvnpc status`, y vuelve a ubicarlo cuando termines.
+
+## Integración específica con WorldGuard (1.0.2)
+
+**Sin cambiar las flags de WorldGuard:** con WorldGuard presente, MDVNPC carga después de él
+(`softdepend`) e instala `integration/WorldGuardSpawnHook`. En el callback de creación, la entidad
+base ya está marcada con PDC `mdvnpc:npc-id`, y su UUID está anotado temporalmente en el
+conjunto `spawning`. El hook solamente reconoce esos aldeanos, con motivo `CUSTOM`.
+
+WorldGuard aplica normalmente `mob-spawning` y `deny-spawn` a `CreatureSpawnEvent` en prioridad
+`HIGH`; el hook inspecciona el estado efectivo de ambas flags a través de la API pública
+`ApplicableRegionSet` y, si una bloquea al aldeano, deshace la cancelación solamente para
+ese evento propio en prioridad `HIGHEST`. En `LOWEST` se registra si el evento ya estaba
+cancelado: en ese caso, la excepción no lo modifica. No se cambia `mob-spawning`,
+`deny-spawn`, `build`, `interact`, permisos, miembros, regiones, configuraciones globales ni
+el spawning de otros plugins.
+
+- Compatible con regiones superpuestas, prioridades, herencia y `__global__` mediante la
+  consulta de flags **efectivas** de WorldGuard. No hay IDs de región codificados.
+- Si no se encuentra WorldGuard, MDVNPC continúa funcionando de manera convencional.
+- Si WorldGuard devuelve un resultado virtual (por ejemplo, datos regionales sin cargar),
+  el hook no anula ninguna cancelación.
+- WorldGuard se declara `softdepend` y se compila como dependencia Maven `provided`,
+  de modo que no se incluye código de WorldGuard ni WorldEdit en MDVNPC.jar.
+
+**Límite importante:** Bukkit no indica cuál de varios plugins canceló el mismo evento.
+Si otro plugin cancela la aparición *después* de LOWEST y antes de HIGHEST, al coincidir
+una flag de WorldGuard denegada también podría retirarse esa cancelación. Si otro plugin
+cancela en HIGHEST después del hook, en MONITOR o elimina directamente la entidad,
+MDVNPC no puede garantizar que siga visible: el diagnóstico indicará la cancelación/fallo.
+La excepción cubre las flags de región `mob-spawning` y `deny-spawn`; no altera bloqueos
+globales `block-creature-spawn` ni reglas especiales de plugins adicionales.
+
+### Instalación en MDVCRAFT
+
+1. Compilar con GitHub Actions (`mvn clean verify`) y descargar
+   `MDVNPC-1.0.2.jar` desde el artefacto de la ejecución.
+2. Hacer copia de `plugins/MDVNPC/npcs.yml` y `config.yml`.
+3. Detener el servidor, reemplazar el JAR anterior **sin dejar dos versiones**, e iniciar.
+   WorldGuard y WorldEdit deben estar correctamente cargados antes de MDVNPC.
+4. Verificar que consola indique «WorldGuard detectado: excepción ... activada».
+5. Ejecutar `/mdvnpc reload`, `/mdvnpc status` y visitar a Thurg en `world5`.
+   Probar clic derecho con un usuario normal. No cambiar las flags existentes para esta prueba.
+
+Si WorldGuard protege también la interacción (`interact deny` o protección de uso de
+entidades), el NPC puede ser visible pero el clic resultar denegado por otro evento;
+esta versión trata la **aparición**, no abre permisos de interacción en la región.
