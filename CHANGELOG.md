@@ -1,3 +1,13 @@
+# MDVNPC 1.1.2
+
+- Editor con movimientos reales de inventario: elimina la copia deliberada del cursor.
+- Clic, división de pilas, arrastre, teclas numéricas y mano secundaria delegados a Paper.
+- Shift + clic en ambos sentidos, respetando capacidad y excluyendo botones.
+- Doble clic recoge solo objetos editables, sin extraer controles.
+- Persistencia de columnas incompletas en `shops.yml`; retirar un componente ya no restaura la oferta anterior al reabrir.
+- Guardar conserva la ventana y su cursor; cambios de página protegidos.
+- Barreras de referencias ausentes bloqueadas, con eliminación explícita por clic derecho vacío.
+- Se conservan skins, trades, MMOItems y el workflow de GitHub sin cambios de versión en build.yml.
 # MDVNPC 1.1.1
 
 Base: ZIP MDVNPC-1.1.0-source.zip entregado por el usuario. Se conservan comandos, NPC normales, tiendas nativas, editor de 100 páginas, diálogos, skins explícitas y excepción de spawn de WorldGuard.
@@ -15,3 +25,4 @@ Base: ZIP MDVNPC-1.1.0-source.zip entregado por el usuario. Se conservan comando
 - `shop-allow-cancelled-interaction: false` respeta por defecto la cancelación de otros plugins. La excepción anterior es configurable. `worldguard-spawn-bypass: true` mantiene la excepción original y permite desactivarla.
 - Entorno de pruebas con MockBukkit compatible con Paper 1.21.6. Pruebas de regresión de skins, pagos, sesiones, editor y persistencia.
 - Maven: versión 1.1.1. `build.yml` conservado byte por byte: el patrón `target/MDVNPC-*.jar` ya permite publicar versiones nuevas sin modificarlo.
+

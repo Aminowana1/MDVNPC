@@ -1,12 +1,12 @@
-Esta guía se complementa con [AUDITORIA.md](AUDITORIA.md) y [CHANGELOG.md](CHANGELOG.md), que detallan las correcciones 1.1.1 y tienen precedencia ante diferencias.
+Esta guía se complementa con [AUDITORIA.md](AUDITORIA.md) y [CHANGELOG.md](CHANGELOG.md), que detallan las correcciones 1.1.2 y tienen precedencia ante diferencias.
 
-# MDVNPC 1.1.1 — Vendedores y trueques
+# MDVNPC 1.1.2 — Vendedores y trueques
 
 Fuente Maven: **Purpur/Paper 1.21.6, Java 21, LibsDisguises 11.0.18**. El NPC anterior (incluido Thurg) mantiene por defecto `mode: normal`, su skin, diálogos, comandos y comportamiento. Las tiendas no requieren Shopkeepers: utilizan la interfaz **nativa de intercambios del aldeano** con un comerciante virtual individual para cada jugador.
 
 ## Compilación / actualización en GitHub
 
-Subí **el contenido de `MDVNPC-main/`** a la raíz de tu repositorio, con `pom.xml` y `.github/workflows/build.yml` en sus lugares. Actions → `Compilar MDVNPC` → `Run workflow`, o simplemente hacer push. Descargá el artefacto fijo **`MDVNPC-jar`**, cuyo interior contiene `MDVNPC-1.1.1.jar`. Para versiones futuras solo cambiá `<version>` en `pom.xml`: **no vuelvas a editar `build.yml`**; detecta automáticamente `target/MDVNPC-*.jar`. En PC con Java 21 y Maven: `mvn clean verify`.
+Subí **el contenido de `MDVNPC-main/`** a la raíz de tu repositorio, con `pom.xml` y `.github/workflows/build.yml` en sus lugares. Actions → `Compilar MDVNPC` → `Run workflow`, o simplemente hacer push. Descargá el artefacto fijo **`MDVNPC-jar`**, cuyo interior contiene `MDVNPC-1.1.2.jar`. Para versiones futuras solo cambiá `<version>` en `pom.xml`: **no vuelvas a editar `build.yml`**; detecta automáticamente `target/MDVNPC-*.jar`. En PC con Java 21 y Maven: `mvn clean verify`.
 
 ## Crear y administrar
 
@@ -27,7 +27,7 @@ La **columna** es un trueque. En cada página caben 9 trueques, hasta 100 págin
 | 3 (slots 18..26) | Segundo costo **opcional** |
 | 4 | Flecha anterior en slot 29, guardar en 31, siguiente en 33 |
 
-**Cómo agregar:** tomá con el cursor el item de tu inventario, con la cantidad deseada; hacé clic en la celda correspondiente para **copiar** la plantilla. El item del admin NO se consume. Un clic con cursor vacío elimina la celda. Solo se guarda una columna si tiene resultado y costo 1. Al pulsar guardar, navegar, o cerrar, guarda en `plugins/MDVNPC/shops.yml`, haciendo copia anterior en `shops.yml.bak`. Dos administradores no pueden editar la misma tienda a la vez. El plugin usa el archivo original `npcs.yml` para nombres, skins, frases y `mode`, y un archivo separado `shops.yml` para intercambios.
+**Cómo agregar:** mové los objetos desde tu inventario a las tres filas superiores como en un cofre: clic, clic derecho, arrastre y Shift + clic. El objeto sale del cursor al colocarlo. Guardar, navegar o cerrar conserva las celdas. Las columnas completas se publican como ofertas y las incompletas quedan como borradores en shops.yml. Retirar un objeto actualiza esas celdas al guardar; no se devuelve ni se copia automáticamente. Los botones de navegación están protegidos.
 
 **Importante:** haz pruebas con objetos de una única unidad y luego con cantidades y con MMOItems. No borres `shops.yml` cuando actualices el `.jar`. Si un tipo/ID MMOItems desaparece, esa oferta no se enseña a jugadores hasta que vuelva a estar disponible; en el editor se representa con una barrera informativa sin sobrescribir la referencia al guardarla sin cambios.
 
@@ -71,6 +71,7 @@ rotation-threshold-degrees: 3.0
 
 ## Actualización segura
 
-Apagá el servidor y hacé una copia de `plugins/MDVNPC/` antes de reemplazar el JAR. Instalá `MDVNPC-1.1.1.jar`, inicia, usá `/mdvnpc mode <id> shop` en el NPC que quieras convertir, editá trueques con Shift + clic derecho y testeá un intercambio. Revisá la consola y confirma en `shops.yml` que los MMOItems se guardaron con su tipo e ID. Mantené LibsDisguises, PacketEvents y WorldGuard con sus versiones existentes.
+Apagá el servidor y hacé una copia de `plugins/MDVNPC/` antes de reemplazar el JAR. Instalá `MDVNPC-1.1.2.jar`, inicia, usá `/mdvnpc mode <id> shop` en el NPC que quieras convertir, editá trueques con Shift + clic derecho y testeá un intercambio. Revisá la consola y confirma en `shops.yml` que los MMOItems se guardaron con su tipo e ID. Mantené LibsDisguises, PacketEvents y WorldGuard con sus versiones existentes.
 
-**Validación actualizada:** compilación limpia y 35 pruebas automatizadas aprobadas. Consultar `AUDITORIA.md` para los límites de MockBukkit, compatibilidad y pruebas pendientes en servidor real.
+**Validación actualizada:** compilación limpia y pruebas automatizadas; resultado exacto en el log entregado. Consultar `AUDITORIA.md` para los límites de MockBukkit, compatibilidad y pruebas pendientes en servidor real.
+

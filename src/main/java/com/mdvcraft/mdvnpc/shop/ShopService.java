@@ -43,6 +43,8 @@ public final class ShopService implements Listener {
         final Inventory inventory;
         final ShopItem[] original = new ShopItem[27];
         final BitSet changed = new BitSet(27);
+        final BitSet unavailable = new BitSet(27);
+        final ItemStack[] displayed = new ItemStack[27];
         boolean switching;
         Editor(String npc, int page, Inventory inventory) {
             this.npc = npc; this.page = page; this.inventory = inventory;
@@ -133,20 +135,17 @@ public final class ShopService implements Listener {
         Inventory inventory = Bukkit.createInventory(holder, 36, "Shop: " + npc + " | " + (page + 1));
         holder.inventory = inventory;
         Editor editor = new Editor(npc, page, inventory);
-        for (int col = 0; col < 9; col++) {
-            ShopOffer offer = repository.offers(npc).get(page * 9 + col);
-            if (offer == null) continue;
-            editor.original[col] = offer.result();
-            editor.original[9 + col] = offer.cost1();
-            editor.original[18 + col] = offer.cost2();
-            for (int row = 0; row < 3; row++) {
-                int slot = row * 9 + col;
-                ShopItem item = editor.original[slot];
-                if (item == null) continue;
-                ItemStack stack = item.resolve(bridge);
-                if (stack == null) stack = icon(Material.BARRIER, "&cÍtem no disponible o cantidad inválida: " + item.kind() + " " + item.type() + "/" + item.id());
-                inventory.setItem(slot, stack);
+        ShopItem[] slots = repository.editorPage(npc, page);
+        for (int slot = 0; slot < 27; slot++) {
+            ShopItem item = slots[slot]; editor.original[slot] = item;
+            if (item == null) continue;
+            ItemStack stack = item.resolve(bridge);
+            if (stack == null) {
+                editor.unavailable.set(slot);
+                stack = icon(Material.BARRIER, "&cNo disponible. Clic derecho vacío: quitar referencia");
             }
+            inventory.setItem(slot, stack);
+            editor.displayed[slot] = stack.clone();
         }
         ItemStack filler = icon(Material.GRAY_STAINED_GLASS_PANE, " ");
         for (int i = 27; i < 36; i++) inventory.setItem(i, filler);
@@ -172,52 +171,51 @@ public final class ShopService implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST)
     public void click(InventoryClickEvent event) {
         if (!(event.getWhoClicked() instanceof Player player)) return;
+        Inventory top = event.getView().getTopInventory();
+        if (!(top.getHolder() instanceof EditorHolder)) return;
         Editor editor = editors.get(player.getUniqueId());
-        if (editor == null || event.getView().getTopInventory() != editor.inventory) {
-            if (event.getView().getTopInventory().getHolder() instanceof EditorHolder) event.setCancelled(true);
-            return;
+        if (editor == null || top != editor.inventory || !player.hasPermission("mdvnpc.admin") || editor.switching) {
+            event.setCancelled(true); return;
         }
+        if (event.isCancelled()) return;
         int raw = event.getRawSlot();
-        if (!player.hasPermission("mdvnpc.admin")) { event.setCancelled(true); return; }
-        if (raw < 0) return;
-        if (raw >= 36) {
-            // Clicking the real inventory normally supplies the cursor item. No shift-move into nav controls.
-            if (event.isShiftClick() || event.getClick() == org.bukkit.event.inventory.ClickType.DOUBLE_CLICK) event.setCancelled(true);
-            return;
-        }
-        boolean wasCancelled = event.isCancelled();
-        event.setCancelled(true);
-        if (wasCancelled) return; // Respect protection listeners.
-        // Template editor: placing a cursor stack copies it, never consumes admin inventory.
-        if (editor.switching) return;
-        if (raw >= 27) {
-            if (event.getClick() != org.bukkit.event.inventory.ClickType.LEFT &&
-                    event.getClick() != org.bukkit.event.inventory.ClickType.RIGHT) return;
+        if (raw >= 27 && raw < 36) {
+            event.setCancelled(true);
+            if (event.getClick() != ClickType.LEFT && event.getClick() != ClickType.RIGHT) return;
             if (raw == 31) {
-                if (save(player, editor)) {
-                    plugin.messages().send(player, "shop-saved", "npc", editor.npc, "page", "" + (editor.page + 1));
-                    switchPageNextTick(player, editor, editor.page);
-                }
+                if (save(player, editor)) plugin.messages().send(player, "shop-saved", "npc", editor.npc, "page", "" + (editor.page + 1));
             } else if (raw == 29 && editor.page > 0 || raw == 33 && editor.page < ShopRepository.MAX_PAGES - 1) {
-                if (!save(player, editor)) return;
-                switchPageNextTick(player, editor, editor.page + (raw == 33 ? 1 : -1));
+                if (save(player, editor)) switchPageNextTick(player, editor, editor.page + (raw == 33 ? 1 : -1));
             }
             return;
         }
-        if (event.getClick() != ClickType.LEFT && event.getClick() != ClickType.RIGHT && event.getClick() != ClickType.NUMBER_KEY) return;
-        ItemStack held = event.getCursor();
-        if (event.getClick() == org.bukkit.event.inventory.ClickType.NUMBER_KEY) {
-            held = player.getInventory().getItem(event.getHotbarButton());
+        if (raw >= 0 && raw < 27 && editor.unavailable.get(raw)) {
+            event.setCancelled(true);
+            if (event.getClick() == ClickType.RIGHT && TradeGuard.empty(event.getCursor())) {
+                editor.inventory.setItem(raw, null); editor.unavailable.clear(raw);
+            }
+            return;
         }
-        if (held != null && held.getType() != Material.AIR && held.getAmount() > 0) {
-            editor.inventory.setItem(raw, held.clone());
-            editor.changed.set(raw);
-        } else if (event.getClick() == org.bukkit.event.inventory.ClickType.LEFT ||
-                event.getClick() == org.bukkit.event.inventory.ClickType.RIGHT) {
-            editor.inventory.setItem(raw, null);
-            editor.changed.set(raw);
+        if (event.getAction() == InventoryAction.MOVE_TO_OTHER_INVENTORY && raw >= 0) {
+            event.setCancelled(true);
+            ItemStack source = event.getCurrentItem();
+            ItemStack rest = raw < 27
+                    ? EditorTransfers.move(source, player.getInventory(), 36, i -> true)
+                    : EditorTransfers.move(source, editor.inventory, 27, i -> !editor.unavailable.get(i));
+            event.setCurrentItem(rest);
+            return;
         }
+        if (event.getAction() == InventoryAction.COLLECT_TO_CURSOR) {
+            event.setCancelled(true);
+            ItemStack cursor = EditorTransfers.collect(event.getCursor(), editor.inventory, 27, i -> !editor.unavailable.get(i));
+            cursor = EditorTransfers.collect(cursor, player.getInventory(), 36, i -> true);
+            player.setItemOnCursor(cursor);
+            return;
+        }
+        // Native container semantics: pickup/place, split, swap, hotbar, offhand and drop.
+        // Do not set slots or cursor here: Paper performs the transfer exactly once.
     }
+
     private void switchPageNextTick(Player player, Editor editor, int page) {
         editor.switching = true;
         // Bukkit forbids openInventory() within InventoryClickEvent; defer the switch one tick.
@@ -228,10 +226,15 @@ public final class ShopService implements Listener {
     }
     @EventHandler(priority = EventPriority.HIGHEST)
     public void drag(InventoryDragEvent event) {
-        if (!(event.getWhoClicked() instanceof Player player)) return;
-        if (event.getView().getTopInventory().getHolder() instanceof EditorHolder &&
-                event.getRawSlots().stream().anyMatch(i -> i < 36)) event.setCancelled(true);
+        if (!(event.getView().getTopInventory().getHolder() instanceof EditorHolder)) return;
+        Editor editor = editors.get(event.getWhoClicked().getUniqueId());
+        if (editor == null || editor.inventory != event.getView().getTopInventory() || editor.switching
+                || !event.getWhoClicked().hasPermission("mdvnpc.admin")
+                || event.getRawSlots().stream().anyMatch(i -> i >= 27 && i < 36 || i >= 0 && i < 27 && editor.unavailable.get(i)))
+            event.setCancelled(true);
+        // An allowed drag is committed by Paper, including its cursor debit.
     }
+
     @EventHandler
     public void close(InventoryCloseEvent event) {
         if (!(event.getPlayer() instanceof Player player)) return;
@@ -246,33 +249,26 @@ public final class ShopService implements Listener {
                 trading.getMerchant() == session.merchant()) merchants.remove(player.getUniqueId());
     }
     private boolean save(Player player, Editor editor) {
-        if (editor.changed.isEmpty()) return true;
-        if (!player.hasPermission("mdvnpc.admin")) { player.sendMessage(Text.color("&cPermiso de edición revocado; cambios no aplicados.")); return false; }
-        try {
-        Map<Integer, ShopOffer> offers = new LinkedHashMap<>();
-        for (int col = 0; col < 9; col++) {
-            ShopItem[] values = new ShopItem[3];
-            for (int row = 0; row < 3; row++) {
-                int slot = row * 9 + col;
-                values[row] = editor.changed.get(slot)
-                        ? ShopItem.fromItem(editor.inventory.getItem(slot), bridge) : editor.original[slot];
-            }
-            boolean empty = values[0] == null && values[1] == null && values[2] == null;
-            if (empty) continue;
-            if (values[0] == null || values[1] == null) {
-                player.sendMessage(Text.color("&cColumna " + (col + 1) + ": necesita resultado y costo 1. No se guardó."));
-                return false;
-            }
-            offers.put(col, new ShopOffer(values[0], values[1], values[2]));
+        editor.changed.clear();
+        for (int slot = 0; slot < 27; slot++) {
+            ItemStack current = editor.inventory.getItem(slot);
+            if (TradeGuard.empty(current) && TradeGuard.empty(editor.displayed[slot])) continue;
+            if (!Objects.equals(current, editor.displayed[slot])) editor.changed.set(slot);
         }
-            repository.savePage(editor.npc, editor.page, offers);
+        if (editor.changed.isEmpty()) return true;
+        // Finish already accepted moves even if permission was revoked meanwhile.
+        // Permission is checked before every new click/drag; rejecting this save could resurrect withdrawn items.
+        try {
+            ShopItem[] slots = editor.original.clone();
+            for (int slot = 0; slot < 27; slot++) if (editor.changed.get(slot))
+                slots[slot] = ShopItem.fromItem(editor.inventory.getItem(slot), bridge);
+            repository.saveEditorPage(editor.npc, editor.page, slots);
             invalidateNpc(editor.npc);
             editor.changed.clear();
-            for (int col = 0; col < 9; col++) {
-                ShopOffer offer = offers.get(col);
-                editor.original[col] = offer == null ? null : offer.result();
-                editor.original[9 + col] = offer == null ? null : offer.cost1();
-                editor.original[18 + col] = offer == null ? null : offer.cost2();
+            for (int slot = 0; slot < 27; slot++) {
+                editor.original[slot] = slots[slot];
+                ItemStack current = editor.inventory.getItem(slot);
+                editor.displayed[slot] = current == null ? null : current.clone();
             }
             return true;
         } catch (Exception ex) {
@@ -281,6 +277,7 @@ public final class ShopService implements Listener {
             return false;
         }
     }
+
     private long revision(String npc) { return revisions.getOrDefault(npc, 0L); }
     private boolean allowed(Player player, Session session) {
         var active = session.active();
@@ -423,4 +420,6 @@ public final class ShopService implements Listener {
         } catch (Exception ex) { plugin.getLogger().log(Level.SEVERE, "No se pudo recuperar el borrador de " + editor.npc, ex); }
     }
 }
+
+
 
