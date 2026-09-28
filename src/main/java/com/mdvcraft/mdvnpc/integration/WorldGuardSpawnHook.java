@@ -44,6 +44,7 @@ public final class WorldGuardSpawnHook implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST)
     public void allowOurNpcThroughRegionFlags(CreatureSpawnEvent event) {
         Boolean cancelledAtStart = originallyCancelled.remove(event.getEntity().getUniqueId());
+        if (!plugin.settings().messages().getBoolean("worldguard-spawn-bypass", true)) return;
         if (cancelledAtStart == null || !belongsToInFlightNpc(event)
                 || !SpawnBypassPolicy.shouldOverride(cancelledAtStart, event.isCancelled(), true)) return;
         try {

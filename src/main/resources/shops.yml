@@ -1,0 +1,4 @@
+# Las tiendas se guardan automáticamente al usar /mdvnpc shop o Shift + clic derecho.
+# Slots por página: resultado 0..8, primer costo 9..17, segundo costo 18..26.
+# MMOItems guarda kind: MMOITEMS, type, id y amount. Custom/vanilla guarda un ItemStack completo.
+shops: {}

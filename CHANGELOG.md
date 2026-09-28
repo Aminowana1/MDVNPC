@@ -1,0 +1,17 @@
+# MDVNPC 1.1.1
+
+Base: ZIP MDVNPC-1.1.0-source.zip entregado por el usuario. Se conservan comandos, NPC normales, tiendas nativas, editor de 100 páginas, diálogos, skins explícitas y excepción de spawn de WorldGuard.
+
+- Skins por nombre: captura de textura firmada, firma y UUID en `skins.yml`; restauración al reiniciar, recargar y reaparecer el NPC. Las texturas explícitas de `npcs.yml` tienen prioridad. `/mdvnpc skin <id> <nombre>` invalida la caché, incluso si se repite el nombre.
+- Una sola tarea temporal de captura de skins, cada 20 ticks, con límite de 60 intentos. No se guardan perfiles vacíos. Escritura agrupada en un único trabajador y vaciado al apagar.
+- Compras: comprobación de NPC vigente, distancia, mundo, visibilidad del jugador, permisos, versión de ofertas, resultado, costos exactos y cantidades. No se retiran ni entregan ítems manualmente: Paper realiza la transacción.
+- La edición de ofertas y la desaparición del NPC invalidan inmediatamente las sesiones existentes; su cierre se difiere fuera del evento de inventario.
+- Clic normal y Shift admitidos en el resultado. Teclas numéricas, descarte y otros modos especiales bloqueados en el resultado. Editor de plantillas protegido ante clics cancelados, arrastre y sesiones huérfanas.
+- Recarga bloqueada si una página editada no se puede guardar. Al cerrar una página inválida se conserva una copia administrativa en `shop-recovery/`; no se consumen objetos reales del administrador.
+- Resolución de MMOItems falla de forma explícita si la API está rota; no convierte silenciosamente referencias en snapshots. Categoría/ID conservados. Resolución compartida para referencias idénticas durante una apertura, sin caché entre aperturas.
+- Cantidades superiores al máximo apilable dejan la oferta no disponible, evitando el ajuste implícito de precios del motor vanilla. Índices y cantidades mal formados rechazados.
+- Guardado de páginas detecta cambios externos en esa página. Escritura temporal, sincronización a disco, sustitución y copia `.bak` para NPC, tiendas y skins.
+- Diálogo comercial agrupado por jugador/NPC/tick; limpieza de estado al recargar y mantenimiento periódico. Se conserva la frecuencia independiente de mirada.
+- `shop-allow-cancelled-interaction: false` respeta por defecto la cancelación de otros plugins. La excepción anterior es configurable. `worldguard-spawn-bypass: true` mantiene la excepción original y permite desactivarla.
+- Entorno de pruebas con MockBukkit compatible con Paper 1.21.6. Pruebas de regresión de skins, pagos, sesiones, editor y persistencia.
+- Maven: versión 1.1.1. `build.yml` conservado byte por byte: el patrón `target/MDVNPC-*.jar` ya permite publicar versiones nuevas sin modificarlo.

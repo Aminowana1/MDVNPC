@@ -9,7 +9,7 @@ import org.bukkit.entity.Player;
 import java.util.*;
 
 public final class NpcCommand implements CommandExecutor, TabCompleter {
-    private static final List<String> COMMANDS = List.of("help", "list", "status", "create", "movehere", "delete", "rename", "skin", "enable", "reload");
+    private static final List<String> COMMANDS = List.of("help", "list", "status", "create", "movehere", "delete", "rename", "skin", "enable", "mode", "shop", "reload");
     private final MdvNpcPlugin plugin;
     public NpcCommand(MdvNpcPlugin plugin) { this.plugin = plugin; }
     @Override public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
@@ -21,8 +21,13 @@ public final class NpcCommand implements CommandExecutor, TabCompleter {
                 case "list" -> msg.send(sender, "list", "npcs", String.join(", ", plugin.definitions().keySet()));
                 case "status" -> msg.send(sender, "status", "count", "" + plugin.definitions().size(), "active", "" + plugin.manager().activeCount(), "ticks", "" + plugin.settings().intervalTicks());
                 case "reload" -> { plugin.reloadNpcs(); msg.send(sender, "reloaded", "count", "" + plugin.definitions().size()); }
-                case "create", "movehere", "delete", "rename", "skin", "enable" -> {
-                    int needed = Set.of("create", "rename", "skin", "enable").contains(sub) ? 3 : 2;
+                case "shop" -> {
+                    if (!(sender instanceof Player player)) { msg.send(sender, "player-only"); return true; }
+                    if (args.length < 2 || !plugin.definitions().containsKey(args[1])) { msg.help(sender); return true; }
+                    plugin.shops().openEditor(player, args[1]);
+                }
+                case "create", "movehere", "delete", "rename", "skin", "enable", "mode" -> {
+                    int needed = Set.of("create", "rename", "skin", "enable", "mode").contains(sub) ? 3 : 2;
                     if (args.length < needed) { msg.help(sender); return true; }
                     String id = args[1];
                     NpcParser.validateId(id);
@@ -35,13 +40,19 @@ public final class NpcCommand implements CommandExecutor, TabCompleter {
                     }
                     if (sub.equals("enable") && !args[2].equalsIgnoreCase("true") && !args[2].equalsIgnoreCase("false"))
                         throw new IllegalArgumentException("Usa true o false");
+                    if (sub.equals("mode") && !Set.of("normal", "shop").contains(args[2].toLowerCase(Locale.ROOT)))
+                        throw new IllegalArgumentException("Modo: normal o shop");
                     Location destination = location;
+                    plugin.shops().prepareReload(); // Validate/flush editors before changing NPC files.
                     plugin.repository().edit(yaml -> {
                         String p = "npcs." + id;
                         switch (sub) {
                             case "create" -> {
                                 yaml.set(p + ".enabled", true);
-                                yaml.set(p + ".name", args.length > 3 ? String.join(" ", Arrays.copyOfRange(args, 3, args.length)) : id);
+                                boolean modeArg = args.length > 3 && Set.of("shop", "normal").contains(args[3].toLowerCase(Locale.ROOT));
+                                yaml.set(p + ".mode", modeArg ? args[3].toLowerCase(Locale.ROOT) : "normal");
+                                yaml.set(p + ".name", args.length > (modeArg ? 4 : 3)
+                                        ? String.join(" ", Arrays.copyOfRange(args, modeArg ? 4 : 3, args.length)) : id);
                                 yaml.set(p + ".name-visible", true);
                                 yaml.set(p + ".skin.name", args[2]);
                                 yaml.set(p + ".look.enabled", true); yaml.set(p + ".look.range", 6);
@@ -60,8 +71,14 @@ public final class NpcCommand implements CommandExecutor, TabCompleter {
                                 yaml.set(p + ".skin.texture", ""); yaml.set(p + ".skin.signature", ""); yaml.set(p + ".skin.uuid", "");
                             }
                             case "enable" -> yaml.set(p + ".enabled", Boolean.parseBoolean(args[2]));
+                            case "mode" -> yaml.set(p + ".mode", args[2].toLowerCase(Locale.ROOT));
                         }
                     });
+                    if (sub.equals("skin") || sub.equals("delete")) plugin.skins().invalidate(id);
+                    if (sub.equals("delete")) {
+                        plugin.shops().closeAll(); // flush editing sessions before deleting this NPC's offers
+                        plugin.shops().deleteShop(id);
+                    }
                     plugin.reloadNpcs();
                     msg.send(sender, sub.equals("delete") ? "deleted" : "saved", "npc", id);
                 }
@@ -78,8 +95,8 @@ public final class NpcCommand implements CommandExecutor, TabCompleter {
     }
     @Override public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (!sender.hasPermission("mdvnpc.admin")) return List.of();
-        Collection<String> choices = args.length == 1 ? COMMANDS : args.length == 2 && Set.of("movehere", "delete", "rename", "skin", "enable").contains(args[0].toLowerCase(Locale.ROOT))
-                ? plugin.definitions().keySet() : args.length == 3 && args[0].equalsIgnoreCase("enable") ? List.of("true", "false") : List.of();
+        Collection<String> choices = args.length == 1 ? COMMANDS : args.length == 2 && Set.of("movehere", "delete", "rename", "skin", "enable", "mode", "shop").contains(args[0].toLowerCase(Locale.ROOT))
+                ? plugin.definitions().keySet() : args.length == 3 && args[0].equalsIgnoreCase("enable") ? List.of("true", "false") : args.length == 3 && args[0].equalsIgnoreCase("mode") ? List.of("normal", "shop") : List.of();
         String prefix = args.length == 0 ? "" : args[args.length - 1].toLowerCase(Locale.ROOT);
         return choices.stream().filter(s -> s.toLowerCase(Locale.ROOT).startsWith(prefix)).sorted().toList();
     }

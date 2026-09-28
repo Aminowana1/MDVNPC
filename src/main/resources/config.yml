@@ -1,11 +1,18 @@
 # Purpur 1.21.6 / Java 21 / LibsDisguises 11.0.18
 # Un único reloj compartido; 10 ticks = 2 actualizaciones por segundo a 20 TPS.
 update-interval-ticks: 10
+# Mirada: se actualiza de forma independiente. 5 = cada 0.25s; 20 = cada 1s.
+look-update-interval-ticks: 10
 # No consultar jugadores invisibles ni espectadores para mirada/diálogos/clics.
 ignore-invisible-players: true
 ignore-spectators: true
 # Cambio mínimo de ángulo antes de enviar una rotación nueva.
 rotation-threshold-degrees: 3.0
+# Conserva la excepción de spawn original para NPC propios. false respeta todo bloqueo.
+worldguard-spawn-bypass: true
+# false respeta cancelaciones de otros plugins. true permite abrir SHOP en lobbies protegidos.
+# No se puede saber qué plugin canceló el evento; activar solo si es intencional.
+shop-allow-cancelled-interaction: false
 messages:
   prefix: '&8[&2MDVNPC&8] &7'
   no-permission: '&cNo tienes permiso.'
@@ -18,11 +25,17 @@ messages:
   list: '&7NPC: &f{npcs}'
   status: '&7Configurados: &f{count}&7. Activos: &f{active}&7. Intervalo: &f{ticks} ticks&7.'
   cooldown: '&7Espera &e{seconds}s&7 antes de volver a interactuar.'
+  shop-empty: '&eEste vendedor todavía no tiene intercambios disponibles.'
+  shop-busy: '&cOtro administrador está editando esta tienda.'
+  shop-invalid: '&cNo puedes abrir esta tienda ahora.'
+  shop-saved: '&aTienda guardada: &f{npc}&a (página &f{page}&a).'
   action-denied: '&cNo tienes permiso para interactuar con este NPC.'
   help:
     - '&e/mdvnpc list &7- Ver los NPC.'
     - '&e/mdvnpc status &7- Ver cuántos están activos.'
-    - '&e/mdvnpc create <id> <skin> [nombre] &7- Crear aquí.'
+    - '&e/mdvnpc create <id> <skin> [normal|shop] [nombre] &7- Crear aquí.'
+    - '&e/mdvnpc mode <id> normal|shop &7- Cambiar comportamiento.'
+    - '&e/mdvnpc shop <id> &7- Editar trueques del NPC vendedor.'
     - '&e/mdvnpc movehere <id> &7- Mover aquí.'
     - '&e/mdvnpc delete <id> &7- Eliminar.'
     - '&e/mdvnpc rename <id> <nombre> &7- Cambiar nombre.'

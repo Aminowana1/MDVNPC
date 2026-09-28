@@ -23,13 +23,7 @@ public final class NpcRepository {
         YamlConfiguration yaml = read(path);
         edit.accept(yaml);
         NpcParser.parse(yaml); // Never overwrite a valid file with invalid definitions.
-        Path temp = Files.createTempFile(directory, "npcs-", ".tmp");
-        try {
-            Files.writeString(temp, yaml.saveToString(), StandardCharsets.UTF_8);
-            Files.copy(path, directory.resolve("npcs.yml.bak"), StandardCopyOption.REPLACE_EXISTING);
-            try { Files.move(temp, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING); }
-            catch (AtomicMoveNotSupportedException ex) { Files.move(temp, path, StandardCopyOption.REPLACE_EXISTING); }
-        } finally { Files.deleteIfExists(temp); }
+        AtomicFile.write(path, yaml.saveToString());
     }
     private static YamlConfiguration read(Path path) throws Exception {
         YamlConfiguration yaml = new YamlConfiguration();

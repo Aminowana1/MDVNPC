@@ -9,7 +9,10 @@ import java.util.UUID;
 
 public final class DisguiseService {
     public PlayerDisguise apply(LivingEntity entity, NpcDefinition npc) {
-        PlayerDisguise disguise = new PlayerDisguise(Text.color(npc.name()), skinInput(npc.skin()));
+        return apply(entity, npc, npc.skin());
+    }
+    public PlayerDisguise apply(LivingEntity entity, NpcDefinition npc, NpcDefinition.Skin skin) {
+        PlayerDisguise disguise = new PlayerDisguise(Text.color(npc.name()), skinInput(skin));
         disguise.setNameVisible(npc.nameVisible());
         disguise.setDisplayedInTab(false);
         disguise.setDynamicName(false);
@@ -32,3 +35,4 @@ public final class DisguiseService {
                 + "\",\"signature\":\"" + skin.signature() + "\"}]}";
     }
 }
+

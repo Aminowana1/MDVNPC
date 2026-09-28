@@ -28,6 +28,7 @@ public final class NpcManager {
     private BukkitTask ticker;
     private long generation;
     private long nextMaintenance;
+    private long tickCounter;
     private final LookService look = new LookService();
     private final DialogueService dialogue = new DialogueService();
     private final InteractionService interactions;
@@ -44,9 +45,11 @@ public final class NpcManager {
         for (World world : Bukkit.getWorlds())
             for (Entity entity : world.getEntities()) if (owned(entity)) entity.remove();
         for (ChunkKey key : byChunk.keySet()) queue(key);
-        ticker = Bukkit.getScheduler().runTaskTimer(plugin, this::tick, plugin.settings().intervalTicks(), plugin.settings().intervalTicks());
+        int cadence = gcd(plugin.settings().intervalTicks(), plugin.settings().lookIntervalTicks());
+        ticker = Bukkit.getScheduler().runTaskTimer(plugin, () -> tick(cadence), cadence, cadence);
     }
     public void stop() {
+        plugin.skins().capturePending();
         generation++;
         if (ticker != null) { ticker.cancel(); ticker = null; }
         for (ActiveNpc npc : List.copyOf(active.values())) remove(npc);
@@ -127,7 +130,8 @@ public final class NpcManager {
                         + world.getName() + " y los plugins de control de entidades.");
             }
             stage = "aplicar el disfraz de LibsDisguises";
-            var disguise = skins.apply(entity, definition);
+            var disguise = skins.apply(entity, definition, plugin.skins().resolve(definition));
+            plugin.skins().watch(definition, disguise::getUserProfile);
             ActiveNpc npc = new ActiveNpc(definition, anchor, entity, disguise);
             active.put(definition.id(), npc);
             byEntity.put(entity.getUniqueId(), npc);
@@ -144,6 +148,8 @@ public final class NpcManager {
         }
     }
     private void remove(ActiveNpc npc) {
+        plugin.skins().forget(npc.definition().id());
+        plugin.shops().invalidateNpc(npc.definition().id());
         active.remove(npc.definition().id(), npc);
         byEntity.remove(npc.entity().getUniqueId(), npc);
         try { npc.disguise().removeDisguise(); }
@@ -181,13 +187,17 @@ public final class NpcManager {
         ActiveNpc npc = byEntity.get(entity.getUniqueId());
         if (npc != null) remove(npc);
     }
-    private void tick() {
+    private static int gcd(int a, int b) { while (b != 0) { int rem = a % b; a = b; b = rem; } return a; }
+    private void tick(int cadence) {
+        tickCounter += cadence;
+        boolean checkLook = tickCounter % plugin.settings().lookIntervalTicks() == 0;
+        boolean checkDialogue = tickCounter % plugin.settings().intervalTicks() == 0;
         long now = System.nanoTime();
         if (now >= nextMaintenance) {
-            dialogue.prune(now); interactions.prune(now);
+            dialogue.prune(now); interactions.prune(now); plugin.shops().prune(now);
             nextMaintenance = now + DialogueService.nanos(60);
         }
-        if (Bukkit.getOnlinePlayers().isEmpty()) return;
+        if ((!checkLook && !checkDialogue) || Bukkit.getOnlinePlayers().isEmpty()) return;
         for (ActiveNpc npc : List.copyOf(active.values())) {
             if (!npc.entity().isValid()) {
                 remove(npc);
@@ -196,13 +206,13 @@ public final class NpcManager {
                 continue;
             }
             var definition = npc.definition();
-            double range = Math.max(definition.look().enabled() ? definition.look().range() : 0,
-                    definition.dialogue().enabled() ? definition.dialogue().range() : 0);
+            double range = Math.max(checkLook && definition.look().enabled() ? definition.look().range() : 0,
+                    checkDialogue && definition.dialogue().enabled() && !definition.dialogue().lines().isEmpty() ? definition.dialogue().range() : 0);
             if (range <= 0) continue;
             Collection<Player> players = npc.anchor().getWorld().getNearbyPlayers(npc.anchor(), range,
                     player -> PlayerFilter.accepts(player, plugin.settings()));
-            look.update(npc, players, plugin.settings().rotationThreshold());
-            dialogue.update(npc, players, now);
+            if (checkLook) look.update(npc, players, plugin.settings().rotationThreshold());
+            if (checkDialogue) dialogue.update(npc, players, now);
         }
     }
     public boolean owned(Entity entity) { return entity.getPersistentDataContainer().has(marker, PersistentDataType.STRING); }
@@ -211,3 +221,4 @@ public final class NpcManager {
     public void forget(UUID player) { dialogue.forget(player); interactions.forget(player); }
     public int activeCount() { return active.size(); }
 }
+

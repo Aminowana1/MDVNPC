@@ -3,6 +3,7 @@ package com.mdvcraft.mdvnpc.listener;
 import com.mdvcraft.mdvnpc.MdvNpcPlugin;
 import com.mdvcraft.mdvnpc.model.NpcDefinition.Click;
 import com.mdvcraft.mdvnpc.runtime.PlayerFilter;
+import com.mdvcraft.mdvnpc.model.NpcDefinition.Mode;
 import org.bukkit.entity.Player;
 import org.bukkit.event.*;
 import org.bukkit.event.entity.*;
@@ -24,10 +25,17 @@ public final class NpcListener implements Listener {
         if (!manager.owned(event.getRightClicked())) return;
         boolean wasCancelled = event.isCancelled();
         event.setCancelled(true); // Never open the base villager's trading interface.
-        if (wasCancelled || event.getHand() != EquipmentSlot.HAND) return;
+        if (event.getHand() != EquipmentSlot.HAND) return;
         var npc = manager.find(event.getRightClicked());
-        if (npc != null && PlayerFilter.accepts(event.getPlayer(), plugin.settings()))
-            manager.interactions().click(npc, event.getPlayer(), Click.RIGHT, System.nanoTime());
+        // A protected lobby may cancel the villager's normal interaction; permit our own SHOP UI.
+        if (wasCancelled && (npc == null || npc.definition().mode() != Mode.SHOP
+                || !plugin.settings().messages().getBoolean("shop-allow-cancelled-interaction", false))) return;
+        if (npc == null || !PlayerFilter.accepts(event.getPlayer(), plugin.settings())) return;
+        if (npc.definition().mode() == Mode.SHOP) {
+            if (event.getPlayer().isSneaking() && event.getPlayer().hasPermission("mdvnpc.admin"))
+                plugin.shops().openEditor(event.getPlayer(), npc.definition().id());
+            else plugin.shops().openShop(event.getPlayer(), npc);
+        } else manager.interactions().click(npc, event.getPlayer(), Click.RIGHT, System.nanoTime());
     }
     @EventHandler(priority = EventPriority.HIGHEST)
     public void damage(EntityDamageEvent event) {

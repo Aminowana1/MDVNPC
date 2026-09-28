@@ -5,7 +5,16 @@ import java.util.UUID;
 
 public record NpcDefinition(String id, boolean enabled, String name, boolean nameVisible,
                             Position position, Skin skin, Look look, Dialogue dialogue,
-                            Interaction interaction) {
+                            Interaction interaction, Mode mode, TradeDialogue tradeDialogue) {
+    public NpcDefinition(String id, boolean enabled, String name, boolean nameVisible,
+                         Position position, Skin skin, Look look, Dialogue dialogue, Interaction interaction) {
+        this(id, enabled, name, nameVisible, position, skin, look, dialogue, interaction,
+                Mode.NORMAL, new TradeDialogue(false, 20, true, List.of()));
+    }
+    public enum Mode { NORMAL, SHOP }
+    public record TradeDialogue(boolean enabled, double cooldownSeconds, boolean random, List<String> lines) {
+        public TradeDialogue { lines = List.copyOf(lines); }
+    }
     public record Position(UUID worldId, String worldName, double x, double y, double z, float yaw, float pitch) {
         public int chunkX() { return ((int) Math.floor(x)) >> 4; }
         public int chunkZ() { return ((int) Math.floor(z)) >> 4; }

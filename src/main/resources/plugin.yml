@@ -5,7 +5,7 @@ api-version: '1.21.6'
 description: NPC estáticos, diálogos y comandos para MDVCRAFT.
 authors: [MDVCRAFT]
 depend: [LibsDisguises]
-softdepend: [MDVQuest, WorldGuard]
+softdepend: [MDVQuest, WorldGuard, MMOItems]
 commands:
   mdvnpc:
     description: Administrar NPC de MDVCRAFT

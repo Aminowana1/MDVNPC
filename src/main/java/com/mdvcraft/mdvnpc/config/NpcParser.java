@@ -45,8 +45,13 @@ public final class NpcParser {
                 Interaction interaction = new Interaction(number(s, "interaction.range", 6, 0.1, 16),
                         number(s, "interaction.cooldown-seconds", 2, 0, 86400), s.getBoolean("interaction.require-line-of-sight", true),
                         s.getString("interaction.permission", ""), actions);
+                Mode mode = Mode.valueOf(s.getString("mode", "normal").toUpperCase(Locale.ROOT));
+                TradeDialogue tradeDialogue = new TradeDialogue(s.getBoolean("shop.trade-dialogue.enabled", false),
+                        number(s, "shop.trade-dialogue.cooldown-seconds", 20, 0, 86400),
+                        s.getBoolean("shop.trade-dialogue.random", true),
+                        s.getStringList("shop.trade-dialogue.lines"));
                 result.put(id, new NpcDefinition(id, s.getBoolean("enabled", true), s.getString("name", id),
-                        s.getBoolean("name-visible", true), pos, skin, look, text, interaction));
+                        s.getBoolean("name-visible", true), pos, skin, look, text, interaction, mode, tradeDialogue));
             } catch (RuntimeException ex) { throw new IllegalArgumentException("NPC " + id + ": " + ex.getMessage(), ex); }
         }
         return Collections.unmodifiableMap(result);
