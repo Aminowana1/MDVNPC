@@ -1,4 +1,6 @@
-# MDVNPC 1.4.1
+# MDVNPC 1.4.2
+
+Corrección de las pruebas de mirada que impedían completar GitHub Actions: [CAMBIOS-1.4.2.md](CAMBIOS-1.4.2.md). Conserva el selector gráfico y todas las funciones de 1.4.1. Entrega fuente, sin compilación local.
 
 Selector gráfico de rasgos: `/mdvnpc routine <id>` → **Rasgo del NPC**. Permite asignar cualquiera de los cinco rasgos o quitarlo con **Sin rasgo**, guarda al seleccionar y muestra el actual. Funciona también sin goals. Ver [CAMBIOS-1.4.1.md](CAMBIOS-1.4.1.md). Entrega solo fuente, sin compilar.
 

@@ -2,6 +2,7 @@ package com.mdvcraft.mdvnpc.routine;
 
 import com.mdvcraft.mdvnpc.MdvNpcPlugin;
 import com.mdvcraft.mdvnpc.config.Settings;
+import com.mdvcraft.mdvnpc.config.NpcParser;
 import com.mdvcraft.mdvnpc.runtime.ActiveNpc;
 import org.bukkit.*;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -18,7 +19,13 @@ class RoutineLookTest {
         server=MockBukkit.mock();plugin=mock(MdvNpcPlugin.class);when(plugin.getServer()).thenReturn(server);when(plugin.settings()).thenReturn(Settings.parse(new YamlConfiguration()));
         world=mock(World.class);entity=mock(Villager.class);when(entity.isValid()).thenReturn(true);when(entity.getWorld()).thenReturn(world);
         when(entity.getLocation()).thenAnswer(i -> new Location(world,0,64,0));when(entity.getEyeLocation()).thenAnswer(i -> new Location(world,0,65.6,0));
-        npc=new ActiveNpc(null,new Location(world,0,64,0),entity,null);looks=new RoutineLook(plugin);
+        npc=npcWithTrait("none");looks=new RoutineLook(plugin);
+    }
+    private ActiveNpc npcWithTrait(String trait) {
+        var config=new YamlConfiguration();
+        config.set("npcs.test.location.world","world");
+        config.set("npcs.test.trait.type",trait);
+        return new ActiveNpc(NpcParser.parse(config).get("test"),new Location(world,0,64,0),entity,null);
     }
     @AfterEach void cleanup(){MockBukkit.unmock();}
     @Test void idleGlancesDoNotStartImmediatelyOrScanPlayersEveryTick() {
@@ -38,5 +45,15 @@ class RoutineLookTest {
     }
     @Test void yawInterpolationTakesShortestTurnAcrossWrap() {
         assertEquals(2,RoutineLook.angle(179,-179),.001);assertEquals(181,RoutineLook.approach(179,-179,12),.001);
+    }
+    @Test void restlessUsesShorterConfiguredDelayAndStillWaitsBeforeFirstGlance() {
+        var normal=new RoutineLook.State();looks.tick(npc,normal,0,0,false,false);
+        var restless=new RoutineLook.State();looks.tick(npcWithTrait("inquieto"),restless,0,0,false,false);
+        // Default interval is 8..18 seconds. Assert ranges rather than a random exact value.
+        assertTrue(normal.nextGlance>=160 && normal.nextGlance<=360);
+        assertTrue(restless.nextGlance>=46 && restless.nextGlance<=103);
+        assertTrue(restless.nextGlance<normal.nextGlance);
+        assertEquals(0,restless.until);
+        verify(entity,never()).swingMainHand();
     }
 }
