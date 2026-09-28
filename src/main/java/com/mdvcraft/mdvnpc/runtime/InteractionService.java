@@ -19,8 +19,8 @@ public final class InteractionService {
 
     public void click(ActiveNpc npc, Player player, Click click, long now) {
         var interaction = npc.definition().interaction();
-        if (!npc.entity().isValid() || !player.getWorld().equals(npc.anchor().getWorld())) return;
-        if (player.getLocation().distanceSquared(npc.anchor()) > interaction.range() * interaction.range()) return;
+        if (!npc.entity().isValid() || !player.getWorld().equals(npc.position().getWorld())) return;
+        if (player.getLocation().distanceSquared(npc.position()) > interaction.range() * interaction.range()) return;
         if (interaction.lineOfSight() && !player.hasLineOfSight(npc.entity())) return;
         var actions = interaction.actions().stream().filter(a -> a.click() == click || a.click() == Click.BOTH).toList();
         if (actions.isEmpty()) return;

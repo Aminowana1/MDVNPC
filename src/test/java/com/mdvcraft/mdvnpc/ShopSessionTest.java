@@ -26,12 +26,13 @@ class ShopSessionTest {
     MerchantRecipe recipe;
     MerchantInventory inventory;
     World world;
+    MdvNpcPlugin plugin;
     @BeforeEach @SuppressWarnings("unchecked") void start() throws Exception {
         var server = MockBukkit.mock(new TestServer()); world = server.addSimpleWorld("world");
-        var plugin = mock(MdvNpcPlugin.class); var manager = mock(NpcManager.class);
+        plugin = mock(MdvNpcPlugin.class); var manager = mock(NpcManager.class);
         when(plugin.getDataFolder()).thenReturn(folder.toFile()); when(plugin.getLogger()).thenReturn(Logger.getAnonymousLogger());
         when(plugin.getServer()).thenReturn(server); when(plugin.isEnabled()).thenReturn(true);
-        when(plugin.manager()).thenReturn(manager); when(plugin.messages()).thenReturn(mock(Messages.class));
+        when(plugin.canInteract(any())).thenReturn(true); when(plugin.manager()).thenReturn(manager); when(plugin.messages()).thenReturn(mock(Messages.class));
         when(plugin.settings()).thenReturn(Settings.parse(new YamlConfiguration()));
         var yaml = new YamlConfiguration(); yaml.createSection("npcs.shop");
         yaml.set("npcs.shop.mode", "shop"); yaml.set("npcs.shop.location.world", "world");
@@ -79,5 +80,11 @@ class ShopSessionTest {
     @Test void cancellationFromAnotherPluginIsPreserved() {
         var event = new PlayerPurchaseEvent(player, recipe, false, true); event.setCancelled(true);
         shops.guardPurchase(event); assertTrue(event.isCancelled());
+    }
+    @Test void leavingWorkBlocksAnAlreadyOpenPurchase() {
+        assertFalse(purchase().isCancelled());
+        when(plugin.canInteract(any())).thenReturn(false);
+        assertTrue(purchase().isCancelled());
+        verify(inventory, never()).setItem(anyInt(), any());
     }
 }

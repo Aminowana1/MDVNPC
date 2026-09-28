@@ -18,7 +18,7 @@ public final class DialogueService {
         var dialogue = npc.definition().dialogue();
         if (!dialogue.enabled() || dialogue.lines().isEmpty()) return;
         for (Player player : players) {
-            if (player.getLocation().distanceSquared(npc.anchor()) > dialogue.range() * dialogue.range()) continue;
+            if (player.getLocation().distanceSquared(npc.position()) > dialogue.range() * dialogue.range()) continue;
             if (dialogue.lineOfSight() && !npc.entity().hasLineOfSight(player)) continue;
             Key key = new Key(npc.definition().id(), player.getUniqueId());
             State state = states.computeIfAbsent(key, ignored -> new State(now + nanos(dialogue.initialDelaySeconds()), now));

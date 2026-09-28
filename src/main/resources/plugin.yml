@@ -2,7 +2,7 @@ name: MDVNPC
 version: '${project.version}'
 main: com.mdvcraft.mdvnpc.MdvNpcPlugin
 api-version: '1.21.6'
-description: NPC estáticos, diálogos y comandos para MDVCRAFT.
+description: NPC, tiendas, rutinas y horarios por mundo para MDVCRAFT.
 authors: [MDVCRAFT]
 depend: [LibsDisguises]
 softdepend: [MDVQuest, WorldGuard, MMOItems]

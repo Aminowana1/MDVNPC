@@ -59,6 +59,7 @@ public final class ShopService implements Listener {
     public void deleteShop(String npc) throws Exception { repository.delete(npc); invalidateNpc(npc); }
 
     public void openShop(Player player, ActiveNpc npc) {
+        if (!plugin.canInteract(npc)) return;
         long now = System.nanoTime();
         long last = recentOpens.getOrDefault(player.getUniqueId(), Long.MIN_VALUE);
         if (last != Long.MIN_VALUE && now - last < 150_000_000L) return;
@@ -72,12 +73,12 @@ public final class ShopService implements Listener {
         });
     }
     private void openShopAfterClick(Player player, ActiveNpc npc) {
-        if (!player.isOnline() || plugin.manager().find(npc.entity()) != npc) return;
+        if (!player.isOnline() || plugin.manager().find(npc.entity()) != npc || !plugin.canInteract(npc)) return;
         var def = npc.definition();
         if (def.mode() != Mode.SHOP || !def.enabled() || !npc.entity().isValid() ||
-                player.getWorld() != npc.anchor().getWorld()) return;
+                player.getWorld() != npc.position().getWorld()) return;
         var interaction = def.interaction();
-        if (player.getLocation().distanceSquared(npc.anchor()) > interaction.range() * interaction.range() ||
+        if (player.getLocation().distanceSquared(npc.position()) > interaction.range() * interaction.range() ||
                 interaction.lineOfSight() && !player.hasLineOfSight(npc.entity())) return;
         if (!interaction.permission().isEmpty() && !player.hasPermission(interaction.permission())) {
             plugin.messages().send(player, "action-denied"); return;
@@ -282,12 +283,12 @@ public final class ShopService implements Listener {
     private boolean allowed(Player player, Session session) {
         var active = session.active();
         var def = plugin.definitions().get(session.npc());
-        if (!player.isOnline() || def == null || !def.enabled() || def.mode() != Mode.SHOP
+        if (!player.isOnline() || def == null || !def.enabled() || def.mode() != Mode.SHOP || !plugin.canInteract(active)
                 || session.revision() != revision(session.npc()) || !active.entity().isValid()
-                || plugin.manager().find(active.entity()) != active || player.getWorld() != active.anchor().getWorld()
+                || plugin.manager().find(active.entity()) != active || player.getWorld() != active.position().getWorld()
                 || !com.mdvcraft.mdvnpc.runtime.PlayerFilter.accepts(player, plugin.settings())) return false;
         var interaction = def.interaction();
-        return player.getLocation().distanceSquared(active.anchor()) <= interaction.range() * interaction.range()
+        return player.getLocation().distanceSquared(active.position()) <= interaction.range() * interaction.range()
                 && (!interaction.lineOfSight() || player.hasLineOfSight(active.entity()))
                 && (interaction.permission().isBlank() || player.hasPermission(interaction.permission()));
     }

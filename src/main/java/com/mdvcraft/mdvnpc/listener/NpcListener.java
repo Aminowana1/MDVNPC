@@ -34,13 +34,13 @@ public final class NpcListener implements Listener {
         if (npc.definition().mode() == Mode.SHOP) {
             if (event.getPlayer().isSneaking() && event.getPlayer().hasPermission("mdvnpc.admin"))
                 plugin.shops().openEditor(event.getPlayer(), npc.definition().id());
-            else plugin.shops().openShop(event.getPlayer(), npc);
-        } else manager.interactions().click(npc, event.getPlayer(), Click.RIGHT, System.nanoTime());
+            else if (plugin.canInteract(npc)) plugin.shops().openShop(event.getPlayer(), npc);
+        } else if (plugin.canInteract(npc)) manager.interactions().click(npc, event.getPlayer(), Click.RIGHT, System.nanoTime());
     }
     @EventHandler(priority = EventPriority.HIGHEST)
     public void damage(EntityDamageEvent event) {
         var manager = plugin.manager();
-        if (!manager.owned(event.getEntity())) return;
+        if (!manager.owned(event.getEntity()) && !plugin.routines().isSeat(event.getEntity())) return;
         event.setCancelled(true);
     }
     // Fires before damage checks, including attacks on invulnerable NPCs.
@@ -51,7 +51,7 @@ public final class NpcListener implements Listener {
         boolean cancelled = event.isCancelled();
         event.setCancelled(true);
         var npc = manager.find(event.getAttacked());
-        if (!cancelled && npc != null && PlayerFilter.accepts(event.getPlayer(), plugin.settings()))
+        if (!cancelled && npc != null && plugin.canInteract(npc) && PlayerFilter.accepts(event.getPlayer(), plugin.settings()))
             manager.interactions().click(npc, event.getPlayer(), Click.LEFT, System.nanoTime());
     }
     @EventHandler(priority = EventPriority.HIGHEST)
@@ -59,17 +59,31 @@ public final class NpcListener implements Listener {
         if (event.getTarget() != null && plugin.manager().owned(event.getTarget())) event.setCancelled(true);
     }
     @EventHandler(priority = EventPriority.HIGHEST)
-    public void teleport(EntityTeleportEvent event) { if (plugin.manager().owned(event.getEntity())) event.setCancelled(true); }
+    public void teleport(EntityTeleportEvent event) { if (plugin.manager().owned(event.getEntity()) && !plugin.routines().internal(event.getEntity())) event.setCancelled(true); }
     @EventHandler(priority = EventPriority.HIGHEST)
     public void move(EntityMoveEvent event) {
-        if (event.hasChangedPosition() && plugin.manager().owned(event.getEntity())) event.setCancelled(true);
+        if (event.hasChangedPosition() && plugin.manager().owned(event.getEntity()) && !plugin.routines().internal(event.getEntity()) && !plugin.routines().isSeat(event.getEntity().getVehicle() == null ? event.getEntity() : event.getEntity().getVehicle())) event.setCancelled(true);
+        if (plugin.routines().isSeat(event.getEntity()) && event.hasChangedPosition()) event.setCancelled(true);
     }
     @EventHandler(priority = EventPriority.HIGHEST)
     public void burn(EntityCombustEvent event) { if (plugin.manager().owned(event.getEntity())) event.setCancelled(true); }
     @EventHandler(priority = EventPriority.HIGHEST)
     public void transform(EntityTransformEvent event) { if (plugin.manager().owned(event.getEntity())) event.setCancelled(true); }
     @EventHandler(priority = EventPriority.HIGHEST)
-    public void vehicle(VehicleEnterEvent event) { if (plugin.manager().owned(event.getEntered())) event.setCancelled(true); }
+    public void vehicle(VehicleEnterEvent event) { if (plugin.manager().owned(event.getEntered()) && !plugin.routines().mounting(event.getEntered())) event.setCancelled(true); }
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void mount(org.bukkit.event.entity.EntityMountEvent event) {
+        if (plugin.manager().owned(event.getEntity()) && !plugin.routines().mounting(event.getEntity())) event.setCancelled(true);
+        if (plugin.routines().isSeat(event.getMount()) && !plugin.routines().mounting(event.getEntity())) event.setCancelled(true);
+    }
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void armorStand(PlayerArmorStandManipulateEvent event) { if (plugin.routines().isSeat(event.getRightClicked())) event.setCancelled(true); }
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void bed(PlayerBedEnterEvent event) {
+        var b = event.getBed();
+        if (b.getBlockData() instanceof org.bukkit.block.data.type.Bed bed && bed.getPart() == org.bukkit.block.data.type.Bed.Part.FOOT) b = b.getRelative(bed.getFacing());
+        if (plugin.routines().claimed(new com.mdvcraft.mdvnpc.routine.RoutineGoal.Point(b.getWorld().getUID(), b.getX(), b.getY(), b.getZ(), 0))) event.setCancelled(true);
+    }
     @EventHandler(priority = EventPriority.MONITOR)
     public void observeNpcSpawn(CreatureSpawnEvent event) { plugin.manager().observeSpawn(event); }
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)

@@ -1,3 +1,15 @@
+# MDVNPC 1.2.0
+
+- Goals por mundo y hora: dormir, caminar, sentarse y trabajar, con velocidad individual.
+- Caminar meta, aleatorio entre puntos marcados y ciclo; horarios nocturnos y validación de superposiciones.
+- Selección por clic, preguntas de horario por chat, cancelación y detección de ediciones concurrentes.
+- Poses de cama y asiento en stairs; comida y bebida cosméticas, incluida cerveza MMOItems configurable.
+- Tiendas y comandos disponibles solamente al llegar al puesto y durante el horario de trabajo.
+- Puertas de madera con cierre cuando queda libre el paso, integración opcional con WorldGuard.
+- Navegación incremental y caché acotadas, sin tickets de chunks ni escrituras por movimiento.
+- Recuperación por horario al cargar zonas; limpieza de asientos, poses y sesiones al retirar NPC.
+- Reloj opcional por mundo con duración independiente de día/noche y restauración de doDaylightCycle.
+- Maven 1.2.0; build.yml sin cambios. Entrega únicamente fuente, sin compilación final por petición del usuario.
 # MDVNPC 1.1.2
 
 - Editor con movimientos reales de inventario: elimina la copia deliberada del cursor.

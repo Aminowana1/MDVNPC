@@ -11,7 +11,7 @@ public final class LookService {
         Player nearest = null;
         double best = look.range() * look.range();
         for (Player player : players) {
-            double distance = player.getLocation().distanceSquared(npc.anchor());
+            double distance = player.getLocation().distanceSquared(npc.position());
             if (distance <= best && (!look.lineOfSight() || npc.entity().hasLineOfSight(player))) {
                 nearest = player;
                 best = distance;

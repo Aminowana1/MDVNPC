@@ -22,6 +22,8 @@ public final class MdvNpcPlugin extends JavaPlugin {
     private NpcRepository repository;
     private NpcManager manager;
     private ShopService shops;
+    private com.mdvcraft.mdvnpc.routine.RoutineService routines;
+    private com.mdvcraft.mdvnpc.routine.RoutineCommands routineCommands;
     private com.mdvcraft.mdvnpc.skin.SkinCacheService skins;
     private final Messages messages = new Messages(this::settings);
     private Map<String, NpcDefinition> definitions = Map.of();
@@ -35,7 +37,10 @@ public final class MdvNpcPlugin extends JavaPlugin {
             skins = new com.mdvcraft.mdvnpc.skin.SkinCacheService(this);
             shops = new ShopService(this);
             shops.load();
+            routines = new com.mdvcraft.mdvnpc.routine.RoutineService(this);
+            routineCommands = new com.mdvcraft.mdvnpc.routine.RoutineCommands(this);
             reloadNpcs();
+            getServer().getPluginManager().registerEvents(routineCommands, this);
             getServer().getPluginManager().registerEvents(shops, this);
             getServer().getPluginManager().registerEvents(new NpcListener(this), this);
             if (getServer().getPluginManager().isPluginEnabled("WorldGuard")) {
@@ -54,6 +59,7 @@ public final class MdvNpcPlugin extends JavaPlugin {
     }
     public void reloadNpcs() throws Exception {
         var snapshot = repository.load();
+        var routineSnapshot = routines.repository().read();
         // Existing servers retain config.yml, while newly added message keys use jar defaults.
         try (var stream = getResource("config.yml")) {
             if (stream != null) snapshot.settings().messages().setDefaults(
@@ -61,20 +67,29 @@ public final class MdvNpcPlugin extends JavaPlugin {
         }
         shops.prepareReload();
         shops.load(); // Validate everything before touching active NPCs.
+        routines.stop();
         if (manager != null) manager.stop();
         settings = snapshot.settings();
         definitions = snapshot.npcs();
         manager = new NpcManager(this);
+        routines.repository().install(routineSnapshot);
+        routines.start();
         manager.start(definitions);
     }
     @Override public void onDisable() {
         if (shops != null) shops.closeAll();
+        if (routineCommands != null) routineCommands.clear();
+        if (routines != null) try { routines.close(); }
+        catch (RuntimeException ex) { getLogger().log(Level.SEVERE, "No se pudo restaurar un reloj; conserva clock-state.yml para recuperarlo", ex); }
         if (manager != null) manager.stop();
         if (skins != null) skins.close();
     }
     public Settings settings() { return settings; }
     public com.mdvcraft.mdvnpc.skin.SkinCacheService skins() { return skins; }
     public ShopService shops() { return shops; }
+    public com.mdvcraft.mdvnpc.routine.RoutineService routines() { return routines; }
+    public com.mdvcraft.mdvnpc.routine.RoutineCommands routineCommands() { return routineCommands; }
+    public boolean canInteract(com.mdvcraft.mdvnpc.runtime.ActiveNpc npc) { return routines == null || routines.canInteract(npc); }
     public Messages messages() { return messages; }
     public NpcManager manager() { return manager; }
     public NpcRepository repository() { return repository; }

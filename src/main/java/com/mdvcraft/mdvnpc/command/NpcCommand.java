@@ -9,7 +9,7 @@ import org.bukkit.entity.Player;
 import java.util.*;
 
 public final class NpcCommand implements CommandExecutor, TabCompleter {
-    private static final List<String> COMMANDS = List.of("help", "list", "status", "create", "movehere", "delete", "rename", "skin", "enable", "mode", "shop", "reload");
+    private static final List<String> COMMANDS = List.of("help", "list", "status", "create", "movehere", "delete", "rename", "skin", "enable", "mode", "shop", "reload", "routine", "rutina", "clock");
     private final MdvNpcPlugin plugin;
     public NpcCommand(MdvNpcPlugin plugin) { this.plugin = plugin; }
     @Override public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
@@ -18,6 +18,8 @@ public final class NpcCommand implements CommandExecutor, TabCompleter {
         String sub = args.length == 0 ? "help" : args[0].toLowerCase(Locale.ROOT);
         try {
             switch (sub) {
+                case "routine", "rutina" -> plugin.routineCommands().command(sender, args);
+                case "clock" -> plugin.routineCommands().clock(sender, args);
                 case "list" -> msg.send(sender, "list", "npcs", String.join(", ", plugin.definitions().keySet()));
                 case "status" -> msg.send(sender, "status", "count", "" + plugin.definitions().size(), "active", "" + plugin.manager().activeCount(), "ticks", "" + plugin.settings().intervalTicks());
                 case "reload" -> { plugin.reloadNpcs(); msg.send(sender, "reloaded", "count", "" + plugin.definitions().size()); }
@@ -43,6 +45,9 @@ public final class NpcCommand implements CommandExecutor, TabCompleter {
                     if (sub.equals("mode") && !Set.of("normal", "shop").contains(args[2].toLowerCase(Locale.ROOT)))
                         throw new IllegalArgumentException("Modo: normal o shop");
                     Location destination = location;
+                    if (sub.equals("movehere") && plugin.routines().enabled(id)
+                            && plugin.manager().resolveWorld(plugin.definitions().get(id)) != destination.getWorld())
+                        throw new IllegalArgumentException("Desactiva y reconfigura la rutina antes de cambiar el NPC de mundo");
                     plugin.shops().prepareReload(); // Validate/flush editors before changing NPC files.
                     plugin.repository().edit(yaml -> {
                         String p = "npcs." + id;
@@ -78,11 +83,12 @@ public final class NpcCommand implements CommandExecutor, TabCompleter {
                     if (sub.equals("delete")) {
                         plugin.shops().closeAll(); // flush editing sessions before deleting this NPC's offers
                         plugin.shops().deleteShop(id);
+                        plugin.routines().repository().edit(y -> y.set("npcs." + id, null));
                     }
                     plugin.reloadNpcs();
                     msg.send(sender, sub.equals("delete") ? "deleted" : "saved", "npc", id);
                 }
-                default -> msg.help(sender);
+                default -> { msg.help(sender); com.mdvcraft.mdvnpc.routine.RoutineCommands.help(sender); }
             }
         } catch (Exception ex) { msg.send(sender, "error", "error", ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage()); }
         return true;
@@ -95,6 +101,19 @@ public final class NpcCommand implements CommandExecutor, TabCompleter {
     }
     @Override public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (!sender.hasPermission("mdvnpc.admin")) return List.of();
+        if (args.length >= 2 && Set.of("routine", "rutina").contains(args[0].toLowerCase(Locale.ROOT))) {
+            Collection<String> options = switch(args.length) {
+                case 2 -> { var ids = new ArrayList<>(plugin.definitions().keySet()); ids.add("cancelar"); yield ids; }
+                case 3 -> List.of("goal", "list", "status", "enable", "delete");
+                case 4 -> args[2].equalsIgnoreCase("enable") ? List.of("true", "false") : List.of("1", "2", "3", "4", "5");
+                case 5 -> List.of("dormir", "caminar", "sentarse", "trabajo");
+                case 6 -> Set.of("caminar", "walk").contains(args[4].toLowerCase(Locale.ROOT)) ? List.of("meta", "aleatorio", "ciclo") : List.of("07:00", "12:00", "18:00", "22:00");
+                default -> List.of();
+            };
+            String prefix = args[args.length-1].toLowerCase(Locale.ROOT);
+            return options.stream().filter(v -> v.toLowerCase(Locale.ROOT).startsWith(prefix)).sorted().toList();
+        }
+        if (args.length == 2 && args[0].equalsIgnoreCase("clock")) return org.bukkit.Bukkit.getWorlds().stream().map(org.bukkit.World::getName).filter(n -> n.startsWith(args[1])).toList();
         Collection<String> choices = args.length == 1 ? COMMANDS : args.length == 2 && Set.of("movehere", "delete", "rename", "skin", "enable", "mode", "shop").contains(args[0].toLowerCase(Locale.ROOT))
                 ? plugin.definitions().keySet() : args.length == 3 && args[0].equalsIgnoreCase("enable") ? List.of("true", "false") : args.length == 3 && args[0].equalsIgnoreCase("mode") ? List.of("normal", "shop") : List.of();
         String prefix = args.length == 0 ? "" : args[args.length - 1].toLowerCase(Locale.ROOT);

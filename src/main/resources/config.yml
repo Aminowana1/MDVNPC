@@ -13,6 +13,21 @@ worldguard-spawn-bypass: true
 # false respeta cancelaciones de otros plugins. true permite abrir SHOP en lobbies protegidos.
 # No se puede saber qué plugin canceló el evento; activar solo si es intencional.
 shop-allow-cancelled-interaction: false
+# Rutinas opcionales: se guardan por separado en routines.yml. No fuerzan chunks.
+routines:
+  default-speed: 2.4 # bloques/segundo; cada goal puede sustituirlo
+  random-radius: 20
+  activation-range: 48
+  movement-interval-ticks: 2 # 1..4; interpolación de pequeños pasos, IA vanilla apagada
+  max-search-nodes: 2048 # límite por búsqueda, no se explora el mundo entero
+  search-nodes-per-tick: 160 # presupuesto por actualización compartido por todos
+  cached-routes: 32 # caché global en RAM, no se escribe cada paso
+  seat-offset-y: 0.0 # ajustar si otro plugin cambia la altura visual del disfraz
+  seated-consumption: true
+  meal-min-seconds: 30
+  meal-max-seconds: 90
+  beer-type: CONSUMABLE # ID interno de categoría MMOItems, no nombre traducido
+  beer-id: CERVEZA
 messages:
   prefix: '&8[&2MDVNPC&8] &7'
   no-permission: '&cNo tienes permiso.'

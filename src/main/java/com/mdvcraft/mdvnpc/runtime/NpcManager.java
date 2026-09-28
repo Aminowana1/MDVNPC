@@ -29,6 +29,8 @@ public final class NpcManager {
     private long generation;
     private long nextMaintenance;
     private long tickCounter;
+    private long nextRespawn;
+    private final Map<String, Long> spawnRetry = new HashMap<>();
     private final LookService look = new LookService();
     private final DialogueService dialogue = new DialogueService();
     private final InteractionService interactions;
@@ -43,7 +45,7 @@ public final class NpcManager {
         indexWorlds();
         // Startup/reload-only cleanup of entities marked by MDVNPC; never touch other plugins.
         for (World world : Bukkit.getWorlds())
-            for (Entity entity : world.getEntities()) if (owned(entity)) entity.remove();
+            for (Entity entity : world.getEntities()) if (owned(entity) || plugin.routines().isSeat(entity)) entity.remove();
         for (ChunkKey key : byChunk.keySet()) queue(key);
         int cadence = gcd(plugin.settings().intervalTicks(), plugin.settings().lookIntervalTicks());
         ticker = Bukkit.getScheduler().runTaskTimer(plugin, () -> tick(cadence), cadence, cadence);
@@ -54,7 +56,7 @@ public final class NpcManager {
         if (ticker != null) { ticker.cancel(); ticker = null; }
         for (ActiveNpc npc : List.copyOf(active.values())) remove(npc);
         active.clear(); byEntity.clear(); spawning.clear(); spawnOutcomes.clear(); byChunk.clear(); pending.clear();
-        dialogue.clear(); interactions.clear();
+        dialogue.clear(); interactions.clear(); spawnRetry.clear();
     }
     private void indexWorlds() {
         byChunk.clear();
@@ -67,6 +69,11 @@ public final class NpcManager {
             }
             var p = definition.position();
             byChunk.computeIfAbsent(new ChunkKey(world.getUID(), p.chunkX(), p.chunkZ()), ignored -> new ArrayList<>()).add(definition);
+            for (var point : plugin.routines().points(definition.id())) {
+                if (!point.world().equals(world.getUID())) continue;
+                var list = byChunk.computeIfAbsent(new ChunkKey(world.getUID(), point.x() >> 4, point.z() >> 4), ignored -> new ArrayList<>());
+                if (!list.contains(definition)) list.add(definition);
+            }
         }
     }
     public World resolveWorld(NpcDefinition definition) {
@@ -75,6 +82,7 @@ public final class NpcManager {
         return position.worldId() != null ? Bukkit.getWorld(position.worldId()) : Bukkit.getWorld(position.worldName());
     }
     public void worldLoaded() {
+        plugin.routines().worldLoaded();
         indexWorlds();
         for (ChunkKey key : byChunk.keySet()) queue(key);
     }
@@ -96,7 +104,11 @@ public final class NpcManager {
         if (existing != null && existing.entity().isValid()) return;
         if (existing != null) remove(existing);
         var p = definition.position();
-        Location anchor = new Location(world, p.x(), p.y(), p.z(), p.yaw(), p.pitch());
+        Location anchor = plugin.routines().spawnLocation(definition, world);
+        if (anchor == null || !world.isChunkLoaded(anchor.getBlockX() >> 4, anchor.getBlockZ() >> 4)) return;
+        long now = System.nanoTime();
+        if (now < spawnRetry.getOrDefault(definition.id(), 0L)) return;
+        spawnRetry.put(definition.id(), now + 30_000_000_000L);
         if (p.y() < world.getMinHeight() || p.y() >= world.getMaxHeight()) {
             plugin.getLogger().warning("NPC " + definition.id() + ": altura fuera de los límites del mundo.");
             return;
@@ -135,6 +147,7 @@ public final class NpcManager {
             ActiveNpc npc = new ActiveNpc(definition, anchor, entity, disguise);
             active.put(definition.id(), npc);
             byEntity.put(entity.getUniqueId(), npc);
+            spawnRetry.remove(definition.id());
         } catch (RuntimeException | LinkageError ex) {
             if (entity != null) entity.remove();
             plugin.getLogger().log(Level.SEVERE, "No se pudo crear NPC " + definition.id() + " en "
@@ -148,6 +161,7 @@ public final class NpcManager {
         }
     }
     private void remove(ActiveNpc npc) {
+        plugin.routines().remove(npc.definition().id());
         plugin.skins().forget(npc.definition().id());
         plugin.shops().invalidateNpc(npc.definition().id());
         active.remove(npc.definition().id(), npc);
@@ -157,16 +171,17 @@ public final class NpcManager {
         finally { npc.entity().remove(); }
     }
     public void chunkUnloaded(Chunk chunk) {
-        ChunkKey key = new ChunkKey(chunk.getWorld().getUID(), chunk.getX(), chunk.getZ());
-        for (NpcDefinition definition : byChunk.getOrDefault(key, List.of())) {
-            ActiveNpc npc = active.get(definition.id());
-            if (npc != null) remove(npc);
+        for (ActiveNpc npc : List.copyOf(active.values())) {
+            Location location = npc.position();
+            if (location.getWorld() == chunk.getWorld() && location.getBlockX() >> 4 == chunk.getX() && location.getBlockZ() >> 4 == chunk.getZ()) remove(npc);
         }
     }
     public void cleanupLoadedEntities(List<Entity> entities) {
-        for (Entity entity : entities)
+        for (Entity entity : entities) {
+            if (plugin.routines().isSeat(entity) && !plugin.routines().liveSeat(entity)) entity.remove();
             if (owned(entity) && !spawning.contains(entity.getUniqueId())
                     && !byEntity.containsKey(entity.getUniqueId())) entity.remove();
+        }
     }
     /** Solo se reconocen UUID creados por nuestro propio callback de World.spawn. */
     public boolean isSpawningNpc(Entity entity) {
@@ -198,6 +213,12 @@ public final class NpcManager {
             nextMaintenance = now + DialogueService.nanos(60);
         }
         if ((!checkLook && !checkDialogue) || Bukkit.getOnlinePlayers().isEmpty()) return;
+        if (tickCounter >= nextRespawn) {
+            nextRespawn = tickCounter + 40;
+            for (var definition : definitions.values()) if (definition.enabled() && plugin.routines().enabled(definition.id()) && !active.containsKey(definition.id())) {
+                World world = resolveWorld(definition); if (world != null) spawn(definition, world);
+            }
+        }
         for (ActiveNpc npc : List.copyOf(active.values())) {
             if (!npc.entity().isValid()) {
                 remove(npc);
@@ -206,10 +227,11 @@ public final class NpcManager {
                 continue;
             }
             var definition = npc.definition();
+            if (!plugin.routines().canLook(npc)) continue;
             double range = Math.max(checkLook && definition.look().enabled() ? definition.look().range() : 0,
                     checkDialogue && definition.dialogue().enabled() && !definition.dialogue().lines().isEmpty() ? definition.dialogue().range() : 0);
             if (range <= 0) continue;
-            Collection<Player> players = npc.anchor().getWorld().getNearbyPlayers(npc.anchor(), range,
+            Collection<Player> players = npc.position().getWorld().getNearbyPlayers(npc.position(), range,
                     player -> PlayerFilter.accepts(player, plugin.settings()));
             if (checkLook) look.update(npc, players, plugin.settings().rotationThreshold());
             if (checkDialogue) dialogue.update(npc, players, now);
@@ -220,5 +242,6 @@ public final class NpcManager {
     public InteractionService interactions() { return interactions; }
     public void forget(UUID player) { dialogue.forget(player); interactions.forget(player); }
     public int activeCount() { return active.size(); }
+    public Collection<ActiveNpc> activeNpcs() { return List.copyOf(active.values()); }
 }
 
