@@ -56,7 +56,10 @@ public final class NpcParser {
                         s.getBoolean("shop.trade-dialogue.random", true),
                         s.getStringList("shop.trade-dialogue.lines"));
                 result.put(id, new NpcDefinition(id, s.getBoolean("enabled", true), s.getString("name", id),
-                        s.getBoolean("name-visible", true), pos, skin, look, text, interaction, mode, tradeDialogue));
+                        s.getBoolean("name-visible", true), pos, skin, look, text, interaction, mode, tradeDialogue,
+                        new Traits(com.mdvcraft.mdvnpc.trait.Trait.parse(s.getString("trait.type","none")),
+                                number(s,"trait.beer-cooldown-seconds",20,1,86400),
+                                s.contains("trait.beer-dialogues")?s.getStringList("trait.beer-dialogues"):Traits.defaults().beerLines())));
             } catch (RuntimeException ex) { throw new IllegalArgumentException("NPC " + id + ": " + ex.getMessage(), ex); }
         }
         return Collections.unmodifiableMap(result);

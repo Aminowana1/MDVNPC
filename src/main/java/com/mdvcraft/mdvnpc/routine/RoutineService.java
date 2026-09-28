@@ -109,7 +109,26 @@ public final class RoutineService {
         var w=window(npc.definition().id(),npc.entity().getWorld());
         return same(s.window,w) && npc.entity().getLocation().distanceSquared(s.approach)<.36;
     }
-    public boolean canLook(ActiveNpc npc) { return !enabled(npc.definition().id()) || canInteract(npc); }
+    public boolean canLook(ActiveNpc npc) { return (plugin.traits()==null || !plugin.traits().busy(npc.definition().id())) && (!enabled(npc.definition().id()) || canInteract(npc)); }
+    public boolean canReceiveBeer(ActiveNpc npc) {
+        if(!enabled(npc.definition().id()))return true;
+        State s=states.get(npc.definition().id());
+        if(s!=null && s.pose!=null && (s.pose.sleeping || !validFurniture(s.goal,s.destination,npc.entity().getWorld())
+                || s.pose.seat!=null && (!s.pose.seat.isValid() || !npc.entity().isInsideVehicle())))return false;
+        return s!=null && s.npc==npc && !s.paused && s.goal!=null && s.goal.type()!=RoutineGoal.Type.SLEEP
+                && same(s.window,window(npc.definition().id(),npc.entity().getWorld())) && !failed.contains(npc.definition().id());
+    }
+    public RoutineVisuals.Pose beginDrink(ActiveNpc npc,org.bukkit.inventory.ItemStack beer,long tick) {
+        State s=states.get(npc.definition().id());
+        if(s!=null){looks.clear(npc,s.look);navigator.cancel(npc.definition().id());}
+        return visuals.beginDrink(npc,s==null?null:s.pose,beer,tick);
+    }
+    public boolean drinkTick(RoutineVisuals.Pose pose,long tick){return visuals.drinkTick(pose,tick);}
+    public void cancelDrink(RoutineVisuals.Pose pose,long tick){visuals.suspend(pose,tick);}
+    private void say(ActiveNpc npc,Player player,String line) {
+        if(plugin.sounds()!=null)plugin.sounds().say(npc,player,line);
+        else player.sendMessage(Text.color(Text.placeholders(line,player,npc.definition())));
+    }
     public RoutineGoal activeGoal(ActiveNpc npc) {
         State s=states.get(npc.definition().id());
         return s!=null && s.npc==npc && !s.paused ? s.goal : null;
@@ -123,7 +142,7 @@ public final class RoutineService {
         state.nextLine=(index+1)%cfg.lines().size();
         state.due=now+(long)(cfg.cooldownSeconds()*1_000_000_000L);
         String line=cfg.lines().get(index);
-        player.sendMessage(Text.color(Text.placeholders(line,player,npc.definition())));
+        say(npc,player,line);
     }
     public void forget(UUID player) {
         dialogueStates.keySet().removeIf(k->k.player().equals(player));
@@ -136,6 +155,7 @@ public final class RoutineService {
         return a==b || a!=null && b!=null && a.occurrence()==b.occurrence() && a.timedOrder()==b.timedOrder();
     }
     private void release(State s,boolean reposition) {
+        if(plugin.traits()!=null)plugin.traits().cancel(s.npc.definition().id());
         looks.clear(s.npc,s.look);
         if(s.working) plugin.shops().invalidateNpc(s.npc.definition().id());
         s.working=false;
@@ -160,6 +180,7 @@ public final class RoutineService {
                 plugin.getLogger().log(java.util.logging.Level.SEVERE,"Rutina pausada por error: "+id+". Corrige y usa /mdvnpc reload",ex);
             }
         }
+        if(plugin.traits()!=null)plugin.traits().tick(ticks);
         int budget=Math.max(16,Math.min(2048,plugin.settings().messages().getInt("routines.search-nodes-per-tick",160)));
         navigator.searchBudget(budget,2_000_000);
         if(ticks%20<cadence) {
@@ -177,6 +198,7 @@ public final class RoutineService {
             boolean absent=position.getWorld().getNearbyPlayers(position,range,p -> !p.isDead() && p.getGameMode()!=GameMode.SPECTATOR).isEmpty();
             if(absent) {
                 if(!s.paused) {
+                    if(plugin.traits()!=null)plugin.traits().cancel(id);
                     // Keep furniture poses when the same schedule remains active. In particular,
                     // never wake and displace a sleeper just because its last observer left.
                     if(s.pose!=null) {looks.clear(npc,s.look);visuals.suspend(s.pose,ticks);navigator.cancel(id);}
@@ -217,6 +239,7 @@ public final class RoutineService {
             clearGoalDialogue(id);
             s.goal=goal; s.point=0; s.nextDialogue=0;
         }
+        if(plugin.traits()!=null && plugin.traits().busy(id)) {s.status="bebiendo cerveza ofrecida";s.travelSince=ticks;return;}
         if(ticks>=s.nextDialogue) { s.nextDialogue=ticks+20; updateDialogue(npc,goal,System.nanoTime()); }
         if(s.pose!=null) {
             if(!validFurniture(goal,s.destination,position.getWorld()) || s.pose.seat!=null && (!s.pose.seat.isValid() || !npc.entity().isInsideVehicle())) {
@@ -249,6 +272,7 @@ public final class RoutineService {
         }
         Location beforeMove=npc.position();
         var result=navigator.move(npc,s.approach,goal.speed(),ticks,cadence);
+        if(plugin.sounds()!=null)plugin.sounds().moved(npc,beforeMove,npc.position(),ticks);
         if(result==RoutineNavigator.Result.MOVING) {
             var moved=npc.position().toVector().subtract(beforeMove.toVector());moved.setY(0);
             float bodyYaw=moved.lengthSquared()>.00001?beforeMove.clone().setDirection(moved).getYaw():s.look.initialized?s.look.bodyYaw:beforeMove.getYaw();
@@ -295,7 +319,7 @@ public final class RoutineService {
             state.lastSeen=now; if(now<state.due) continue;
             int index=activeDialogue.random()?ThreadLocalRandom.current().nextInt(activeDialogue.lines().size()):state.nextLine;
             state.nextLine=(index+1)%activeDialogue.lines().size();
-            player.sendMessage(Text.color(Text.placeholders(activeDialogue.lines().get(index),player,npc.definition())));
+            say(npc,player,activeDialogue.lines().get(index));
             state.due=now+(long)(activeDialogue.intervalSeconds()*1_000_000_000L);
         }
     }

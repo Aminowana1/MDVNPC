@@ -9,6 +9,9 @@ import java.util.concurrent.ThreadLocalRandom;
 
 /** The purchase message has a distinct per-player/per-NPC cooldown from proximity messages. */
 public final class TradeDialogueService {
+    private final com.mdvcraft.mdvnpc.MdvNpcPlugin plugin;
+    public TradeDialogueService(){this(null);}
+    public TradeDialogueService(com.mdvcraft.mdvnpc.MdvNpcPlugin plugin){this.plugin=plugin;}
     private record Key(UUID player, String npc) {}
     private final Map<Key, Long> due = new HashMap<>();
     private final Map<Key, Integer> sequence = new HashMap<>();
@@ -22,7 +25,9 @@ public final class TradeDialogueService {
         int index = dialog.random() ? ThreadLocalRandom.current().nextInt(dialog.lines().size()) : sequence.getOrDefault(key, 0) % dialog.lines().size();
         sequence.put(key, (index + 1) % dialog.lines().size());
         due.put(key, now + DialogueService.nanos(dialog.cooldownSeconds()));
-        player.sendMessage(Text.color(Text.placeholders(dialog.lines().get(index), player, npc)));
+        var active=plugin==null || plugin.manager()==null?null:plugin.manager().activeNpcs().stream().filter(n->n.definition()==npc).findFirst().orElse(null);
+        if(active!=null && plugin.sounds()!=null)plugin.sounds().say(active,player,dialog.lines().get(index));
+        else player.sendMessage(Text.color(Text.placeholders(dialog.lines().get(index), player, npc)));
     }
     public void forget(UUID player) {
         due.keySet().removeIf(k -> k.player.equals(player));

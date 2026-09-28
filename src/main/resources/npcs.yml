@@ -3,6 +3,12 @@
 npcs:
   thurg:
     enabled: true
+    trait:
+      type: none # ninguno, alcoholico, lector, gloton, inquieto, ruidoso
+      beer-cooldown-seconds: 20
+      beer-dialogues:
+        - '&7{npc} &f» &e¡Gracias por la cerveza, {player}!'
+        - '&7{npc} &f» &e¡Ahhh, eso estaba bueno!'
     name: '&2Thurg'
     name-visible: true
     location:

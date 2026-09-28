@@ -18,6 +18,12 @@ import java.util.Objects;
 import java.util.logging.Level;
 
 public final class MdvNpcPlugin extends JavaPlugin {
+    private com.mdvcraft.mdvnpc.trait.NpcSounds sounds;
+    private com.mdvcraft.mdvnpc.trait.TraitService traits;
+    private com.mdvcraft.mdvnpc.trait.TraitEditor traitEditor;
+    public com.mdvcraft.mdvnpc.trait.TraitEditor traitEditor(){return traitEditor;}
+    public com.mdvcraft.mdvnpc.trait.NpcSounds sounds(){return sounds;}
+    public com.mdvcraft.mdvnpc.trait.TraitService traits(){return traits;}
     private Settings settings;
     private NpcRepository repository;
     private NpcManager manager;
@@ -37,13 +43,17 @@ public final class MdvNpcPlugin extends JavaPlugin {
                     && !java.nio.file.Files.exists(data.resolve("npcs.yml.legacy-backup"))) saveResource("npcs.yml", false);
             repository = new NpcRepository(data);
             skins = new com.mdvcraft.mdvnpc.skin.SkinCacheService(this);
+            sounds = new com.mdvcraft.mdvnpc.trait.NpcSounds(this);
+            traits = new com.mdvcraft.mdvnpc.trait.TraitService(this);
             shops = new ShopService(this);
             shops.load();
             routines = new com.mdvcraft.mdvnpc.routine.RoutineService(this);
             routineCommands = new com.mdvcraft.mdvnpc.routine.RoutineCommands(this);
+            traitEditor = new com.mdvcraft.mdvnpc.trait.TraitEditor(this);
             reloadNpcs();
             getServer().getPluginManager().registerEvents(routineCommands, this);
             getServer().getPluginManager().registerEvents(routineCommands.editor(), this);
+            getServer().getPluginManager().registerEvents(traitEditor, this);
             getServer().getPluginManager().registerEvents(shops, this);
             getServer().getPluginManager().registerEvents(new NpcListener(this), this);
             if (getServer().getPluginManager().isPluginEnabled("WorldGuard")) {
@@ -74,6 +84,7 @@ public final class MdvNpcPlugin extends JavaPlugin {
         if (manager != null) manager.stop();
         settings = snapshot.settings();
         definitions = snapshot.npcs();
+        traits.reloaded();
         manager = new NpcManager(this);
         routines.repository().install(routineSnapshot);
         routines.start();
@@ -85,6 +96,8 @@ public final class MdvNpcPlugin extends JavaPlugin {
         if (routines != null) try { routines.close(); }
         catch (RuntimeException ex) { getLogger().log(Level.SEVERE, "No se pudo restaurar un reloj; conserva clock-state.yml para recuperarlo", ex); }
         if (manager != null) manager.stop();
+        if (traits != null) traits.close();
+        if (sounds != null) sounds.clear();
         if (skins != null) skins.close();
     }
     public Settings settings() { return settings; }

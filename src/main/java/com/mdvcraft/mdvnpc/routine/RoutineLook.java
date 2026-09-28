@@ -18,15 +18,15 @@ public final class RoutineLook {
     }
     private final MdvNpcPlugin plugin;
     public RoutineLook(MdvNpcPlugin plugin) { this.plugin=plugin; }
-    private long delay() {
+    private long delay(ActiveNpc npc) {
         int min=Math.max(3,Math.min(300,plugin.settings().messages().getInt("routines.glance-min-seconds",8)));
         int max=Math.max(min,Math.min(300,plugin.settings().messages().getInt("routines.glance-max-seconds",18)));
-        return ThreadLocalRandom.current().nextLong(min,(long)max+1)*20;
+        return com.mdvcraft.mdvnpc.trait.TraitBehavior.glanceDelay(npc.definition().traits().type(),ThreadLocalRandom.current().nextLong(min,(long)max+1)*20);
     }
     public void tick(ActiveNpc npc,State state,long tick,float bodyYaw,boolean seated,boolean reading) {
         if(!plugin.settings().messages().getBoolean("routines.occasional-looking",true)) {clear(npc,state);return;}
         if(!state.initialized) {
-            state.initialized=true;state.nextGlance=tick+delay();
+            state.initialized=true;state.nextGlance=tick+delay(npc);
             state.headYaw=bodyYaw;state.headPitch=0;
         }
         state.bodyYaw=bodyYaw;
@@ -38,7 +38,11 @@ public final class RoutineLook {
         float wantedYaw=bodyYaw,wantedPitch=reading?28:0;
         if(!reading && tick>=state.nextGlance) {
             state.until=tick+ThreadLocalRandom.current().nextInt(25,61);
-            state.nextGlance=state.until+delay();state.player=null;
+            if(npc.definition().traits().type()==com.mdvcraft.mdvnpc.trait.Trait.RESTLESS) {
+                state.until=tick+ThreadLocalRandom.current().nextInt(8,18);
+                if(ThreadLocalRandom.current().nextBoolean())npc.entity().swingMainHand();
+            }
+            state.nextGlance=state.until+delay(npc);state.player=null;
             state.yawOffset=ThreadLocalRandom.current().nextFloat(-35,35);
             state.pitch=ThreadLocalRandom.current().nextFloat(-10,12);
             if(seated) {

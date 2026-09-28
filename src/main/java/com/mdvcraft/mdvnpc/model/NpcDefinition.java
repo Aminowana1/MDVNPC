@@ -5,7 +5,20 @@ import java.util.UUID;
 
 public record NpcDefinition(String id, boolean enabled, String name, boolean nameVisible,
                             Position position, Skin skin, Look look, Dialogue dialogue,
-                            Interaction interaction, Mode mode, TradeDialogue tradeDialogue) {
+                            Interaction interaction, Mode mode, TradeDialogue tradeDialogue, Traits traits) {
+    public NpcDefinition(String id, boolean enabled, String name, boolean nameVisible,
+                         Position position, Skin skin, Look look, Dialogue dialogue, Interaction interaction,
+                         Mode mode, TradeDialogue tradeDialogue) {
+        this(id,enabled,name,nameVisible,position,skin,look,dialogue,interaction,mode,tradeDialogue,Traits.defaults());
+    }
+    public record Traits(com.mdvcraft.mdvnpc.trait.Trait type,double beerCooldownSeconds,List<String> beerLines) {
+        public Traits { java.util.Objects.requireNonNull(type);beerLines=List.copyOf(beerLines);
+            if(!Double.isFinite(beerCooldownSeconds) || beerCooldownSeconds<1 || beerCooldownSeconds>86400 || beerLines.size()>128)
+                throw new IllegalArgumentException("Cooldown de cerveza: 1..86400 s; máximo 128 diálogos");
+        }
+        public static Traits defaults() {return new Traits(com.mdvcraft.mdvnpc.trait.Trait.NONE,20,
+                List.of("&7{npc} &f» &e¡Gracias por la cerveza, {player}!","&7{npc} &f» &e¡Ahhh, eso estaba bueno!"));}
+    }
     public NpcDefinition(String id, boolean enabled, String name, boolean nameVisible,
                          Position position, Skin skin, Look look, Dialogue dialogue, Interaction interaction) {
         this(id, enabled, name, nameVisible, position, skin, look, dialogue, interaction,

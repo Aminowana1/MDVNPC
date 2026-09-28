@@ -9,7 +9,7 @@ import org.bukkit.entity.Player;
 import java.util.*;
 
 public final class NpcCommand implements CommandExecutor, TabCompleter {
-    private static final List<String> COMMANDS = List.of("help", "list", "status", "create", "movehere", "delete", "rename", "skin", "enable", "mode", "shop", "reload", "routine", "rutina", "rutinas", "clock");
+    private static final List<String> COMMANDS = List.of("help", "list", "status", "create", "movehere", "delete", "rename", "skin", "enable", "mode", "shop", "reload", "routine", "rutina", "rutinas", "clock", "rasgo", "trait");
     private final MdvNpcPlugin plugin;
     public NpcCommand(MdvNpcPlugin plugin) { this.plugin = plugin; }
     @Override public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
@@ -19,6 +19,23 @@ public final class NpcCommand implements CommandExecutor, TabCompleter {
         try {
             switch (sub) {
                 case "routine", "rutina", "rutinas" -> plugin.routineCommands().command(sender, args);
+                case "rasgo", "trait" -> {
+                    if(args.length<2)throw new IllegalArgumentException("/mdvnpc rasgo <id> [ninguno|alcoholico|lector|gloton|inquieto|ruidoso]");
+                    String id=args[1];NpcParser.validateId(id);
+                    var npc=plugin.definitions().get(id);
+                    if(npc==null)throw new IllegalArgumentException("NPC no encontrado: "+id);
+                    if(args.length==2){sender.sendMessage("Rasgo de "+id+": "+npc.traits().type());return true;}
+                    if(args.length!=3)throw new IllegalArgumentException("Cada NPC puede tener un solo rasgo");
+                    var trait=com.mdvcraft.mdvnpc.trait.Trait.parse(args[2]);
+                    plugin.shops().prepareReload();
+                    plugin.repository().edit(yaml->{
+                        String path="npcs."+id+".trait";
+                        yaml.set(path+".type",trait.name().toLowerCase(Locale.ROOT));
+                        if(!yaml.contains(path+".beer-cooldown-seconds"))yaml.set(path+".beer-cooldown-seconds",npc.traits().beerCooldownSeconds());
+                        if(!yaml.contains(path+".beer-dialogues"))yaml.set(path+".beer-dialogues",npc.traits().beerLines());
+                    });
+                    plugin.reloadNpcs();msg.send(sender,"saved","npc",id);
+                }
                 case "clock" -> plugin.routineCommands().clock(sender, args);
                 case "list" -> msg.send(sender, "list", "npcs", String.join(", ", plugin.definitions().keySet()));
                 case "status" -> msg.send(sender, "status", "count", "" + plugin.definitions().size(), "active", "" + plugin.manager().activeCount(), "ticks", "" + plugin.settings().intervalTicks());
@@ -54,6 +71,9 @@ public final class NpcCommand implements CommandExecutor, TabCompleter {
                         switch (sub) {
                             case "create" -> {
                                 yaml.set(p + ".enabled", true);
+                                yaml.set(p + ".trait.type", "none");
+                                yaml.set(p + ".trait.beer-cooldown-seconds", 20);
+                                yaml.set(p + ".trait.beer-dialogues", com.mdvcraft.mdvnpc.model.NpcDefinition.Traits.defaults().beerLines());
                                 boolean modeArg = args.length > 3 && Set.of("shop", "normal").contains(args[3].toLowerCase(Locale.ROOT));
                                 yaml.set(p + ".mode", modeArg ? args[3].toLowerCase(Locale.ROOT) : "normal");
                                 yaml.set(p + ".name", args.length > (modeArg ? 4 : 3)
@@ -117,8 +137,8 @@ public final class NpcCommand implements CommandExecutor, TabCompleter {
             return options.stream().filter(v -> v.toLowerCase(Locale.ROOT).startsWith(prefix)).sorted().toList();
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("clock")) return org.bukkit.Bukkit.getWorlds().stream().map(org.bukkit.World::getName).filter(n -> n.startsWith(args[1])).toList();
-        Collection<String> choices = args.length == 1 ? COMMANDS : args.length == 2 && Set.of("movehere", "delete", "rename", "skin", "enable", "mode", "shop").contains(args[0].toLowerCase(Locale.ROOT))
-                ? plugin.definitions().keySet() : args.length == 3 && args[0].equalsIgnoreCase("enable") ? List.of("true", "false") : args.length == 3 && args[0].equalsIgnoreCase("mode") ? List.of("normal", "shop") : List.of();
+        Collection<String> choices = args.length == 1 ? COMMANDS : args.length == 2 && Set.of("movehere", "delete", "rename", "skin", "enable", "mode", "shop", "rasgo", "trait").contains(args[0].toLowerCase(Locale.ROOT))
+                ? plugin.definitions().keySet() : args.length == 3 && Set.of("rasgo","trait").contains(args[0].toLowerCase(Locale.ROOT)) ? List.of("ninguno","alcoholico","lector","gloton","inquieto","ruidoso") : args.length == 3 && args[0].equalsIgnoreCase("enable") ? List.of("true", "false") : args.length == 3 && args[0].equalsIgnoreCase("mode") ? List.of("normal", "shop") : List.of();
         String prefix = args.length == 0 ? "" : args[args.length - 1].toLowerCase(Locale.ROOT);
         return choices.stream().filter(s -> s.toLowerCase(Locale.ROOT).startsWith(prefix)).sorted().toList();
     }

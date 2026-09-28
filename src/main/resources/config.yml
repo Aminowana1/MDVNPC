@@ -54,6 +54,7 @@ messages:
   shop-saved: '&aTienda guardada: &f{npc}&a (página &f{page}&a).'
   action-denied: '&cNo tienes permiso para interactuar con este NPC.'
   help:
+    - "&e/mdvnpc rasgo <id> [ninguno|alcoholico|lector|gloton|inquieto|ruidoso]"
     - '&e/mdvnpc list &7- Ver los NPC.'
     - '&e/mdvnpc status &7- Ver cuántos están activos.'
     - '&e/mdvnpc create <id> <skin> [normal|shop] [nombre] &7- Crear aquí.'
@@ -66,3 +67,11 @@ messages:
     - '&e/mdvnpc enable <id> <true|false> &7- Activar/desactivar.'
     - '&e/mdvnpc rutinas <id> &7- Abrir el editor gráfico de rutinas.'
     - '&e/mdvnpc reload &7- Recargar config.yml y la carpeta NPCs.'
+
+# Sonidos locales; una voz por NPC cada 0.6 s como máximo, aunque haya varios oyentes.
+npc-sounds:
+  voice-enabled: true
+  voice-volume: 0.3
+  noisy-volume: 1.0
+  steps-enabled: true
+  step-volume: 0.25

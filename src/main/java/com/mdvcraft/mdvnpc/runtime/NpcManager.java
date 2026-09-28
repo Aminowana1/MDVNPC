@@ -32,11 +32,12 @@ public final class NpcManager {
     private long nextRespawn;
     private final Map<String, Long> spawnRetry = new HashMap<>();
     private final LookService look = new LookService();
-    private final DialogueService dialogue = new DialogueService();
+    private final DialogueService dialogue;
     private final InteractionService interactions;
 
     public NpcManager(MdvNpcPlugin plugin) {
         this.plugin = plugin;
+        dialogue = new DialogueService(plugin.sounds());
         marker = new NamespacedKey(plugin, "npc-id");
         interactions = new InteractionService(plugin.messages(), plugin.getLogger());
     }
@@ -161,6 +162,8 @@ public final class NpcManager {
         }
     }
     private void remove(ActiveNpc npc) {
+        if(plugin.traits()!=null)plugin.traits().cancel(npc.definition().id());
+        if(plugin.sounds()!=null)plugin.sounds().forget(npc.definition().id());
         plugin.routines().remove(npc.definition().id());
         plugin.skins().forget(npc.definition().id());
         plugin.shops().invalidateNpc(npc.definition().id());

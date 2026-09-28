@@ -1,6 +1,7 @@
 package com.mdvcraft.mdvnpc.routine;
 
 import com.mdvcraft.mdvnpc.MdvNpcPlugin;
+import com.mdvcraft.mdvnpc.trait.TraitBehavior;
 import com.mdvcraft.mdvnpc.runtime.ActiveNpc;
 import com.mdvcraft.mdvnpc.shop.MmoItemBridge;
 import com.github.retrooper.packetevents.util.Vector3i;
@@ -31,7 +32,7 @@ public final class RoutineVisuals {
         World world=npc.entity().getWorld();
         if (!world.isChunkLoaded(point.x()>>4,point.z()>>4)) return null;
         var block=world.getBlockAt(point.x(),point.y(),point.z());
-        Pose p=new Pose(); p.npc=npc; p.exit=exit.clone(); p.nextMeal=tick+mealDelay();
+        Pose p=new Pose(); p.npc=npc; p.exit=exit.clone(); p.nextMeal=tick+TraitBehavior.activityDelay(p.npc.definition().traits().type(),mealDelay());
         if(goal.type()==RoutineGoal.Type.SLEEP) {
             if(!(block.getBlockData() instanceof Bed bed) || bed.isOccupied()) return null;
             Location location=block.getLocation().add(.5,.5625,.5); location.setDirection(bed.getFacing().getDirection());
@@ -58,16 +59,17 @@ public final class RoutineVisuals {
     }
     public void tick(Pose p,long tick) {
         if(p.sleeping) return;
-        if(p.mealUntil>0 && tick>=p.mealUntil) { finishMeal(p); p.nextMeal=tick+mealDelay(); }
+        if(p.mealUntil>0 && tick>=p.mealUntil) { finishMeal(p); p.nextMeal=tick+TraitBehavior.activityDelay(p.npc.definition().traits().type(),mealDelay()); }
         if(p.mealUntil==0 && tick>=p.nextMeal) {
-            p.nextMeal=tick+mealDelay();
+            p.nextMeal=tick+TraitBehavior.activityDelay(p.npc.definition().traits().type(),mealDelay());
             boolean meals=plugin.settings().messages().getBoolean("routines.seated-consumption",true);
             boolean books=plugin.settings().messages().getBoolean("routines.seated-reading",true);
             double chance=plugin.settings().messages().getDouble("routines.reading-chance",.3);
             if(!Double.isFinite(chance))chance=.3;
+            chance=TraitBehavior.readingChance(p.npc.definition().traits().type(),chance);
             p.reading=books && (!meals || ThreadLocalRandom.current().nextDouble()<Math.max(0,Math.min(1,chance)));
             if(!meals && !p.reading)return;
-            int choice=ThreadLocalRandom.current().nextInt(6); p.drinking=choice>=4;
+            int choice=ThreadLocalRandom.current().nextDouble()<TraitBehavior.drinkChance(p.npc.definition().traits().type())?ThreadLocalRandom.current().nextInt(4,6):ThreadLocalRandom.current().nextInt(4); p.drinking=choice>=4;
             p.meal=new ItemStack(p.reading?Material.BOOK:switch(choice){case 0 -> Material.COOKED_BEEF; case 1 -> Material.APPLE; case 2 -> Material.MUSHROOM_STEW; case 3 -> Material.COOKED_BEEF; default -> Material.POTION;});
             if(!p.reading && choice==5 && Bukkit.getPluginManager().isPluginEnabled("MMOItems")) {
                 ItemStack beer=mmo.create(plugin.settings().messages().getString("routines.beer-type","CONSUMABLE"),plugin.settings().messages().getString("routines.beer-id","CERVEZA"));
@@ -78,8 +80,11 @@ public final class RoutineVisuals {
             watcher.setItemInMainHand(p.meal); watcher.setMainHandRaised(!p.reading);
             int min=Math.max(3,Math.min(300,plugin.settings().messages().getInt("routines.reading-min-seconds",12)));
             int max=Math.max(min,Math.min(300,plugin.settings().messages().getInt("routines.reading-max-seconds",25)));
-            p.mealUntil=tick+(p.reading?ThreadLocalRandom.current().nextLong(min,(long)max+1)*20:64); p.nextEffect=tick;
+            p.mealUntil=tick+(p.reading?TraitBehavior.readingDuration(p.npc.definition().traits().type(),ThreadLocalRandom.current().nextLong(min,(long)max+1)*20):64); p.nextEffect=tick;
         }
+        effects(p,tick);
+    }
+    private void effects(Pose p,long tick) {
         if(!p.reading && p.mealUntil>tick && tick>=p.nextEffect) {
             p.nextEffect=tick+8; Location mouth=p.npc.entity().getEyeLocation();
             mouth.add(mouth.getDirection().multiply(.25));
@@ -88,12 +93,26 @@ public final class RoutineVisuals {
             else mouth.getWorld().spawnParticle(Particle.SPLASH,mouth,2,.04,.04,.04,0);
         }
     }
+    public Pose beginDrink(ActiveNpc npc,Pose existing,ItemStack beer,long tick) {
+        Pose p=existing==null?new Pose():existing;p.npc=npc;finishMeal(p);
+        p.previous=npc.disguise().getWatcher().getItemInMainHand();
+        if(p.previous!=null)p.previous=p.previous.clone();
+        p.meal=beer.clone();p.meal.setAmount(1);p.drinking=true;p.reading=false;
+        p.mealUntil=tick+64;p.nextEffect=tick;
+        try {npc.disguise().getWatcher().setItemInMainHand(p.meal);npc.disguise().getWatcher().setMainHandRaised(true);}
+        catch(RuntimeException ex){finishMeal(p);throw ex;}
+        return p;
+    }
+    public boolean drinkTick(Pose p,long tick) {
+        if(tick>=p.mealUntil){suspend(p,tick);return true;}
+        effects(p,tick);return false;
+    }
     private void finishMeal(Pose p) {
         if(p.mealUntil==0) return;
         var watcher=p.npc.disguise().getWatcher(); watcher.setMainHandRaised(false); watcher.setItemInMainHand(p.previous);
         p.meal=null; p.previous=null; p.mealUntil=0;p.reading=false;
     }
-    public void suspend(Pose p,long tick) {finishMeal(p);p.nextMeal=tick+mealDelay();}
+    public void suspend(Pose p,long tick) {finishMeal(p);p.nextMeal=tick+TraitBehavior.activityDelay(p.npc.definition().traits().type(),mealDelay());}
     /** Called on activation; periodic calls only send metadata if the sleep pose drifted. */
     public boolean restoreSleep(Pose p,boolean force) {
         if(!p.sleeping || p.sleepingLocation==null)return true;

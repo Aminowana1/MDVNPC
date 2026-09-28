@@ -6,6 +6,9 @@ import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
 
 public final class DialogueService {
+    private final com.mdvcraft.mdvnpc.trait.NpcSounds sounds;
+    public DialogueService(){this(null);}
+    public DialogueService(com.mdvcraft.mdvnpc.trait.NpcSounds sounds){this.sounds=sounds;}
     private record Key(String npc, UUID player) {}
     private static final class State {
         long due, lastSeen;
@@ -27,7 +30,8 @@ public final class DialogueService {
             int index = dialogue.random() ? ThreadLocalRandom.current().nextInt(dialogue.lines().size())
                     : state.nextLine;
             state.nextLine = (index + 1) % dialogue.lines().size();
-            player.sendMessage(Text.color(Text.placeholders(dialogue.lines().get(index), player, npc.definition())));
+            if(sounds!=null)sounds.say(npc,player,dialogue.lines().get(index));
+            else player.sendMessage(Text.color(Text.placeholders(dialogue.lines().get(index), player, npc.definition())));
             state.due = now + nanos(dialogue.intervalSeconds());
         }
     }

@@ -21,7 +21,7 @@ public final class ShopService implements Listener {
     private final MdvNpcPlugin plugin;
     private final ShopRepository repository;
     private final MmoItemBridge bridge;
-    private final TradeDialogueService tradeDialogue = new TradeDialogueService();
+    private final TradeDialogueService tradeDialogue;
     private final Map<UUID, Editor> editors = new HashMap<>();
     private final Map<String, UUID> locks = new HashMap<>();
     private final Map<UUID, Session> merchants = new HashMap<>();
@@ -51,6 +51,7 @@ public final class ShopService implements Listener {
         }
     }
     public ShopService(MdvNpcPlugin plugin) {
+        tradeDialogue=new TradeDialogueService(plugin);
         this.plugin = plugin;
         repository = new ShopRepository(plugin.getDataFolder().toPath());
         bridge = new MmoItemBridge(plugin.getLogger());
