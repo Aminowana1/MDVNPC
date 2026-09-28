@@ -40,6 +40,7 @@ public final class RoutineEditor implements Listener {
     public void openMain(Player player,String npc){openMain(player,npc,0);}
     public void openMain(Player player,String npc,int page){
         if(!validNpc(player,npc))return;
+        if(plugin.prefixEditor()!=null)plugin.prefixEditor().cancel(player);
         var plan=repo().snapshot().plans().get(npc); List<RoutineGoal> goals=plan==null?List.of():plan.goals();
         int pages=Math.max(1,(goals.size()+44)/45); page=Math.max(0,Math.min(page,pages-1));
         Holder h=new Holder(npc,Screen.MAIN,page,0); Inventory inv=Bukkit.createInventory(h,54,c("&2Rutina: &f"+npc));h.inventory=inv;
@@ -51,6 +52,7 @@ public final class RoutineEditor implements Listener {
         inv.setItem(49,item(Material.EMERALD,"&aAgregar goal",List.of("&7Crear rápidamente un nuevo objetivo.")));
         inv.setItem(50,item(Material.BOOK,"&eEstado",List.of("&7"+plugin.routines().status(npc),"&7Goals: &f"+goals.size())));
         inv.setItem(51,item(Material.NAME_TAG,"&dRasgo del NPC",List.of("&7Actual: &f"+com.mdvcraft.mdvnpc.trait.TraitEditor.name(plugin.definitions().get(npc).traits().type()),"&eClic para asignar, cambiar o quitar")));
+        inv.setItem(52,item(Material.WRITABLE_BOOK,"&dPrefijo de los diálogos",List.of("&7Personaliza cómo habla este NPC.","&eClic para editar")));
         if(page+1<pages)inv.setItem(53,item(Material.ARROW,"&ePágina siguiente",List.of("&7Página "+(page+2)+" / "+pages)));
         player.openInventory(inv);
     }
@@ -130,6 +132,12 @@ public final class RoutineEditor implements Listener {
         if(slot==53){openMain(p,h.npc,h.page+1);return;}
         if(slot==47){boolean enabled=plan==null || !plan.enabled();repo().edit(y->y.set("npcs."+h.npc+".enabled",enabled));reload();openMain(p,h.npc,h.page);return;}
         if(slot==49){openAdd(p,h.npc);return;}
+        if(slot==52){
+            Bukkit.getScheduler().runTask(plugin,()->{
+                if(p.isOnline() && p.getOpenInventory().getTopInventory()==h.inventory && validNpc(p,h.npc))
+                    plugin.prefixEditor().open(p,h.npc,h.page);
+            });return;
+        }
         if(slot==51){
             Bukkit.getScheduler().runTask(plugin,()->{
                 if(p.isOnline() && p.getOpenInventory().getTopInventory()==h.inventory && validNpc(p,h.npc))

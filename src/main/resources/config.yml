@@ -31,6 +31,61 @@ routines:
   occasional-looking: true
   glance-min-seconds: 8
   glance-max-seconds: 18
+
+  # Miradas por contexto. Ángulos en grados; probabilidades 0..1.
+  looking:
+    walking:
+      enabled: true
+      interval-min-seconds: 8 # espera entre miradas
+      interval-max-seconds: 18
+      duration-min-seconds: 1.25 # tiempo que mantiene cada mirada
+      duration-max-seconds: 3
+      chance: 1.0 # probabilidad de mirar cuando vence la espera
+      update-interval-ticks: 4 # suavizado; no baja del intervalo global de movimiento
+      yaw-min: -35 # giro aleatorio horizontal, negativo=izquierda
+      yaw-max: 35
+      pitch-min: -10 # vertical, negativo=arriba
+      pitch-max: 12
+      yaw-limit: 40 # giro máximo respecto del cuerpo
+      yaw-step: 12 # grados máximos por actualización
+      pitch-step: 7
+      reading-pitch: 28 # inclinación al leer; útil en seated
+      look-at-players: false
+      player-range: 3 # distancia máxima real; 0 desactiva búsqueda
+      player-chance: 1.0 # probabilidad de elegir un jugador al mirar
+      require-line-of-sight: true
+      player-pitch-min: -25
+      player-pitch-max: 35
+    seated:
+      enabled: true
+      interval-min-seconds: 8 # espera entre miradas
+      interval-max-seconds: 18
+      duration-min-seconds: 1.25 # tiempo que mantiene cada mirada
+      duration-max-seconds: 3
+      chance: 1.0 # probabilidad de mirar cuando vence la espera
+      update-interval-ticks: 4 # suavizado; no baja del intervalo global de movimiento
+      yaw-min: -35 # giro aleatorio horizontal, negativo=izquierda
+      yaw-max: 35
+      pitch-min: -10 # vertical, negativo=arriba
+      pitch-max: 12
+      yaw-limit: 65 # giro máximo respecto del cuerpo
+      yaw-step: 12 # grados máximos por actualización
+      pitch-step: 7
+      reading-pitch: 28 # inclinación al leer; útil en seated
+      look-at-players: true
+      player-range: 3 # distancia máxima real; 0 desactiva búsqueda
+      player-chance: 1.0 # probabilidad de elegir un jugador al mirar
+      require-line-of-sight: true
+      player-pitch-min: -25
+      player-pitch-max: 35
+  restless:
+    frequency-multiplier: 6 # inquieto: divide la espera entre miradas
+    duration-multiplier: 0.5 # miradas más cortas
+    angle-multiplier: 1.5 # respeta yaw-limit y los límites verticales
+    arms-enabled: true
+    arm-min-seconds: 2
+    arm-max-seconds: 5
+    arm-chance: 0.8 # no gesticula mientras lee, come o bebe
   close-preopened-doors: true # cierra también puertas de madera ya abiertas por las que pasa
   meal-min-seconds: 30
   meal-max-seconds: 90
@@ -68,10 +123,38 @@ messages:
     - '&e/mdvnpc rutinas <id> &7- Abrir el editor gráfico de rutinas.'
     - '&e/mdvnpc reload &7- Recargar config.yml y la carpeta NPCs.'
 
-# Sonidos locales; una voz por NPC cada 0.6 s como máximo, aunque haya varios oyentes.
+# Sonidos locales; una secuencia por NPC, aunque haya varios oyentes.
 npc-sounds:
   voice-enabled: true
   voice-volume: 0.3
   noisy-volume: 1.0
   steps-enabled: true
   step-volume: 0.25
+  # Secuencia corta de sonidos para simular habla, compartida entre oyentes.
+  voice-syllables: 3
+  noisy-syllables: 5
+  voice-gap-ticks: 5
+  pitch-min: 0.8
+  pitch-max: 1.3
+  noisy-idle-enabled: true
+  idle-min-seconds: 40
+  idle-max-seconds: 90
+  idle-syllables: 8
+  idle-gap-ticks: 7
+  idle-volume: 1.2
+  idle-player-range: 12 # sin jugadores cerca no inicia ruido espontáneo
+
+# Reacción cosmética a un golpe directo de jugador; el NPC sigue siendo invulnerable.
+npc-reactions:
+  enabled: true
+  cooldown-seconds: 5 # por NPC, aunque ataquen varios jugadores
+  max-hit-distance: 4.5
+  look-seconds: 3
+  look-range: 8
+  angry-particles: 5 # 0 desactiva
+  impact-particles: 7 # 0 desactiva
+  hit-volume: 0.6
+  lines:
+    - '&7{npc} &f» &c¡Eh, no me pegues!'
+    - '&7{npc} &f» &c¡Un poco de respeto, {player}!'
+    - '&7{npc} &f» &c¡Estate quieto con esas manos!'

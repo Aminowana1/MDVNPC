@@ -5,7 +5,19 @@ import java.util.UUID;
 
 public record NpcDefinition(String id, boolean enabled, String name, boolean nameVisible,
                             Position position, Skin skin, Look look, Dialogue dialogue,
-                            Interaction interaction, Mode mode, TradeDialogue tradeDialogue, Traits traits) {
+                            Interaction interaction, Mode mode, TradeDialogue tradeDialogue, Traits traits, Speech speech) {
+    public NpcDefinition(String id,boolean enabled,String name,boolean nameVisible,Position position,Skin skin,
+                         Look look,Dialogue dialogue,Interaction interaction,Mode mode,TradeDialogue tradeDialogue,Traits traits) {
+        this(id,enabled,name,nameVisible,position,skin,look,dialogue,interaction,mode,tradeDialogue,traits,Speech.defaults());
+    }
+    public record Speech(String prefix,List<String> angerLines) {
+        public Speech {
+            if(prefix!=null && (prefix.length()>256 || prefix.contains("\n") || prefix.contains("\r")))
+                throw new IllegalArgumentException("Prefijo: máximo 256 caracteres, sin saltos de línea");
+            if(angerLines!=null){angerLines=List.copyOf(angerLines);if(angerLines.size()>128)throw new IllegalArgumentException("Máximo 128 frases de enfado");}
+        }
+        public static Speech defaults(){return new Speech(null,null);}
+    }
     public NpcDefinition(String id, boolean enabled, String name, boolean nameVisible,
                          Position position, Skin skin, Look look, Dialogue dialogue, Interaction interaction,
                          Mode mode, TradeDialogue tradeDialogue) {

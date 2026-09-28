@@ -109,14 +109,22 @@ public final class RoutineService {
         var w=window(npc.definition().id(),npc.entity().getWorld());
         return same(s.window,w) && npc.entity().getLocation().distanceSquared(s.approach)<.36;
     }
-    public boolean canLook(ActiveNpc npc) { return (plugin.traits()==null || !plugin.traits().busy(npc.definition().id())) && (!enabled(npc.definition().id()) || canInteract(npc)); }
+    public boolean canLook(ActiveNpc npc) { return (plugin.reactions()==null || !plugin.reactions().busy(npc.definition().id())) && (plugin.traits()==null || !plugin.traits().busy(npc.definition().id())) && (!enabled(npc.definition().id()) || canInteract(npc)); }
     public boolean canReceiveBeer(ActiveNpc npc) {
+        if(plugin.reactions()!=null && plugin.reactions().busy(npc.definition().id()))return false;
         if(!enabled(npc.definition().id()))return true;
         State s=states.get(npc.definition().id());
         if(s!=null && s.pose!=null && (s.pose.sleeping || !validFurniture(s.goal,s.destination,npc.entity().getWorld())
                 || s.pose.seat!=null && (!s.pose.seat.isValid() || !npc.entity().isInsideVehicle())))return false;
         return s!=null && s.npc==npc && !s.paused && s.goal!=null && s.goal.type()!=RoutineGoal.Type.SLEEP
                 && same(s.window,window(npc.definition().id(),npc.entity().getWorld())) && !failed.contains(npc.definition().id());
+    }
+    public void prepareReaction(ActiveNpc npc) {
+        State s=states.get(npc.definition().id());if(s==null)return;
+        looks.clear(npc,s.look);navigator.cancel(npc.definition().id());
+        if(s.pose!=null && s.pose.sleeping)release(s,true);
+        else if(s.pose!=null)visuals.suspend(s.pose,ticks);
+        s.nextPick=0;s.nextPresence=0;s.travelSince=ticks;
     }
     public RoutineVisuals.Pose beginDrink(ActiveNpc npc,org.bukkit.inventory.ItemStack beer,long tick) {
         State s=states.get(npc.definition().id());
@@ -127,7 +135,7 @@ public final class RoutineService {
     public void cancelDrink(RoutineVisuals.Pose pose,long tick){visuals.suspend(pose,tick);}
     private void say(ActiveNpc npc,Player player,String line) {
         if(plugin.sounds()!=null)plugin.sounds().say(npc,player,line);
-        else player.sendMessage(Text.color(Text.placeholders(line,player,npc.definition())));
+        else player.sendMessage(com.mdvcraft.mdvnpc.util.DialogueText.render(line,player,npc.definition()));
     }
     public RoutineGoal activeGoal(ActiveNpc npc) {
         State s=states.get(npc.definition().id());
@@ -180,10 +188,13 @@ public final class RoutineService {
                 plugin.getLogger().log(java.util.logging.Level.SEVERE,"Rutina pausada por error: "+id+". Corrige y usa /mdvnpc reload",ex);
             }
         }
+        if(plugin.reactions()!=null)plugin.reactions().tick(ticks);
+        if(plugin.sounds()!=null)plugin.sounds().tick(ticks);
         if(plugin.traits()!=null)plugin.traits().tick(ticks);
         int budget=Math.max(16,Math.min(2048,plugin.settings().messages().getInt("routines.search-nodes-per-tick",160)));
         navigator.searchBudget(budget,2_000_000);
         if(ticks%20<cadence) {
+            if(plugin.prefixEditor()!=null)plugin.prefixEditor().prune();
             doors.tick(ticks,false); if(plugin.routineCommands()!=null)plugin.routineCommands().prune();
             long now=System.nanoTime(); dialogueStates.values().removeIf(v->now>=v.due && now-v.lastSeen>60_000_000_000L);
         }
@@ -239,6 +250,7 @@ public final class RoutineService {
             clearGoalDialogue(id);
             s.goal=goal; s.point=0; s.nextDialogue=0;
         }
+        if(plugin.reactions()!=null && plugin.reactions().busy(id)){s.status="enfadado: mirando al jugador";s.travelSince=ticks;return;}
         if(plugin.traits()!=null && plugin.traits().busy(id)) {s.status="bebiendo cerveza ofrecida";s.travelSince=ticks;return;}
         if(ticks>=s.nextDialogue) { s.nextDialogue=ticks+20; updateDialogue(npc,goal,System.nanoTime()); }
         if(s.pose!=null) {
@@ -251,7 +263,7 @@ public final class RoutineService {
             }
             visuals.tick(s.pose,ticks);
             s.status=s.pose.sleeping?"durmiendo":s.pose.reading?"sentado: leyendo":"sentado";
-            if(!s.pose.sleeping)looks.tick(npc,s.look,ticks,s.pose.bodyYaw,true,s.pose.reading);
+            if(!s.pose.sleeping)looks.tick(npc,s.look,ticks,s.pose.bodyYaw,true,s.pose.reading,s.pose.mealUntil>ticks);
             return;
         }
         if(s.working) { s.status="trabajando";return; }

@@ -24,6 +24,10 @@ public final class MdvNpcPlugin extends JavaPlugin {
     public com.mdvcraft.mdvnpc.trait.TraitEditor traitEditor(){return traitEditor;}
     public com.mdvcraft.mdvnpc.trait.NpcSounds sounds(){return sounds;}
     public com.mdvcraft.mdvnpc.trait.TraitService traits(){return traits;}
+    private com.mdvcraft.mdvnpc.trait.PrefixEditor prefixEditor;
+    private com.mdvcraft.mdvnpc.trait.HitReactionService reactions;
+    public com.mdvcraft.mdvnpc.trait.PrefixEditor prefixEditor(){return prefixEditor;}
+    public com.mdvcraft.mdvnpc.trait.HitReactionService reactions(){return reactions;}
     private Settings settings;
     private NpcRepository repository;
     private NpcManager manager;
@@ -50,10 +54,13 @@ public final class MdvNpcPlugin extends JavaPlugin {
             routines = new com.mdvcraft.mdvnpc.routine.RoutineService(this);
             routineCommands = new com.mdvcraft.mdvnpc.routine.RoutineCommands(this);
             traitEditor = new com.mdvcraft.mdvnpc.trait.TraitEditor(this);
+            prefixEditor = new com.mdvcraft.mdvnpc.trait.PrefixEditor(this);
+            reactions = new com.mdvcraft.mdvnpc.trait.HitReactionService(this);
             reloadNpcs();
             getServer().getPluginManager().registerEvents(routineCommands, this);
             getServer().getPluginManager().registerEvents(routineCommands.editor(), this);
             getServer().getPluginManager().registerEvents(traitEditor, this);
+            getServer().getPluginManager().registerEvents(prefixEditor, this);
             getServer().getPluginManager().registerEvents(shops, this);
             getServer().getPluginManager().registerEvents(new NpcListener(this), this);
             if (getServer().getPluginManager().isPluginEnabled("WorldGuard")) {
@@ -85,12 +92,15 @@ public final class MdvNpcPlugin extends JavaPlugin {
         settings = snapshot.settings();
         definitions = snapshot.npcs();
         traits.reloaded();
+        reactions.reloaded();
         manager = new NpcManager(this);
         routines.repository().install(routineSnapshot);
         routines.start();
         manager.start(definitions);
     }
     @Override public void onDisable() {
+        if(prefixEditor!=null)prefixEditor.clear();
+        if(reactions!=null)reactions.clear();
         if (shops != null) shops.closeAll();
         if (routineCommands != null) routineCommands.clear();
         if (routines != null) try { routines.close(); }

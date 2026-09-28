@@ -31,7 +31,7 @@ public final class DialogueService {
                     : state.nextLine;
             state.nextLine = (index + 1) % dialogue.lines().size();
             if(sounds!=null)sounds.say(npc,player,dialogue.lines().get(index));
-            else player.sendMessage(Text.color(Text.placeholders(dialogue.lines().get(index), player, npc.definition())));
+            else player.sendMessage(com.mdvcraft.mdvnpc.util.DialogueText.render(dialogue.lines().get(index), player, npc.definition()));
             state.due = now + nanos(dialogue.intervalSeconds());
         }
     }

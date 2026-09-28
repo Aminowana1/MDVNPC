@@ -162,6 +162,7 @@ public final class NpcManager {
         }
     }
     private void remove(ActiveNpc npc) {
+        if(plugin.reactions()!=null)plugin.reactions().cancel(npc.definition().id());
         if(plugin.traits()!=null)plugin.traits().cancel(npc.definition().id());
         if(plugin.sounds()!=null)plugin.sounds().forget(npc.definition().id());
         plugin.routines().remove(npc.definition().id());

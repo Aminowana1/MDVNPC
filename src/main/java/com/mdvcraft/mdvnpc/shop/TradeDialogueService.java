@@ -27,7 +27,7 @@ public final class TradeDialogueService {
         due.put(key, now + DialogueService.nanos(dialog.cooldownSeconds()));
         var active=plugin==null || plugin.manager()==null?null:plugin.manager().activeNpcs().stream().filter(n->n.definition()==npc).findFirst().orElse(null);
         if(active!=null && plugin.sounds()!=null)plugin.sounds().say(active,player,dialog.lines().get(index));
-        else player.sendMessage(Text.color(Text.placeholders(dialog.lines().get(index), player, npc)));
+        else player.sendMessage(com.mdvcraft.mdvnpc.util.DialogueText.render(dialog.lines().get(index), player, npc));
     }
     public void forget(UUID player) {
         due.keySet().removeIf(k -> k.player.equals(player));

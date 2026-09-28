@@ -51,7 +51,7 @@ class RoutineLookTest {
         var restless=new RoutineLook.State();looks.tick(npcWithTrait("inquieto"),restless,0,0,false,false);
         // Default interval is 8..18 seconds. Assert ranges rather than a random exact value.
         assertTrue(normal.nextGlance>=160 && normal.nextGlance<=360);
-        assertTrue(restless.nextGlance>=46 && restless.nextGlance<=103);
+        assertTrue(restless.nextGlance>=27 && restless.nextGlance<=60);
         assertTrue(restless.nextGlance<normal.nextGlance);
         assertEquals(0,restless.until);
         verify(entity,never()).swingMainHand();

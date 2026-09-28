@@ -59,6 +59,7 @@ public final class NpcListener implements Listener {
         boolean cancelled = event.isCancelled();
         event.setCancelled(true);
         var npc = manager.find(event.getAttacked());
+        if (!cancelled && npc!=null && plugin.reactions()!=null)plugin.reactions().hit(npc,event.getPlayer());
         if (!cancelled && npc != null && plugin.canInteract(npc) && PlayerFilter.accepts(event.getPlayer(), plugin.settings()))
             manager.interactions().click(npc, event.getPlayer(), Click.LEFT, System.nanoTime());
     }

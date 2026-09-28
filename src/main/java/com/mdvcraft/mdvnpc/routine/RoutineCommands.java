@@ -28,9 +28,11 @@ public final class RoutineCommands implements Listener {
     public RoutineCommands(MdvNpcPlugin plugin) { this.plugin=plugin; this.editor=new RoutineEditor(plugin,this); }
     public RoutineEditor editor() { return editor; }
     private RoutineRepository repo() {return plugin.routines().repository();}
+    public void cancelSelection(Player player){selections.remove(player.getUniqueId());editor.cancelInput(player);}
     private static void say(CommandSender player,String message) {player.sendMessage(ChatColor.GOLD+"[MDVNPC] "+ChatColor.RESET+message);}
     public void command(CommandSender sender,String[] a) throws Exception {
         if(!sender.hasPermission("mdvnpc.admin")) return;
+        if(sender instanceof Player player && plugin.prefixEditor()!=null)plugin.prefixEditor().cancel(player);
         if(a.length<2 || a[1].equalsIgnoreCase("help")) {help(sender);return;}
         if(a[1].equalsIgnoreCase("cancelar") || a[1].equalsIgnoreCase("cancel")) {
             if(sender instanceof Player p) { selections.remove(p.getUniqueId()); editor.cancelInput(p); }say(sender,"Selección cancelada.");return;

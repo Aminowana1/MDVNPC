@@ -1,3 +1,13 @@
+# 1.5.0 — personalidad y prefijos
+
+- Prefijo por NPC desde el editor, con vista previa, eliminación y restauración del formato original.
+- Formato compartido para todas las frases propias del NPC, incluidas fuera de horario y enfado.
+- Voz en secuencias; ruido espontáneo más largo para ruidoso.
+- Reacción cosmética a golpes, pausa de caminata, mirada al atacante y recuperación de rutina.
+- Configuración independiente de miradas caminando/sentado, inquieto más activo y gestos configurables.
+- Configuración anterior compatible, nuevos tests fuente, workflow intacto. Sin compilación ni ejecución de pruebas locales.
+- Guía: PERSONALIDAD-1.5.0.md.
+
 # MDVNPC 1.3.1
 
 - Lectura ocasional sentado con libro, duración configurable y restauración del objeto anterior.

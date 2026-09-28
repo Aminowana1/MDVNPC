@@ -9,5 +9,5 @@ public final class TraitBehavior {
     public static long readingDuration(Trait trait,long ticks) {return trait==Trait.READER?ticks*3:ticks;}
     public static double drinkChance(Trait trait) {return trait==Trait.GLUTTON?.05:1d/3;}
     public static long activityDelay(Trait trait,long ticks) {return trait==Trait.GLUTTON?Math.max(40,ticks/4):ticks;}
-    public static long glanceDelay(Trait trait,long ticks) {return trait==Trait.RESTLESS?Math.max(20,Math.round(ticks/3.5)):ticks;}
+    public static long glanceDelay(Trait trait,long ticks) {return trait==Trait.RESTLESS?Math.max(20,Math.round(ticks/6.0)):ticks;}
 }

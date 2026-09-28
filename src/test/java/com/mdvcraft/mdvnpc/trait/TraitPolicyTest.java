@@ -24,7 +24,7 @@ class TraitPolicyTest {
         assertTrue(TraitBehavior.readingChance(Trait.GLUTTON,.3)<.03);
         assertEquals(.05,TraitBehavior.drinkChance(Trait.GLUTTON));
         assertEquals(200,TraitBehavior.activityDelay(Trait.GLUTTON,800));
-        assertEquals(100,TraitBehavior.glanceDelay(Trait.RESTLESS,350));
+        assertEquals(58,TraitBehavior.glanceDelay(Trait.RESTLESS,350));
         assertEquals(350,TraitBehavior.glanceDelay(Trait.NONE,350));
     }
 }

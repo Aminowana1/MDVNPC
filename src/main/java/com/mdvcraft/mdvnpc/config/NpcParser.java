@@ -59,10 +59,17 @@ public final class NpcParser {
                         s.getBoolean("name-visible", true), pos, skin, look, text, interaction, mode, tradeDialogue,
                         new Traits(com.mdvcraft.mdvnpc.trait.Trait.parse(s.getString("trait.type","none")),
                                 number(s,"trait.beer-cooldown-seconds",20,1,86400),
-                                s.contains("trait.beer-dialogues")?s.getStringList("trait.beer-dialogues"):Traits.defaults().beerLines())));
+                                s.contains("trait.beer-dialogues")?s.getStringList("trait.beer-dialogues"):Traits.defaults().beerLines()),
+                        new Speech(s.contains("speech.prefix")?prefix(s):null,
+                                s.contains("speech.anger-lines")?s.getStringList("speech.anger-lines"):null)));
             } catch (RuntimeException ex) { throw new IllegalArgumentException("NPC " + id + ": " + ex.getMessage(), ex); }
         }
         return Collections.unmodifiableMap(result);
+    }
+    private static String prefix(ConfigurationSection section) {
+        Object value=section.get("speech.prefix");
+        if(!(value instanceof String text))throw new IllegalArgumentException("speech.prefix debe ser texto");
+        return text;
     }
     public static void validateId(String id) {
         if (!id.matches("[a-z0-9_-]{1,48}")) throw new IllegalArgumentException("ID: 1..48 letras minúsculas, números, _ o -");

@@ -1,4 +1,6 @@
-# MDVNPC 1.4.2
+# MDVNPC 1.5.0
+
+Prefijo de diálogo por NPC desde el editor, voces en secuencias, ruido espontáneo del ruidoso, reacción a golpes y miradas configurables por contexto. [Guía y cambios de esta entrega](PERSONALIDAD-1.5.0.md). Base: MDVNPC-1.4.2-source.zip del usuario. Entrega fuente, sin compilación ni pruebas Java locales. Los informes que siguen corresponden a versiones anteriores.
 
 Corrección de las pruebas de mirada que impedían completar GitHub Actions: [CAMBIOS-1.4.2.md](CAMBIOS-1.4.2.md). Conserva el selector gráfico y todas las funciones de 1.4.1. Entrega fuente, sin compilación local.
 
