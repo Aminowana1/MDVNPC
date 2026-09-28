@@ -73,7 +73,7 @@ public final class SkinCacheService {
                     if (next == null) { writing = false; return; }
                 }
                 try { store.write(next); }
-                catch (Exception ex) { plugin.getLogger().log(Level.SEVERE, "No se pudo persistir skins.yml", ex); }
+                catch (Exception ex) { plugin.getLogger().log(Level.SEVERE, "No se pudo persistir el cache de skins por NPC", ex); }
             }
         });
     }

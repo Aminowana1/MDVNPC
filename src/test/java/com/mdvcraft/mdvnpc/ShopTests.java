@@ -59,7 +59,7 @@ class ShopTests {
         repo.savePage("merchant", 1, Map.of(1, new ShopOffer(result, price, null)));
         assertEquals(2, repo.offers("merchant").size());
         assertEquals(2, repo.pages("merchant"));
-        assertTrue(Files.exists(temp.resolve("shops.yml.bak")));
+        assertTrue(Files.exists(temp.resolve("NPCs/merchant/shop.yml.bak")));
         repo.savePage("merchant", 0, Map.of());
         assertFalse(repo.offers("merchant").containsKey(0));
         assertTrue(repo.offers("merchant").containsKey(10));

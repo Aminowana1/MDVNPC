@@ -51,6 +51,11 @@ npcs:
       cooldown-seconds: 2.0
       require-line-of-sight: true
       permission: ''
+      unavailable:
+        cooldown-seconds: 3.0
+        random: true
+        lines:
+          - '&7{npc} &f» &7Ahora mismo no estoy trabajando. Vuelve durante mi horario.'
       # click: RIGHT, LEFT o BOTH. executor: CONSOLE o PLAYER.
       # PLAYER conserva los permisos normales del jugador; no le otorga OP.
       # Sin / inicial. Variables: <p>, <player>, {player}, {uuid}, {npc}, {npc_id}.

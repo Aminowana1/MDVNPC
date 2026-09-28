@@ -1,3 +1,15 @@
+# MDVNPC 1.3.0
+
+- Nuevo editor gráfico con `/mdvnpc routine|rutina|rutinas <npc>`: lista goals, alta rápida y edición por goal.
+- Edición de horario, velocidad, puntos/cama/sillas/puesto, modo y radio de caminar desde el GUI.
+- Diálogos independientes por goal con rango, intervalo, demora inicial, orden y línea de visión.
+- Compatibilidad: los WORK antiguos heredan el diálogo global hasta ser editados.
+- Mensaje configurable con cooldown al hacer clic derecho cuando el NPC no está trabajando.
+- Persistencia por NPC en `NPCs/<id>/npc.yml`, `routines.yml`, `shop.yml` y `skin-cache.yml`.
+- Migración automática de `npcs.yml`, `routines.yml`, `shops.yml` y `skins.yml` con copia `*.legacy-backup`.
+- Escrituras optimizadas: editar un NPC o su reloj no reescribe archivos de otros NPC.
+- Maven 1.3.0; workflow de GitHub sin cambios de versión manual.
+
 # MDVNPC 1.2.0
 
 - Goals por mundo y hora: dormir, caminar, sentarse y trabajar, con velocidad individual.

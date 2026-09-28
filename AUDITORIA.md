@@ -1,32 +1,35 @@
-# Auditoría y límites — MDVNPC 1.2.0
+# Auditoría y límites — MDVNPC 1.3.0
 
-## Cambios
+## Cambios de esta revisión
 
-Rutinas en clases separadas: modelo y horarios, persistencia atómica, editor por chat/clic, búsqueda de caminos incremental, navegación, puertas, poses/consumo cosmético y reloj por mundo. Integración con ciclo de vida, protección de NPC y validación de compras. Correcciones previas de tiendas, MMOItems y skins conservadas.
+Se añadió un editor gráfico de rutinas accesible con `/mdvnpc routine|rutina|rutinas <npc>`. Permite listar y crear goals, cambiar horarios y velocidad, reasignar cama/sillas/puesto/recorrido, escoger explícitamente el modo de caminar, ajustar el radio aleatorio y administrar diálogos por goal.
 
-Los NPC con rutina habilitan sus interacciones de juego únicamente cuando están trabajando, dentro del horario y en el puesto. La autorización de una compra se vuelve a comprobar aunque la tienda ya esté abierta. La edición administrativa sigue disponible fuera del trabajo.
+Los diálogos de rutina son ahora independientes por goal. Los `WORK` creados antes de 1.3.0 heredan el diálogo global del NPC mientras no se editen, evitando perder la configuración existente. El diálogo global no se ejecuta en paralelo cuando hay rutina, por lo que no duplica mensajes. Los temporizadores se reinician al cambiar de goal o reanudar una actividad después de una suspensión.
 
-La navegación conserva desactivada la IA del aldeano. Usa pequeños desplazamientos controlados y geometría terrestre conservadora, no el navegador nativo de Minecraft. Las rutas se calculan automáticamente, se guardan en una caché limitada en RAM y se revalidan antes del desplazamiento. No se guardan posiciones por paso ni se fuerzan chunks.
+Cuando un NPC con rutina no está trabajando, el clic derecho no abre tienda ni ejecuta comandos y puede responder con `interaction.unavailable`, con cooldown por jugador/NPC. Este aviso también puede mostrarse en una región que haya cancelado la interacción original, sin usar esa cancelación para ejecutar la tienda o comandos.
 
-## Validación realizada antes de la petición de entregar solo fuente
+La persistencia específica de cada NPC vive en `NPCs/<id>/`: `npc.yml`, `routines.yml`, `shop.yml`, `skin-cache.yml` y, si hiciera falta, `shop-recovery/`. Los archivos globales antiguos (`npcs.yml`, `routines.yml`, `shops.yml`, `skins.yml`) se importan de forma automática y se renombran a `*.legacy-backup` tras una migración válida.
 
-- Primera compilación y suite de 61 pruebas: aprobadas, sin fallos, errores ni omitidas.
-- Una ejecución posterior de 31 pruebas seleccionadas de rutinas, persistencia, navegación, restricciones de compra y reloj: aprobadas, sin omitidas. Incluye pruebas ya contadas en la ejecución anterior; las cifras no se suman.
-- Seis pruebas adicionales del editor de rutinas por chat/clic: aprobadas. Cubren selección, confirmación, cancelación, permisos, mundo y conflicto entre administradores.
-- Cuatro pruebas experimentales de poses con Mockito no pudieron iniciarse porque el entorno de pruebas no proporciona `com.mojang.authlib.GameProfile`, requerido para instrumentar las clases de LibsDisguises. Se retiró ese arnés experimental; no se presenta como verificación de animaciones. Las poses siguen pendientes de prueba en un cliente real.
-- Después de la petición del usuario no se ejecutaron nuevas compilaciones ni pruebas. La última revisión fuente completa no tiene una ejecución final de `clean verify`.
-- GitHub Actions permanece idéntico al del ZIP 1.1.2; Maven define la versión 1.2.0 y el workflow usa el patrón de artefacto independiente de versión.
+Las escrituras se limitaron al NPC realmente modificado: cambiar un reloj ya no reescribe todos los `routines.yml`, y editar un NPC no reescribe los `npc.yml` de los demás.
+
+## Validación de esta revisión
+
+- Se revisaron manualmente los flujos de creación/edición, migración, borrado y recarga, incluidos los casos de compatibilidad con diálogos `WORK` antiguos.
+- Se añadieron/actualizaron pruebas de persistencia para la nueva estructura por NPC y para los diálogos por goal.
+- Se comprobó que `.github/workflows/build.yml` permanece sin cambios y continúa ejecutando `mvn clean verify` con Java 21 y publicando `target/MDVNPC-*.jar`.
+- El entorno de trabajo actual no dispone de Maven ni de las dependencias Paper/LibsDisguises en caché, por lo que aquí no fue posible ejecutar `mvn clean verify` completo.
+- Se ejecutó `javac --release 21 -proc:none` como control de sintaxis. Como era esperable, se detuvo por dependencias externas ausentes; no aparecieron errores sintácticos de Java en los archivos modificados.
+
+## Validación histórica de 1.2.0
+
+La base 1.2.0 había pasado una compilación/suite de 61 pruebas, una ejecución posterior de 31 pruebas seleccionadas y seis pruebas adicionales del editor de rutinas por chat/clic. Cuatro pruebas experimentales de poses con Mockito no pudieron iniciarse porque ese arnés no aportaba `com.mojang.authlib.GameProfile`; las poses requieren prueba dentro de un cliente real.
 
 ## Límites relevantes
 
-No se ejecutó un servidor real de Minecraft ni se probaron clientes conectados. Las pruebas de navegación usan una geometría simulada; no certifican todas las formas de bloques, animación de caminar, montaje en stairs, alineación con camas o efectos de LibsDisguises. El editor de tiendas conserva los límites de MockBukkit documentados en la auditoría 1.1.2.
+No se ejecutó un servidor real de Minecraft ni se probaron clientes conectados en esta revisión. Por eso, además del `clean verify` de GitHub, conviene probar en un servidor de staging: abrir el nuevo GUI, reconfigurar cada tipo de punto, cambiar un WALK entre los tres modos, verificar mensajes de cada goal y comprobar la migración con una copia de la carpeta de producción.
 
-No se midió la RAM ni CPU real con 20–25 NPC. Se limitan nodos, caché, actividad distante y frecuencia de búsquedas. El presupuesto temporal se comprueba entre lotes de búsqueda, no es una garantía dura del tiempo máximo del tick. El total del servidor depende de jugadores, chunks, protecciones y otros plugins.
+La navegación conserva desactivada la IA del aldeano. Usa pequeños desplazamientos controlados y geometría terrestre conservadora, con caché limitada en RAM, sin guardar posiciones por paso ni forzar chunks. El progreso exacto de una caminata META no se persiste tras una descarga de zona o reinicio.
 
-Rutinas y reloj se recuperan por el horario actual. El progreso exacto de las caminatas meta y las rutas en caché no se persisten. La recuperación fuera de la vista puede recolocar al NPC en un destino ya cargado. No se cargan zonas para completar una actividad.
+Las puertas siguen la política `use` de WorldGuard y cancelaciones de interacción; no hay compatibilidad universal con todos los plugins de protección. El consumo sentado sigue siendo visual. La autorización de una compra se vuelve a comprobar aunque la tienda ya esté abierta.
 
-Las puertas obedecen la política `use` de WorldGuard para no miembros y cancelaciones del evento de interacción; no hay compatibilidad universal con otros protectores. Las que un jugador dejó abiertas no se cierran. Una descarga de zona o interrupción del proceso puede dejar abierta una puerta que el NPC abrió.
-
-El consumo sentado es visual, sin efectos reales ni ítems recogibles. La cerveza usa categoría interna e ID configurables; el valor predeterminado es CONSUMABLE/CERVEZA, con poción visual como alternativa. La altura de asiento es ajustable. No hay integración con reservas de sillas de otros plugins.
-
-Ver [guía](GUIA-RUTINAS.md) para configurar, interpretar las caminatas meta y realizar la prueba dentro del juego. La auditoría histórica de tiendas está en [docs/AUDITORIA-1.1.2.md](docs/AUDITORIA-1.1.2.md).
+Ver [GUIA-RUTINAS-1.3.md](GUIA-RUTINAS-1.3.md) para el flujo nuevo y [docs/AUDITORIA-1.1.2.md](docs/AUDITORIA-1.1.2.md) para la auditoría histórica de tiendas.

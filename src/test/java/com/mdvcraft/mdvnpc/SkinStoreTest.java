@@ -27,7 +27,7 @@ class SkinStoreTest {
         store.remove("npc"); store.write(store.serialize());
         var reboot = new SkinStore(folder); reboot.load();
         assertEquals(named("Steve"), reboot.resolve("npc", named("Steve")));
-        assertTrue(Files.readString(folder.resolve("skins.yml.bak")).contains("texture:"));
+        assertFalse(Files.exists(folder.resolve("NPCs/npc/skin-cache.yml")));
     }
     @Test void incompleteProfilesNeverReplaceCachedSkin() {
         var store = new SkinStore(folder); var skin = resolved(); store.put("npc", skin);

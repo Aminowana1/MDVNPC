@@ -72,10 +72,11 @@ class TradeGuardTest {
         ShopItem item = new ShopItem(ShopItem.Kind.MMOITEMS, "MATERIAL", "COIN", null, 1);
         var repo = new ShopRepository(folder); repo.load();
         repo.savePage("shop", 0, Map.of(0, new ShopOffer(item, item, null)));
-        String external = Files.readString(folder.resolve("shops.yml")).replace("COIN", "OTHER");
-        Files.writeString(folder.resolve("shops.yml"), external);
+        Path file = folder.resolve("NPCs/shop/shop.yml");
+        String external = Files.readString(file).replace("COIN", "OTHER");
+        Files.writeString(file, external);
         assertThrows(IllegalStateException.class, () -> repo.savePage("shop", 0, Map.of()));
-        assertEquals(external, Files.readString(folder.resolve("shops.yml")));
+        assertEquals(external, Files.readString(file));
         assertThrows(IllegalArgumentException.class, () -> repo.savePage("shop", 0, Map.of(9, new ShopOffer(item, item, null))));
     }
 }

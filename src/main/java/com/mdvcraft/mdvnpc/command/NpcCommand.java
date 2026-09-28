@@ -9,7 +9,7 @@ import org.bukkit.entity.Player;
 import java.util.*;
 
 public final class NpcCommand implements CommandExecutor, TabCompleter {
-    private static final List<String> COMMANDS = List.of("help", "list", "status", "create", "movehere", "delete", "rename", "skin", "enable", "mode", "shop", "reload", "routine", "rutina", "clock");
+    private static final List<String> COMMANDS = List.of("help", "list", "status", "create", "movehere", "delete", "rename", "skin", "enable", "mode", "shop", "reload", "routine", "rutina", "rutinas", "clock");
     private final MdvNpcPlugin plugin;
     public NpcCommand(MdvNpcPlugin plugin) { this.plugin = plugin; }
     @Override public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
@@ -18,7 +18,7 @@ public final class NpcCommand implements CommandExecutor, TabCompleter {
         String sub = args.length == 0 ? "help" : args[0].toLowerCase(Locale.ROOT);
         try {
             switch (sub) {
-                case "routine", "rutina" -> plugin.routineCommands().command(sender, args);
+                case "routine", "rutina", "rutinas" -> plugin.routineCommands().command(sender, args);
                 case "clock" -> plugin.routineCommands().clock(sender, args);
                 case "list" -> msg.send(sender, "list", "npcs", String.join(", ", plugin.definitions().keySet()));
                 case "status" -> msg.send(sender, "status", "count", "" + plugin.definitions().size(), "active", "" + plugin.manager().activeCount(), "ticks", "" + plugin.settings().intervalTicks());
@@ -65,6 +65,9 @@ public final class NpcCommand implements CommandExecutor, TabCompleter {
                                 yaml.set(p + ".dialogue.interval-seconds", 40); yaml.set(p + ".dialogue.initial-delay-seconds", 2);
                                 yaml.set(p + ".dialogue.random", true); yaml.set(p + ".dialogue.lines", List.of("&7{npc} &f» &7Hola, &e{player}&7."));
                                 yaml.set(p + ".interaction.cooldown-seconds", 2); yaml.set(p + ".interaction.range", 6);
+                                yaml.set(p + ".interaction.unavailable.cooldown-seconds", 3);
+                                yaml.set(p + ".interaction.unavailable.random", true);
+                                yaml.set(p + ".interaction.unavailable.lines", List.of("&7{npc} &f» &7Ahora mismo no estoy trabajando. Vuelve durante mi horario."));
                                 yaml.set(p + ".interaction.commands", List.of());
                                 setLocation(yaml, p, destination);
                             }
@@ -101,7 +104,7 @@ public final class NpcCommand implements CommandExecutor, TabCompleter {
     }
     @Override public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (!sender.hasPermission("mdvnpc.admin")) return List.of();
-        if (args.length >= 2 && Set.of("routine", "rutina").contains(args[0].toLowerCase(Locale.ROOT))) {
+        if (args.length >= 2 && Set.of("routine", "rutina", "rutinas").contains(args[0].toLowerCase(Locale.ROOT))) {
             Collection<String> options = switch(args.length) {
                 case 2 -> { var ids = new ArrayList<>(plugin.definitions().keySet()); ids.add("cancelar"); yield ids; }
                 case 3 -> List.of("goal", "list", "status", "enable", "delete");

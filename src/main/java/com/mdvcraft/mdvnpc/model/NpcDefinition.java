@@ -25,9 +25,18 @@ public record NpcDefinition(String id, boolean enabled, String name, boolean nam
                            boolean random, boolean lineOfSight, List<String> lines) {
         public Dialogue { lines = List.copyOf(lines); }
     }
+    public record UnavailableDialogue(double cooldownSeconds, boolean random, List<String> lines) {
+        public UnavailableDialogue { lines = List.copyOf(lines == null ? List.of() : lines); }
+        public static UnavailableDialogue defaults() {
+            return new UnavailableDialogue(3, true, List.of("&7{npc} &f» &7Ahora mismo no estoy trabajando. Vuelve durante mi horario."));
+        }
+    }
     public record Interaction(double range, double cooldownSeconds, boolean lineOfSight,
-                              String permission, List<Action> actions) {
-        public Interaction { actions = List.copyOf(actions); }
+                              String permission, List<Action> actions, UnavailableDialogue unavailable) {
+        public Interaction { actions = List.copyOf(actions); unavailable = unavailable == null ? UnavailableDialogue.defaults() : unavailable; }
+        public Interaction(double range, double cooldownSeconds, boolean lineOfSight, String permission, List<Action> actions) {
+            this(range, cooldownSeconds, lineOfSight, permission, actions, UnavailableDialogue.defaults());
+        }
     }
     public enum Click { RIGHT, LEFT, BOTH }
     public enum Executor { CONSOLE, PLAYER }

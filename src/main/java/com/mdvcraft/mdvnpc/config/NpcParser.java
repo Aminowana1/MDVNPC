@@ -42,9 +42,14 @@ public final class NpcParser {
                     actions.add(new Action(Click.valueOf(Objects.toString(row.get("click"), "RIGHT").toUpperCase(Locale.ROOT)),
                             Executor.valueOf(Objects.toString(row.get("executor"), "CONSOLE").toUpperCase(Locale.ROOT)), command));
                 }
+                UnavailableDialogue unavailable = new UnavailableDialogue(
+                        number(s, "interaction.unavailable.cooldown-seconds", 3, 0, 86400),
+                        s.getBoolean("interaction.unavailable.random", true),
+                        s.contains("interaction.unavailable.lines") ? s.getStringList("interaction.unavailable.lines")
+                                : List.of("&7{npc} &f» &7Ahora mismo no estoy trabajando. Vuelve durante mi horario."));
                 Interaction interaction = new Interaction(number(s, "interaction.range", 6, 0.1, 16),
                         number(s, "interaction.cooldown-seconds", 2, 0, 86400), s.getBoolean("interaction.require-line-of-sight", true),
-                        s.getString("interaction.permission", ""), actions);
+                        s.getString("interaction.permission", ""), actions, unavailable);
                 Mode mode = Mode.valueOf(s.getString("mode", "normal").toUpperCase(Locale.ROOT));
                 TradeDialogue tradeDialogue = new TradeDialogue(s.getBoolean("shop.trade-dialogue.enabled", false),
                         number(s, "shop.trade-dialogue.cooldown-seconds", 20, 0, 86400),

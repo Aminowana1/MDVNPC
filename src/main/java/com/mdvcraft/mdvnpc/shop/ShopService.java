@@ -413,11 +413,11 @@ public final class ShopService implements Listener {
                     yaml.set("changed." + slot + ".item", editor.inventory.getItem(slot));
                 }
             }
-            var folder = plugin.getDataFolder().toPath().resolve("shop-recovery");
+            var folder = com.mdvcraft.mdvnpc.storage.NpcPaths.npc(plugin.getDataFolder().toPath(), editor.npc).resolve("shop-recovery");
             java.nio.file.Files.createDirectories(folder);
-            var file = folder.resolve(player.getUniqueId() + "-" + editor.npc + "-" + editor.page + ".yml");
+            var file = folder.resolve(player.getUniqueId() + "-" + editor.page + ".yml");
             com.mdvcraft.mdvnpc.storage.AtomicFile.write(file, yaml.saveToString());
-            player.sendMessage(Text.color("&eCambios no aplicados. Copia recuperable para administración en shop-recovery/ (página " + (editor.page + 1) + ")."));
+            player.sendMessage(Text.color("&eCambios no aplicados. Copia recuperable en NPCs/" + editor.npc + "/shop-recovery/ (página " + (editor.page + 1) + ")."));
         } catch (Exception ex) { plugin.getLogger().log(Level.SEVERE, "No se pudo recuperar el borrador de " + editor.npc, ex); }
     }
 }

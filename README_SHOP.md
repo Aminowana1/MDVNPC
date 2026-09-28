@@ -27,9 +27,9 @@ La **columna** es un trueque. En cada página caben 9 trueques, hasta 100 págin
 | 3 (slots 18..26) | Segundo costo **opcional** |
 | 4 | Flecha anterior en slot 29, guardar en 31, siguiente en 33 |
 
-**Cómo agregar:** mové los objetos desde tu inventario a las tres filas superiores como en un cofre: clic, clic derecho, arrastre y Shift + clic. El objeto sale del cursor al colocarlo. Guardar, navegar o cerrar conserva las celdas. Las columnas completas se publican como ofertas y las incompletas quedan como borradores en shops.yml. Retirar un objeto actualiza esas celdas al guardar; no se devuelve ni se copia automáticamente. Los botones de navegación están protegidos.
+**Cómo agregar:** mové los objetos desde tu inventario a las tres filas superiores como en un cofre: clic, clic derecho, arrastre y Shift + clic. El objeto sale del cursor al colocarlo. Guardar, navegar o cerrar conserva las celdas. Las columnas completas se publican como ofertas y las incompletas quedan como borradores en `NPCs/<id>/shop.yml`. Retirar un objeto actualiza esas celdas al guardar; no se devuelve ni se copia automáticamente. Los botones de navegación están protegidos.
 
-**Importante:** haz pruebas con objetos de una única unidad y luego con cantidades y con MMOItems. No borres `shops.yml` cuando actualices el `.jar`. Si un tipo/ID MMOItems desaparece, esa oferta no se enseña a jugadores hasta que vuelva a estar disponible; en el editor se representa con una barrera informativa sin sobrescribir la referencia al guardarla sin cambios.
+**Importante:** haz pruebas con objetos de una única unidad y luego con cantidades y con MMOItems. No borres la carpeta `NPCs/<id>/` cuando actualices el `.jar`. Si un tipo/ID MMOItems desaparece, esa oferta no se enseña a jugadores hasta que vuelva a estar disponible; en el editor se representa con una barrera informativa sin sobrescribir la referencia al guardarla sin cambios.
 
 ## MMOItems y otros ítems
 
@@ -39,7 +39,7 @@ Los ítems vanilla y otros ítems custom que no provengan de MMOItems se guardan
 
 ## Diálogos después de comerciar
 
-Configurá por cada NPC en `plugins/MDVNPC/npcs.yml`:
+Configurá por cada NPC en `plugins/MDVNPC/NPCs/<id>/npc.yml`:
 
 ```yaml
 npcs:
@@ -71,7 +71,7 @@ rotation-threshold-degrees: 3.0
 
 ## Actualización segura
 
-Apagá el servidor y hacé una copia de `plugins/MDVNPC/` antes de reemplazar el JAR. Instalá `MDVNPC-1.1.2.jar`, inicia, usá `/mdvnpc mode <id> shop` en el NPC que quieras convertir, editá trueques con Shift + clic derecho y testeá un intercambio. Revisá la consola y confirma en `shops.yml` que los MMOItems se guardaron con su tipo e ID. Mantené LibsDisguises, PacketEvents y WorldGuard con sus versiones existentes.
+Apagá el servidor y hacé una copia de `plugins/MDVNPC/` antes de reemplazar el JAR. En 1.3.0 la tienda de cada NPC queda en `NPCs/<id>/shop.yml`; el `shops.yml` global antiguo se importa automáticamente. Usá `/mdvnpc mode <id> shop`, editá trueques con Shift + clic derecho y testeá un intercambio. Revisá la consola y confirma en el `shop.yml` de ese NPC que los MMOItems se guardaron con su tipo e ID. Mantené LibsDisguises, PacketEvents y WorldGuard con versiones compatibles con tu servidor.
 
 **Validación actualizada:** compilación limpia y pruebas automatizadas; resultado exacto en el log entregado. Consultar `AUDITORIA.md` para los límites de MockBukkit, compatibilidad y pruebas pendientes en servidor real.
 

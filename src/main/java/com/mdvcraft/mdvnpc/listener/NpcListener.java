@@ -27,15 +27,23 @@ public final class NpcListener implements Listener {
         event.setCancelled(true); // Never open the base villager's trading interface.
         if (event.getHand() != EquipmentSlot.HAND) return;
         var npc = manager.find(event.getRightClicked());
-        // A protected lobby may cancel the villager's normal interaction; permit our own SHOP UI.
-        if (wasCancelled && (npc == null || npc.definition().mode() != Mode.SHOP
-                || !plugin.settings().messages().getBoolean("shop-allow-cancelled-interaction", false))) return;
         if (npc == null || !PlayerFilter.accepts(event.getPlayer(), plugin.settings())) return;
+        // Even inside protected regions, an off-duty NPC may explain why it cannot be used.
+        // Actual commands/shops still respect the previous cancelled-interaction policy.
+        if (wasCancelled && !plugin.canInteract(npc)) {
+            plugin.routines().unavailable(npc, event.getPlayer());
+            return;
+        }
+        // A protected lobby may cancel the villager's normal interaction; permit our own SHOP UI only when configured.
+        if (wasCancelled && (npc.definition().mode() != Mode.SHOP
+                || !plugin.settings().messages().getBoolean("shop-allow-cancelled-interaction", false))) return;
         if (npc.definition().mode() == Mode.SHOP) {
             if (event.getPlayer().isSneaking() && event.getPlayer().hasPermission("mdvnpc.admin"))
                 plugin.shops().openEditor(event.getPlayer(), npc.definition().id());
             else if (plugin.canInteract(npc)) plugin.shops().openShop(event.getPlayer(), npc);
+            else plugin.routines().unavailable(npc, event.getPlayer());
         } else if (plugin.canInteract(npc)) manager.interactions().click(npc, event.getPlayer(), Click.RIGHT, System.nanoTime());
+        else plugin.routines().unavailable(npc, event.getPlayer());
     }
     @EventHandler(priority = EventPriority.HIGHEST)
     public void damage(EntityDamageEvent event) {
@@ -100,5 +108,8 @@ public final class NpcListener implements Listener {
     @EventHandler
     public void worldLoad(WorldLoadEvent event) { plugin.manager().worldLoaded(); }
     @EventHandler
-    public void quit(PlayerQuitEvent event) { plugin.manager().forget(event.getPlayer().getUniqueId()); }
+    public void quit(PlayerQuitEvent event) {
+        plugin.manager().forget(event.getPlayer().getUniqueId());
+        plugin.routines().forget(event.getPlayer().getUniqueId());
+    }
 }

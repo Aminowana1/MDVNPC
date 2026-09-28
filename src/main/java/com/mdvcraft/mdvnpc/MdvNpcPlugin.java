@@ -31,9 +31,11 @@ public final class MdvNpcPlugin extends JavaPlugin {
     @Override public void onEnable() {
         try {
             saveDefaultConfig();
-            if (!getDataFolder().toPath().resolve("npcs.yml").toFile().exists()) saveResource("npcs.yml", false);
-            repository = new NpcRepository(getDataFolder().toPath());
-            if (!getDataFolder().toPath().resolve("shops.yml").toFile().exists()) saveResource("shops.yml", false);
+            var data = getDataFolder().toPath();
+            if (!java.nio.file.Files.isDirectory(com.mdvcraft.mdvnpc.storage.NpcPaths.root(data))
+                    && !java.nio.file.Files.exists(data.resolve("npcs.yml"))
+                    && !java.nio.file.Files.exists(data.resolve("npcs.yml.legacy-backup"))) saveResource("npcs.yml", false);
+            repository = new NpcRepository(data);
             skins = new com.mdvcraft.mdvnpc.skin.SkinCacheService(this);
             shops = new ShopService(this);
             shops.load();
@@ -41,6 +43,7 @@ public final class MdvNpcPlugin extends JavaPlugin {
             routineCommands = new com.mdvcraft.mdvnpc.routine.RoutineCommands(this);
             reloadNpcs();
             getServer().getPluginManager().registerEvents(routineCommands, this);
+            getServer().getPluginManager().registerEvents(routineCommands.editor(), this);
             getServer().getPluginManager().registerEvents(shops, this);
             getServer().getPluginManager().registerEvents(new NpcListener(this), this);
             if (getServer().getPluginManager().isPluginEnabled("WorldGuard")) {

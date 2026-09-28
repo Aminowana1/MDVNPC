@@ -16,24 +16,28 @@ import java.util.concurrent.ConcurrentHashMap;
 /** Chat only transports input: all world access and mutations run on the server thread. */
 public final class RoutineCommands implements Listener {
     private final MdvNpcPlugin plugin;
+    private final RoutineEditor editor;
     private final Map<UUID,Selection> selections=new ConcurrentHashMap<>();
     private static final class Selection {
         String npc; UUID world; int order,start,end,stage;
         RoutineGoal.Type type; RoutineGoal.WalkMode mode; double speed,radius;
-        RoutineGoal original; long expires;
+        RoutineGoal.Dialogue dialogue=RoutineGoal.Dialogue.disabled();
+        RoutineGoal original; long expires; boolean reopenEditor;
         final List<RoutineGoal.Point> points=new ArrayList<>();
     }
-    public RoutineCommands(MdvNpcPlugin plugin) { this.plugin=plugin; }
+    public RoutineCommands(MdvNpcPlugin plugin) { this.plugin=plugin; this.editor=new RoutineEditor(plugin,this); }
+    public RoutineEditor editor() { return editor; }
     private RoutineRepository repo() {return plugin.routines().repository();}
     private static void say(CommandSender player,String message) {player.sendMessage(ChatColor.GOLD+"[MDVNPC] "+ChatColor.RESET+message);}
     public void command(CommandSender sender,String[] a) throws Exception {
         if(!sender.hasPermission("mdvnpc.admin")) return;
         if(a.length<2 || a[1].equalsIgnoreCase("help")) {help(sender);return;}
         if(a[1].equalsIgnoreCase("cancelar") || a[1].equalsIgnoreCase("cancel")) {
-            if(sender instanceof Player p) selections.remove(p.getUniqueId());say(sender,"Selección cancelada.");return;
+            if(sender instanceof Player p) { selections.remove(p.getUniqueId()); editor.cancelInput(p); }say(sender,"Selección cancelada.");return;
         }
         String id=a[1]; var def=plugin.definitions().get(id);
         if(def==null) throw new IllegalArgumentException("NPC no encontrado: "+id);
+        if(a.length==2 && sender instanceof Player p) { editor.openMain(p,id); return; }
         String action=a.length>2?a[2].toLowerCase(Locale.ROOT):"list";
         var plan=repo().snapshot().plans().get(id);
         switch(action) {
@@ -60,6 +64,8 @@ public final class RoutineCommands implements Listener {
                 World world=plugin.manager().resolveWorld(def); if(world==null || p.getWorld()!=world) throw new IllegalArgumentException("Debes estar en el mundo del NPC");
                 s.world=world.getUID();s.expires=System.nanoTime()+600_000_000_000L;
                 s.original=plan==null?null:plan.goals().stream().filter(g -> g.order()==s.order).findFirst().orElse(null);
+                if(s.original!=null)s.dialogue=s.original.dialogue();
+                editor.cancelInput(p); p.closeInventory();
                 int index=5;
                 if(s.type==RoutineGoal.Type.WALK) {if(a.length<=index) throw new IllegalArgumentException("Modo de caminar: meta, aleatorio o ciclo");s.mode=parseMode(a[index++]);}
                 s.speed=plugin.settings().messages().getDouble("routines.default-speed",2.4);s.radius=plugin.settings().messages().getDouble("routines.random-radius",20);
@@ -73,6 +79,27 @@ public final class RoutineCommands implements Listener {
             }
             default -> help(sender);
         }
+    }
+    public void beginNew(Player p,String id,int order,RoutineGoal.Type type,RoutineGoal.WalkMode mode) {
+        var def=plugin.definitions().get(id); if(def==null){say(p,"NPC no encontrado: "+id);return;}
+        try {
+            World world=plugin.manager().resolveWorld(def); if(world==null || p.getWorld()!=world) throw new IllegalArgumentException("Debes estar en el mundo del NPC");
+            Selection s=new Selection();s.npc=id;s.order=order;s.type=type;s.mode=mode;s.world=world.getUID();s.expires=System.nanoTime()+600_000_000_000L;s.reopenEditor=true;
+            var plan=repo().snapshot().plans().get(id);s.original=plan==null?null:plan.goals().stream().filter(g->g.order()==order).findFirst().orElse(null);
+            if(s.original!=null)s.dialogue=s.original.dialogue();
+            s.speed=plugin.settings().messages().getDouble("routines.default-speed",2.4);s.radius=plugin.settings().messages().getDouble("routines.random-radius",20);
+            s.stage=type==RoutineGoal.Type.WALK && mode==RoutineGoal.WalkMode.TARGET?2:0;
+            editor.cancelInput(p);p.closeInventory();selections.put(p.getUniqueId(),s);prompt(p,s);
+        } catch(Exception ex){say(p,"No se pudo iniciar: "+ex.getMessage());}
+    }
+    public void beginReselect(Player p,String id,RoutineGoal goal) {
+        var def=plugin.definitions().get(id); if(def==null){say(p,"NPC no encontrado: "+id);return;}
+        try {
+            World world=plugin.manager().resolveWorld(def);if(world==null || p.getWorld()!=world)throw new IllegalArgumentException("Debes estar en el mundo del NPC");
+            Selection s=new Selection();s.npc=id;s.order=goal.order();s.type=goal.type();s.mode=goal.mode();s.start=goal.start();s.end=goal.end();s.speed=goal.speed();s.radius=goal.radius();s.dialogue=goal.dialogue();s.original=goal;
+            s.world=world.getUID();s.expires=System.nanoTime()+600_000_000_000L;s.stage=2;s.reopenEditor=true;
+            editor.cancelInput(p);p.closeInventory();selections.put(p.getUniqueId(),s);say(p,"Puntos reiniciados a 0 para la nueva selección.");prompt(p,s);
+        } catch(Exception ex){say(p,"No se pudo iniciar: "+ex.getMessage());}
     }
     public void clock(CommandSender sender,String[] a) throws Exception {
         if(!sender.hasPermission("mdvnpc.admin"))return;
@@ -156,18 +183,20 @@ public final class RoutineCommands implements Listener {
         var definition=plugin.definitions().get(s.npc);
         World world=plugin.manager().resolveWorld(definition);
         if(world==null || !world.getUID().equals(s.world))throw new IllegalArgumentException("El NPC cambió de mundo");
-        RoutineGoal goal=new RoutineGoal(s.order,s.type,s.mode,s.start,s.end,s.speed,s.radius,s.points);
+        RoutineGoal goal=new RoutineGoal(s.order,s.type,s.mode,s.start,s.end,s.speed,s.radius,s.points,s.dialogue);
         plugin.shops().prepareReload();repo().put(s.npc,goal);selections.remove(p.getUniqueId(),s);plugin.reloadNpcs();
-        say(p,"Goal "+s.order+" guardado para "+s.npc+". /mdvnpc routine "+s.npc+" list");
+        say(p,"Goal "+s.order+" guardado para "+s.npc+".");
+        if(s.reopenEditor) Bukkit.getScheduler().runTask(plugin,()->editor.openGoal(p,s.npc,s.order));
     }
     @EventHandler(priority=EventPriority.HIGHEST) public void breakBlock(BlockBreakEvent e) {if(selections.containsKey(e.getPlayer().getUniqueId()))e.setCancelled(true);}
     @EventHandler public void quit(PlayerQuitEvent e) {selections.remove(e.getPlayer().getUniqueId());}
-    public void clear() {selections.clear();}
+    public void clear() {selections.clear();editor.clear();}
     public void prune() {
         long now=System.nanoTime();
         selections.forEach((id,s) -> {if(now>s.expires && selections.remove(id,s)) {Player p=Bukkit.getPlayer(id);if(p!=null)say(p,"La selección venció después de 10 minutos.");}});
     }
     public static void help(CommandSender s) {
+        say(s,"/mdvnpc routine <npc> - abrir editor gráfico de rutinas");
         say(s,"/mdvnpc routine <npc> goal <número> dormir|sentarse|trabajo [desde hasta] [velocidad]");
         say(s,"/mdvnpc routine <npc> goal <número> caminar meta [velocidad]");
         say(s,"/mdvnpc routine <npc> goal <número> caminar aleatorio|ciclo [desde hasta] [velocidad] [radio]");

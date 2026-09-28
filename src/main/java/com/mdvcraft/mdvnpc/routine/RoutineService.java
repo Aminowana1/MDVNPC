@@ -3,9 +3,12 @@ package com.mdvcraft.mdvnpc.routine;
 import com.mdvcraft.mdvnpc.MdvNpcPlugin;
 import com.mdvcraft.mdvnpc.model.NpcDefinition;
 import com.mdvcraft.mdvnpc.runtime.ActiveNpc;
+import com.mdvcraft.mdvnpc.runtime.PlayerFilter;
+import com.mdvcraft.mdvnpc.util.Text;
 import org.bukkit.*;
 import org.bukkit.block.data.type.*;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitTask;
 import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
@@ -26,10 +29,16 @@ public final class RoutineService {
     private final Map<String,State> states=new HashMap<>();
     private final Map<RoutineGoal.Point,String> occupied=new HashMap<>();
     private final Set<String> failed=new HashSet<>();
+    private record DialogueKey(String npc,int goal,UUID player) {}
+    private static final class DialogueState { long due,lastSeen; int nextLine; DialogueState(long due,long now){this.due=due;this.lastSeen=now;} }
+    private record UnavailableKey(String npc,UUID player) {}
+    private static final class UnavailableState { long due; int nextLine; }
+    private final Map<DialogueKey,DialogueState> dialogueStates=new HashMap<>();
+    private final Map<UnavailableKey,UnavailableState> unavailableStates=new HashMap<>();
     private static final class State {
         ActiveNpc npc; RoutineSchedule.Window window; int chain,point; RoutineGoal goal;
         RoutineGoal.Point destination; Location approach; RoutineVisuals.Pose pose;
-        boolean working,paused; long nextPick, travelSince, nextPresence; String status="esperando";
+        boolean working,paused; long nextPick, travelSince, nextPresence, nextDialogue; String status="esperando";
     }
     public RoutineService(MdvNpcPlugin plugin) throws Exception {
         this.plugin=plugin; repository=new RoutineRepository(plugin.getDataFolder().toPath());
@@ -48,6 +57,7 @@ public final class RoutineService {
         if(task!=null) {task.cancel();task=null;}
         for(String id:List.copyOf(states.keySet())) remove(id);
         if(navigator!=null) navigator.clear(); doors.close();
+        dialogueStates.clear(); unavailableStates.clear();
     }
     public void close() { stop(); clocks.close(); }
     public void worldLoaded() { clocks.sync(); }
@@ -94,6 +104,28 @@ public final class RoutineService {
         return same(s.window,w) && npc.entity().getLocation().distanceSquared(s.approach)<.36;
     }
     public boolean canLook(ActiveNpc npc) { return !enabled(npc.definition().id()) || canInteract(npc); }
+    public RoutineGoal activeGoal(ActiveNpc npc) {
+        State s=states.get(npc.definition().id());
+        return s!=null && s.npc==npc && !s.paused ? s.goal : null;
+    }
+    public void unavailable(ActiveNpc npc,Player player) {
+        if(!enabled(npc.definition().id()) || canInteract(npc)) return;
+        var cfg=npc.definition().interaction().unavailable(); if(cfg.lines().isEmpty()) return;
+        long now=System.nanoTime(); var key=new UnavailableKey(npc.definition().id(),player.getUniqueId());
+        var state=unavailableStates.computeIfAbsent(key,k->new UnavailableState()); if(now<state.due) return;
+        int index=cfg.random()?ThreadLocalRandom.current().nextInt(cfg.lines().size()):state.nextLine;
+        state.nextLine=(index+1)%cfg.lines().size();
+        state.due=now+(long)(cfg.cooldownSeconds()*1_000_000_000L);
+        String line=cfg.lines().get(index);
+        player.sendMessage(Text.color(Text.placeholders(line,player,npc.definition())));
+    }
+    public void forget(UUID player) {
+        dialogueStates.keySet().removeIf(k->k.player().equals(player));
+        unavailableStates.keySet().removeIf(k->k.player().equals(player));
+    }
+    private void clearGoalDialogue(String npc) {
+        dialogueStates.keySet().removeIf(k->k.npc().equals(npc));
+    }
     private static boolean same(RoutineSchedule.Window a,RoutineSchedule.Window b) {
         return a==b || a!=null && b!=null && a.occurrence()==b.occurrence() && a.timedOrder()==b.timedOrder();
     }
@@ -104,7 +136,11 @@ public final class RoutineService {
         if(s.destination!=null) occupied.remove(key(s.destination),s.npc.definition().id());
         s.destination=null;s.approach=null; navigator.cancel(s.npc.definition().id());
     }
-    public void remove(String id) { State s=states.remove(id); if(s!=null) release(s,false); }
+    public void remove(String id) {
+        State s=states.remove(id); if(s!=null) release(s,false);
+        clearGoalDialogue(id);
+        unavailableStates.keySet().removeIf(k->k.npc().equals(id));
+    }
     private void tick() {
         ticks+=cadence; clockElapsed+=cadence;
         if(clockElapsed>=10) {clocks.tick(clockElapsed);clockElapsed=0;}
@@ -119,7 +155,10 @@ public final class RoutineService {
         }
         int budget=Math.max(16,Math.min(2048,plugin.settings().messages().getInt("routines.search-nodes-per-tick",160)));
         navigator.searchBudget(budget,2_000_000);
-        if(ticks%20<cadence) {doors.tick(ticks,false);if(plugin.routineCommands()!=null)plugin.routineCommands().prune();}
+        if(ticks%20<cadence) {
+            doors.tick(ticks,false); if(plugin.routineCommands()!=null)plugin.routineCommands().prune();
+            long now=System.nanoTime(); dialogueStates.values().removeIf(v->now>=v.due && now-v.lastSeen>60_000_000_000L);
+        }
     }
     private void update(ActiveNpc npc) {
         String id=npc.definition().id(); State s=states.computeIfAbsent(id,k -> {State n=new State(); n.npc=npc;return n;});
@@ -130,7 +169,10 @@ public final class RoutineService {
             s.nextPresence=ticks+20;
             boolean absent=position.getWorld().getNearbyPlayers(position,range,p -> !p.isDead() && p.getGameMode()!=GameMode.SPECTATOR).isEmpty();
             if(absent) {
-                if(!s.paused) { release(s,true);s.paused=true;s.status="suspendido: sin jugadores cerca"; }
+                if(!s.paused) {
+                    release(s,true); clearGoalDialogue(id); s.nextDialogue=0;
+                    s.paused=true;s.status="suspendido: sin jugadores cerca";
+                }
                 // Off-screen recovery only into an already-loaded destination observed by a player.
                 Location recovery=spawnLocation(npc.definition(),position.getWorld());
                 if(recovery!=null && recovery.distanceSquared(position)>4
@@ -145,7 +187,13 @@ public final class RoutineService {
         if(!same(s.window,w)) { release(s,true); s.window=w; s.chain=0; s.point=0; s.goal=null; s.nextPick=0; }
         if(w==null || s.chain>=w.chain().size()) { s.status="fuera de horario / secuencia terminada"; return; }
         RoutineGoal goal=w.chain().get(s.chain);
-        if(s.goal!=goal) { s.goal=goal; s.point=0; }
+        if(s.goal!=goal) {
+            // Cada entrada a un goal comienza su propio intervalo/demora inicial. Sin esto,
+            // un intervalo largo de ayer podría impedir que el NPC hable hoy.
+            clearGoalDialogue(id);
+            s.goal=goal; s.point=0; s.nextDialogue=0;
+        }
+        if(ticks>=s.nextDialogue) { s.nextDialogue=ticks+20; updateDialogue(npc,goal,System.nanoTime()); }
         if(s.pose!=null) {
             if(!validFurniture(goal,s.destination,position.getWorld()) || s.pose.seat!=null && (!s.pose.seat.isValid() || !npc.entity().isInsideVehicle())) {
                 release(s,true);s.nextPick=ticks+100;return;
@@ -186,6 +234,28 @@ public final class RoutineService {
                 if(s.pose==null) {release(s,true);s.nextPick=ticks+100;}
                 else s.status=goal.type()==RoutineGoal.Type.SLEEP?"durmiendo":"sentado";
             }
+        }
+    }
+    private void updateDialogue(ActiveNpc npc,RoutineGoal goal,long now) {
+        RoutineGoal.Dialogue dialogue=goal.dialogue();
+        if(!dialogue.configured() && goal.type()==RoutineGoal.Type.WORK) {
+            var legacy=npc.definition().dialogue();
+            dialogue=new RoutineGoal.Dialogue(legacy.enabled(),legacy.range(),legacy.intervalSeconds(),legacy.initialDelaySeconds(),
+                    legacy.random(),legacy.lineOfSight(),legacy.lines(),false);
+        }
+        if(!dialogue.enabled() || dialogue.lines().isEmpty() || dialogue.range()<=0) return;
+        Collection<Player> players=npc.position().getWorld().getNearbyPlayers(npc.position(),dialogue.range(),
+                player->PlayerFilter.accepts(player,plugin.settings()));
+        final RoutineGoal.Dialogue activeDialogue=dialogue;
+        for(Player player:players) {
+            if(activeDialogue.lineOfSight() && !npc.entity().hasLineOfSight(player)) continue;
+            var key=new DialogueKey(npc.definition().id(),goal.order(),player.getUniqueId());
+            var state=dialogueStates.computeIfAbsent(key,k->new DialogueState(now+(long)(activeDialogue.initialDelaySeconds()*1_000_000_000L),now));
+            state.lastSeen=now; if(now<state.due) continue;
+            int index=activeDialogue.random()?ThreadLocalRandom.current().nextInt(activeDialogue.lines().size()):state.nextLine;
+            state.nextLine=(index+1)%activeDialogue.lines().size();
+            player.sendMessage(Text.color(Text.placeholders(activeDialogue.lines().get(index),player,npc.definition())));
+            state.due=now+(long)(activeDialogue.intervalSeconds()*1_000_000_000L);
         }
     }
     private boolean validFurniture(RoutineGoal goal,RoutineGoal.Point point,World world) {

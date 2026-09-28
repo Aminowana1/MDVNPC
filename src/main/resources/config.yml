@@ -13,7 +13,7 @@ worldguard-spawn-bypass: true
 # false respeta cancelaciones de otros plugins. true permite abrir SHOP en lobbies protegidos.
 # No se puede saber qué plugin canceló el evento; activar solo si es intencional.
 shop-allow-cancelled-interaction: false
-# Rutinas opcionales: se guardan por separado en routines.yml. No fuerzan chunks.
+# Rutinas opcionales: cada NPC se guarda en NPCs/<id>/routines.yml. No fuerzan chunks.
 routines:
   default-speed: 2.4 # bloques/segundo; cada goal puede sustituirlo
   random-radius: 20
@@ -56,4 +56,5 @@ messages:
     - '&e/mdvnpc rename <id> <nombre> &7- Cambiar nombre.'
     - '&e/mdvnpc skin <id> <jugador> &7- Cambiar skin.'
     - '&e/mdvnpc enable <id> <true|false> &7- Activar/desactivar.'
-    - '&e/mdvnpc reload &7- Leer config.yml y npcs.yml.'
+    - '&e/mdvnpc rutinas <id> &7- Abrir el editor gráfico de rutinas.'
+    - '&e/mdvnpc reload &7- Recargar config.yml y la carpeta NPCs.'

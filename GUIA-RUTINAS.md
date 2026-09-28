@@ -1,10 +1,12 @@
 # MDVNPC 1.2.0 — rutinas
 
+> **Nota para 1.3.0:** esta guía conserva el funcionamiento base de las rutinas. Para el editor gráfico, diálogos por goal y la nueva carpeta `NPCs/<id>/`, consulta [GUIA-RUTINAS-1.3.md](GUIA-RUTINAS-1.3.md).
+
 Base: ZIP 1.1.2 entregado por el usuario. Paper/Purpur 1.21.6, Java 21, LibsDisguises 11.0.18 y PacketEvents 2.14.0. No requiere Multiverse: lee el reloj del mundo Bukkit correspondiente, también si Multiverse lo administra. MMOItems y WorldGuard siguen siendo opcionales.
 
 ## Instalar
 
-Apaga el servidor, respalda `plugins/MDVNPC/` y sustituye solamente el JAR. Conserva `npcs.yml`, `shops.yml`, `skins.yml` y `config.yml`. Los parámetros nuevos tienen valores predeterminados dentro del JAR: no hace falta borrar tu configuración.
+Apaga el servidor y respalda `plugins/MDVNPC/` antes de sustituir el JAR. En 1.3.0 los archivos globales antiguos se migran automáticamente a carpetas por NPC y quedan respaldados como `*.legacy-backup`.
 
 No se activan rutinas en NPC existentes hasta añadirles un goal. Los NPC sin rutina conservan su comportamiento anterior. Los comandos requieren `mdvnpc.admin`.
 

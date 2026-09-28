@@ -33,6 +33,7 @@ class NpcTests {
         assertEquals(UUID.fromString("eafd8793-7fca-495e-9950-68b276c0f21f"), npc.position().worldId());
         assertEquals(-12.5, npc.position().x()); assertEquals(205, npc.position().y());
         assertEquals(10, npc.dialogue().lines().size()); assertEquals(2, npc.interaction().cooldownSeconds());
+        assertFalse(npc.interaction().unavailable().lines().isEmpty());
         assertEquals(new Action(Click.RIGHT, Executor.CONSOLE, "mdvquest npc <p>"), npc.interaction().actions().getFirst());
         assertTrue(DisguiseService.skinInput(npc.skin()).contains(npc.skin().signature()));
         assertEquals(512, Base64.getDecoder().decode(npc.skin().signature()).length);
@@ -53,13 +54,15 @@ class NpcTests {
         for (String name : List.of("config.yml", "npcs.yml")) {
             try (var in = getClass().getResourceAsStream("/" + name)) { Files.copy(Objects.requireNonNull(in), directory.resolve(name)); }
         }
-        var repo = new NpcRepository(directory);
-        String before = Files.readString(directory.resolve("npcs.yml"));
+        var repo = new NpcRepository(directory); repo.load(); // imports legacy npcs.yml
+        Path npcFile = directory.resolve("NPCs/thurg/npc.yml");
+        String before = Files.readString(npcFile);
         assertThrows(IllegalArgumentException.class, () -> repo.edit(y -> y.set("npcs.thurg.skin.texture", "")));
-        assertEquals(before, Files.readString(directory.resolve("npcs.yml")));
+        assertEquals(before, Files.readString(npcFile));
         repo.edit(y -> y.set("npcs.thurg.name", "&aOtro"));
         assertEquals("&aOtro", repo.load().npcs().get("thurg").name());
-        assertEquals(before, Files.readString(directory.resolve("npcs.yml.bak")));
+        assertEquals(before, Files.readString(npcFile.resolveSibling("npc.yml.bak")));
+        assertTrue(Files.exists(directory.resolve("npcs.yml.legacy-backup")));
         repo.edit(y -> y.set("npcs.thurg", null));
         assertTrue(repo.load().npcs().isEmpty());
     }

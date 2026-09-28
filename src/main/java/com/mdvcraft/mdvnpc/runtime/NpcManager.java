@@ -229,12 +229,14 @@ public final class NpcManager {
             var definition = npc.definition();
             if (!plugin.routines().canLook(npc)) continue;
             double range = Math.max(checkLook && definition.look().enabled() ? definition.look().range() : 0,
-                    checkDialogue && definition.dialogue().enabled() && !definition.dialogue().lines().isEmpty() ? definition.dialogue().range() : 0);
+                    checkDialogue && !plugin.routines().enabled(definition.id()) && definition.dialogue().enabled() && !definition.dialogue().lines().isEmpty() ? definition.dialogue().range() : 0);
             if (range <= 0) continue;
             Collection<Player> players = npc.position().getWorld().getNearbyPlayers(npc.position(), range,
                     player -> PlayerFilter.accepts(player, plugin.settings()));
             if (checkLook) look.update(npc, players, plugin.settings().rotationThreshold());
-            if (checkDialogue) dialogue.update(npc, players, now);
+            // NPC con rutina usan exclusivamente los diálogos del goal (WORK antiguo hereda
+            // el diálogo global desde RoutineService). Evita duplicar frases mientras trabaja.
+            if (checkDialogue && !plugin.routines().enabled(definition.id())) dialogue.update(npc, players, now);
         }
     }
     public boolean owned(Entity entity) { return entity.getPersistentDataContainer().has(marker, PersistentDataType.STRING); }
