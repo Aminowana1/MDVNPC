@@ -1,3 +1,7 @@
+# Revisión 1.3.1
+
+Ver [CAMBIOS-1.3.1.md](CAMBIOS-1.3.1.md): esta revisión no se compiló ni ejecutó pruebas. Lo que sigue es el reporte histórico de la base suministrada, no una validación nueva.
+
 # Auditoría y límites — MDVNPC 1.3.0
 
 ## Cambios de esta revisión

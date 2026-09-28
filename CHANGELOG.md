@@ -1,3 +1,12 @@
+# MDVNPC 1.3.1
+
+- Lectura ocasional sentado con libro, duración configurable y restauración del objeto anterior.
+- Miradas espaciadas y suavizadas al desplazarse y sentarse; seguimiento sentado limitado a 3 bloques.
+- Mantener cama/asiento durante suspensión y reparar posición/pose de sueño al reactivarse.
+- Cerrar puertas de madera previamente abiertas al pasar, con control de obstáculos, redstone y protecciones.
+- Tarea compartida y estado acotado; sin cargas de chunks ni escrituras adicionales periódicas.
+- Pruebas de regresión añadidas como fuente, sin ejecutar ni compilar por petición del usuario.
+- Se preservan GUI, diálogos y almacenamiento de 1.3.0. Workflow de GitHub intacto.
 # MDVNPC 1.3.0
 
 - Nuevo editor gráfico con `/mdvnpc routine|rutina|rutinas <npc>`: lista goals, alta rápida y edición por goal.

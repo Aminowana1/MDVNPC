@@ -1,8 +1,10 @@
-# MDVNPC 1.3.0
+# MDVNPC 1.3.1
 
 NPC normales y vendedores, skins persistentes, editor de intercambios y rutinas diarias por mundo.
 
-Base: MDVNPC-1.1.2-source.zip entregado por el usuario. Requiere Java 21 y Paper/Purpur 1.21.6; LibsDisguises 11.0.18 y PacketEvents 2.14.0. MMOItems y WorldGuard opcionales.
+Base de esta actualización: MDVNPC-1.3.0-source-fixed.zip entregado por el usuario. Requiere Java 21 y Paper/Purpur 1.21.6; LibsDisguises 11.0.18 y PacketEvents 2.14.0. MMOItems y WorldGuard opcionales.
+
+Novedades, configuración y límites de esta entrega: [CAMBIOS-1.3.1.md](CAMBIOS-1.3.1.md). Entrega solo fuente: no se compiló ni se ejecutaron pruebas en esta revisión.
 
 ## Rutinas
 

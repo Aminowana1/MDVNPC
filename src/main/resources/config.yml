@@ -24,6 +24,14 @@ routines:
   cached-routes: 32 # caché global en RAM, no se escribe cada paso
   seat-offset-y: 0.0 # ajustar si otro plugin cambia la altura visual del disfraz
   seated-consumption: true
+  seated-reading: true
+  reading-chance: 0.30 # probabilidad de leer en lugar de comer/beber
+  reading-min-seconds: 12
+  reading-max-seconds: 25
+  occasional-looking: true
+  glance-min-seconds: 8
+  glance-max-seconds: 18
+  close-preopened-doors: true # cierra también puertas de madera ya abiertas por las que pasa
   meal-min-seconds: 30
   meal-max-seconds: 90
   beer-type: CONSUMABLE # ID interno de categoría MMOItems, no nombre traducido
