@@ -135,6 +135,21 @@ public final class RoutineService {
         var w=window(npc.definition().id(),npc.entity().getWorld());
         return same(s.window,w) && npc.entity().getLocation().distanceSquared(s.approach)<.36;
     }
+    /** Commands and shops may be enabled for a goal without granting WORK, music or idle look ownership. */
+    public boolean canUseJob(ActiveNpc npc) {
+        if(npc==null || !npc.entity().isValid() || failed.contains(npc.definition().id()))return false;
+        String id=npc.definition().id();State s=states.get(id);
+        // Static NPCs retain their original behaviour when their routine is absent/disabled.
+        if(!enabled(id))return s==null || s.npc==npc;
+        if(s==null || s.npc!=npc || s.paused)return false;
+        var current=window(id,npc.entity().getWorld());
+        if(!same(s.window,current))return false;
+        if(canInteract(npc))return true;
+        if(s.goal==null || current==null || s.chain<0 || s.chain>=current.chain().size())return false;
+        RoutineGoal scheduled=current.chain().get(s.chain);
+        // The live parent flag also revokes cached alternatives immediately after an edit.
+        return scheduled.order()==s.goal.order() && scheduled.workInteraction() && s.goal.workInteraction();
+    }
     public boolean canLook(ActiveNpc npc) { return (plugin.reactions()==null || !plugin.reactions().busy(npc.definition().id())) && (plugin.traits()==null || !plugin.traits().busy(npc.definition().id())) && (!enabled(npc.definition().id()) || canInteract(npc)); }
     public boolean canReceiveBeer(ActiveNpc npc) {
         if(plugin.reactions()!=null && plugin.reactions().busy(npc.definition().id()))return false;
@@ -169,7 +184,7 @@ public final class RoutineService {
         return s!=null && s.npc==npc && !s.paused ? s.goal : null;
     }
     public void unavailable(ActiveNpc npc,Player player) {
-        if(!enabled(npc.definition().id()) || canInteract(npc)) return;
+        if(!enabled(npc.definition().id()) || canUseJob(npc)) return;
         var cfg=npc.definition().interaction().unavailable(); if(cfg.lines().isEmpty()) return;
         long now=System.nanoTime(); var key=new UnavailableKey(npc.definition().id(),player.getUniqueId());
         var state=unavailableStates.computeIfAbsent(key,k->new UnavailableState()); if(now<state.due) return;

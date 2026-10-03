@@ -5,7 +5,7 @@ import org.bukkit.*;
 
 public record RoutineGoal(int order, Type type, WalkMode mode, int start, int end,
                           double speed, double radius, List<Point> points, Dialogue dialogue,
-                          List<RoutineGoal> alternatives, boolean randomChoice) {
+                          List<RoutineGoal> alternatives, boolean randomChoice, boolean workInteraction) {
     public static final int MAX_CHOICES = 16;
     public enum Type { SLEEP, WALK, SIT, WORK }
     public enum WalkMode { TARGET, RANDOM, CYCLE }
@@ -37,6 +37,11 @@ public record RoutineGoal(int order, Type type, WalkMode mode, int start, int en
                        double speed, double radius, List<Point> points, Dialogue dialogue) {
         this(order,type,mode,start,end,speed,radius,points,dialogue,List.of(),false);
     }
+    public RoutineGoal(int order, Type type, WalkMode mode, int start, int end,
+                       double speed, double radius, List<Point> points, Dialogue dialogue,
+                       List<RoutineGoal> alternatives, boolean randomChoice) {
+        this(order,type,mode,start,end,speed,radius,points,dialogue,alternatives,randomChoice,false);
+    }
 
     public RoutineGoal {
         Objects.requireNonNull(type); Objects.requireNonNull(mode); Objects.requireNonNull(dialogue);
@@ -57,38 +62,39 @@ public record RoutineGoal(int order, Type type, WalkMode mode, int start, int en
             if (!option.alternatives().isEmpty()) throw new IllegalArgumentException("Una opción no puede contener otras opciones");
             if (option.target() != target) throw new IllegalArgumentException("META solo admite otras rutas META; las opciones con horario usan caminar aleatorio o ciclo");
             if (!option.points().getFirst().world().equals(world)) throw new IllegalArgumentException("Todas las opciones deben estar en el mundo del NPC");
-            normalized.add(new RoutineGoal(order,option.type(),option.mode(),start,end,option.speed(),option.radius(),option.points(),option.dialogue()));
+            normalized.add(new RoutineGoal(order,option.type(),option.mode(),start,end,option.speed(),option.radius(),option.points(),option.dialogue(),List.of(),false,workInteraction));
         }
         alternatives = List.copyOf(normalized);
         randomChoice = randomChoice && !alternatives.isEmpty();
     }
     public boolean target() { return type == Type.WALK && mode == WalkMode.TARGET; }
     public boolean contains(int minute) { return start == end || (start < end ? minute >= start && minute < end : minute >= start || minute < end); }
-    public RoutineGoal withTimes(int from, int until) { return new RoutineGoal(order,type,mode,from,until,speed,radius,points,dialogue,alternatives,randomChoice); }
-    public RoutineGoal withSpeed(double value) { return new RoutineGoal(order,type,mode,start,end,value,radius,points,dialogue,alternatives,randomChoice); }
-    public RoutineGoal withRadius(double value) { return new RoutineGoal(order,type,mode,start,end,speed,value,points,dialogue,alternatives,randomChoice); }
-    public RoutineGoal withMode(WalkMode value) { return new RoutineGoal(order,type,value,start,end,speed,radius,points,dialogue,alternatives,randomChoice); }
-    public RoutineGoal withDialogue(Dialogue value) { return new RoutineGoal(order,type,mode,start,end,speed,radius,points,value,alternatives,randomChoice); }
-    public RoutineGoal withAlternatives(List<RoutineGoal> values) { return new RoutineGoal(order,type,mode,start,end,speed,radius,points,dialogue,values,!values.isEmpty()); }
-    public RoutineGoal withRandomChoice(boolean value) { return new RoutineGoal(order,type,mode,start,end,speed,radius,points,dialogue,alternatives,value); }
+    public RoutineGoal withTimes(int from, int until) { return new RoutineGoal(order,type,mode,from,until,speed,radius,points,dialogue,alternatives,randomChoice,workInteraction); }
+    public RoutineGoal withSpeed(double value) { return new RoutineGoal(order,type,mode,start,end,value,radius,points,dialogue,alternatives,randomChoice,workInteraction); }
+    public RoutineGoal withRadius(double value) { return new RoutineGoal(order,type,mode,start,end,speed,value,points,dialogue,alternatives,randomChoice,workInteraction); }
+    public RoutineGoal withMode(WalkMode value) { return new RoutineGoal(order,type,value,start,end,speed,radius,points,dialogue,alternatives,randomChoice,workInteraction); }
+    public RoutineGoal withDialogue(Dialogue value) { return new RoutineGoal(order,type,mode,start,end,speed,radius,points,value,alternatives,randomChoice,workInteraction); }
+    public RoutineGoal withAlternatives(List<RoutineGoal> values) { return new RoutineGoal(order,type,mode,start,end,speed,radius,points,dialogue,values,!values.isEmpty(),workInteraction); }
+    public RoutineGoal withRandomChoice(boolean value) { return new RoutineGoal(order,type,mode,start,end,speed,radius,points,dialogue,alternatives,value,workInteraction); }
+    public RoutineGoal withWorkInteraction(boolean value) { return new RoutineGoal(order,type,mode,start,end,speed,radius,points,dialogue,alternatives,randomChoice,value); }
     public int choiceCount() { return alternatives.size()+1; }
-    /** Zero is the original action; all returned choices inherit the parent schedule. */
+    /** Zero is the original action; all choices inherit the parent schedule and work-interaction switch. */
     public RoutineGoal choice(int index) {
         if (index < 0 || index >= choiceCount()) throw new IllegalArgumentException("Opción inexistente");
-        return index == 0 ? new RoutineGoal(order,type,mode,start,end,speed,radius,points,dialogue) : alternatives.get(index-1);
+        return index == 0 ? new RoutineGoal(order,type,mode,start,end,speed,radius,points,dialogue,List.of(),false,workInteraction) : alternatives.get(index-1);
     }
     /** Runtime calls this once per occurrence, never once per tick. */
     public RoutineGoal choose(java.util.random.RandomGenerator random) { return choice(randomChoice ? random.nextInt(choiceCount()) : 0); }
     public RoutineGoal withChoice(int index, RoutineGoal value) {
         if (index < 0 || index >= choiceCount()) throw new IllegalArgumentException("Opción inexistente");
-        if (index == 0) return new RoutineGoal(order,value.type(),value.mode(),value.start(),value.end(),value.speed(),value.radius(),value.points(),value.dialogue(),alternatives,randomChoice);
+        if (index == 0) return new RoutineGoal(order,value.type(),value.mode(),value.start(),value.end(),value.speed(),value.radius(),value.points(),value.dialogue(),alternatives,randomChoice,workInteraction);
         List<RoutineGoal> next = new ArrayList<>(alternatives); next.set(index-1,value);
-        return new RoutineGoal(order,type,mode,start,end,speed,radius,points,dialogue,next,randomChoice);
+        return new RoutineGoal(order,type,mode,start,end,speed,radius,points,dialogue,next,randomChoice,workInteraction);
     }
     public RoutineGoal withoutChoice(int index) {
         if (index <= 0 || index >= choiceCount()) throw new IllegalArgumentException("La opción principal se elimina junto al goal");
         List<RoutineGoal> next = new ArrayList<>(alternatives); next.remove(index-1);
-        return new RoutineGoal(order,type,mode,start,end,speed,radius,points,dialogue,next,randomChoice);
+        return new RoutineGoal(order,type,mode,start,end,speed,radius,points,dialogue,next,randomChoice,workInteraction);
     }
 
     public record Point(UUID world, int x, int y, int z, float yaw) {

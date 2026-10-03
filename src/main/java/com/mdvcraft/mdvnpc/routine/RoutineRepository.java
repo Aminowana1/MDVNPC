@@ -55,7 +55,8 @@ public final class RoutineRepository {
             if (gs != null) for (String key : gs.getKeys(false)) {
                 int order = Integer.parseInt(key); if (!Integer.toString(order).equals(key)) throw new IllegalArgumentException("Número no canónico: " + key);
                 var g = Objects.requireNonNull(gs.getConfigurationSection(key), "Goal inválido");
-                RoutineGoal base = readGoal(g,order,RoutineSchedule.parseHour(g.getString("from", "00:00")),RoutineSchedule.parseHour(g.getString("until", "00:00")));
+                RoutineGoal base = readGoal(g,order,RoutineSchedule.parseHour(g.getString("from", "00:00")),RoutineSchedule.parseHour(g.getString("until", "00:00")))
+                        .withWorkInteraction(g.getBoolean("work-interaction",false));
                 List<RoutineGoal> alternatives = new ArrayList<>(); var options = g.getConfigurationSection("alternatives");
                 if (options != null) {
                     if (options.getKeys(false).size() >= RoutineGoal.MAX_CHOICES) throw new IllegalArgumentException("Demasiadas opciones de goal");
@@ -91,7 +92,7 @@ public final class RoutineRepository {
     }
     private static void writeGoal(YamlConfiguration y,String p,RoutineGoal goal,boolean schedule) {
         y.set(p,null); y.set(p+".type",goal.type().name()); y.set(p+".mode",goal.mode().name());
-        if (schedule) { y.set(p+".from",RoutineSchedule.format(goal.start())); y.set(p+".until",RoutineSchedule.format(goal.end())); }
+        if (schedule) { y.set(p+".from",RoutineSchedule.format(goal.start())); y.set(p+".until",RoutineSchedule.format(goal.end())); y.set(p+".work-interaction",goal.workInteraction()); }
         y.set(p+".speed",goal.speed()); y.set(p+".radius",goal.radius());
         y.set(p+".points",goal.points().stream().map(v->Map.of("world",v.world().toString(),"x",v.x(),"y",v.y(),"z",v.z(),"yaw",v.yaw())).toList());
         var d = goal.dialogue();

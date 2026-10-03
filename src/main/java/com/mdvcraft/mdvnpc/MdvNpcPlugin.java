@@ -126,7 +126,7 @@ public final class MdvNpcPlugin extends JavaPlugin {
     public ShopService shops() { return shops; }
     public com.mdvcraft.mdvnpc.routine.RoutineService routines() { return routines; }
     public com.mdvcraft.mdvnpc.routine.RoutineCommands routineCommands() { return routineCommands; }
-    public boolean canInteract(com.mdvcraft.mdvnpc.runtime.ActiveNpc npc) { return routines == null || routines.canInteract(npc); }
+    public boolean canInteract(com.mdvcraft.mdvnpc.runtime.ActiveNpc npc) { return routines == null || routines.canUseJob(npc); }
     public Messages messages() { return messages; }
     public NpcManager manager() { return manager; }
     public NpcRepository repository() { return repository; }

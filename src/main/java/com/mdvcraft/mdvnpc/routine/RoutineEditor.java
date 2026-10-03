@@ -66,7 +66,7 @@ public final class RoutineEditor implements Listener {
         if(option<0 || option>=root.choiceCount()){openOptions(player,npc,order);return;}
         RoutineGoal g=option==0?root:root.choice(option);
         Holder h=new Holder(npc,Screen.GOAL,0,order,option); Inventory inv=Bukkit.createInventory(h,27,c("&2Goal #"+order+(option==0?" principal":" opción "+(option+1))));h.inventory=inv;
-        inv.setItem(4,goalItem(g));
+        inv.setItem(4,goalItem(g,root));
         inv.setItem(10,item(Material.CLOCK,"&eHorario",g.target()?List.of("&7Este modo es META y no usa horario."):List.of("&7Actual: &f"+RoutineSchedule.format(g.start())+" - "+RoutineSchedule.format(g.end()),option==0?"&eClic para cambiar todas las opciones":"&7Heredado del horario principal.")));
         inv.setItem(11,item(Material.COMPASS,"&eReasignar puntos",List.of("&7Actual: &f"+g.points().size()+" punto(s)","&7Al comenzar la selección se usan 0 puntos",pointHelp(g))));
         inv.setItem(12,item(Material.FEATHER,"&eVelocidad",List.of("&7Actual: &f"+g.speed()+" bloques/s","&eClic para cambiar")));
@@ -77,6 +77,7 @@ public final class RoutineEditor implements Listener {
         inv.setItem(15,item(Material.WRITABLE_BOOK,"&dDiálogos del goal",List.of(dialogueState,"&7Líneas: &f"+d.lines().size(),"&7Intervalo: &f"+d.intervalSeconds()+"s","&eClic para editar")));
         inv.setItem(16,item(Material.BARRIER,option==0?"&cEliminar goal":"&cEliminar esta opción",List.of(option==0?"&7Elimina el horario y todas sus opciones.":"&7Conserva las otras opciones.")));
         inv.setItem(18,item(Material.CHEST,"&bOpciones del horario",List.of("&7Modo: &f"+(root.randomChoice()?"Aleatorio":"Fijo (principal)"),"&7Opciones: &f"+root.choiceCount(),"&7Se elige una vez por horario / día.","&eClic para gestionar")));
+        inv.setItem(19,workInteractionItem(root));
         inv.setItem(20,item(Material.CRAFTING_TABLE,"&eCambiar actividad",List.of("&7Elegir dormir, sentarse, caminar o trabajar.","&7Seleccionarás sus nuevos destinos.")));
         inv.setItem(22,item(Material.ARROW,"&eVolver",List.of()));
         player.openInventory(inv);
@@ -88,11 +89,14 @@ public final class RoutineEditor implements Listener {
             RoutineGoal g=root.choice(option);List<String> lore=new ArrayList<>();
             lore.add("&7Actividad: &f"+typeName(g.type()));if(g.type()==RoutineGoal.Type.WALK)lore.add("&7Caminar: &f"+modeName(g.mode()));
             var point=g.points().getFirst();lore.add("&7Destino: &f"+point.x()+", "+point.y()+", "+point.z());lore.add("&7Puntos: &f"+g.points().size());
+            lore.add(workInteractionSummary(root));
+            if(g.type()==RoutineGoal.Type.WORK)lore.add("&7Trabajo atiende en su puesto.");
             lore.add(option==0?"&7Se usa siempre en modo fijo.":"&7Participa en el sorteo con la principal.");lore.add("&eClic para editar");
             inv.setItem(option,item(material(g.type()),"&6Opción "+(option+1)+(option==0?" &f(principal)":""),lore));
         }
         inv.setItem(19,item(root.randomChoice()?Material.LIME_DYE:Material.GRAY_DYE,root.randomChoice()?"&aSelección ALEATORIA":"&eSelección FIJA",List.of("&7Fija: usa siempre la opción principal.","&7Aleatoria: misma probabilidad por opción.","&7Una elección al comenzar el horario / día.","&eClic para cambiar")));
         inv.setItem(21,item(Material.EMERALD,"&aAñadir opción",List.of("&7Otro destino o actividad en este horario.","&7Máximo "+RoutineGoal.MAX_CHOICES+" opciones, incluida la principal.","&eClic para elegir actividad")));
+        inv.setItem(23,workInteractionItem(root));
         inv.setItem(22,item(Material.ARROW,"&eVolver",List.of()));player.openInventory(inv);
     }
     private void openAdd(Player player,String npc){
@@ -194,6 +198,7 @@ public final class RoutineEditor implements Listener {
                 else{repo().edit(y->y.set("npcs."+h.npc+".goals."+h.goal,null));reload();say(p,"&aGoal eliminado.");openMain(p,h.npc);}
             }
             case 18 -> openOptions(p,h.npc,h.goal);
+            case 19 -> {RoutineGoal root=goal(h.npc,h.goal);save(p,h.npc,root.withWorkInteraction(!root.workInteraction()),()->openChoice(p,h.npc,h.goal,h.option));}
             case 20 -> openAdd(p,h.npc,h.goal,h.option);
             case 22 -> {if(h.option>0)openOptions(p,h.npc,h.goal);else openMain(p,h.npc);}
         }
@@ -213,6 +218,7 @@ public final class RoutineEditor implements Listener {
             case 19 -> {if(root.choiceCount()==1)say(p,"&7Añade otra opción para activar el sorteo.");else save(p,h.npc,root.withRandomChoice(!root.randomChoice()),()->openOptions(p,h.npc,h.goal));}
             case 21 -> {if(root.choiceCount()>=RoutineGoal.MAX_CHOICES)say(p,"&cMáximo "+RoutineGoal.MAX_CHOICES+" opciones.");else openAdd(p,h.npc,h.goal,root.choiceCount());}
             case 22 -> openGoal(p,h.npc,h.goal);
+            case 23 -> save(p,h.npc,root.withWorkInteraction(!root.workInteraction()),()->openOptions(p,h.npc,h.goal));
         }
     }
     private void clickDialogue(Player p,Holder h,int slot)throws Exception{
@@ -289,12 +295,28 @@ public final class RoutineEditor implements Listener {
     private static String modeName(RoutineGoal.WalkMode m){return switch(m){case TARGET->"META";case RANDOM->"ALEATORIO";case CYCLE->"CICLO";};}
     private static String pointHelp(RoutineGoal g){return switch(g.type()){case SLEEP->"&8Seleccionarás nuevamente la cama.";case SIT->"&8Seleccionarás nuevamente las sillas.";case WORK->"&8Seleccionarás nuevamente el puesto.";case WALK->"&8Marcarás nuevamente el recorrido.";};}
     private static ItemStack goalItem(RoutineGoal g){
+        return goalItem(g,g);
+    }
+    private static ItemStack goalItem(RoutineGoal g,RoutineGoal root){
         Material m=material(g.type());
         List<String> lore=new ArrayList<>();lore.add("&7Tipo: &f"+typeName(g.type()));if(g.type()==RoutineGoal.Type.WALK)lore.add("&7Modo: &f"+modeName(g.mode()));
         lore.add(g.target()?"&7Horario: &fMETA / sin horario":"&7Horario: &f"+RoutineSchedule.format(g.start())+" - "+RoutineSchedule.format(g.end()));lore.add("&7Puntos: &f"+g.points().size());lore.add("&7Velocidad: &f"+g.speed()+" b/s");
         if(!g.dialogue().configured() && g.type()==RoutineGoal.Type.WORK)lore.add("&dDiálogo: &eheredado del NPC");else lore.add(g.dialogue().enabled()?"&dDiálogo: &aactivo (&f"+g.dialogue().lines().size()+"&a líneas)":"&dDiálogo: &7inactivo");
-        lore.add("&bSelección: &f"+(g.randomChoice()?"Aleatoria ("+g.choiceCount()+" opciones)":"Fija (principal)"));lore.add("&eClic para editar");
+        lore.add(workInteractionSummary(root));
+        if(g.type()==RoutineGoal.Type.WORK)lore.add("&7Trabajo atiende en su puesto.");
+        lore.add("&bSelección: &f"+(root.randomChoice()?"Aleatoria ("+root.choiceCount()+" opciones)":"Fija (principal)"));lore.add("&eClic para editar");
         return item(m,"&6Goal #"+g.order()+" &8- &f"+typeName(g.type()),lore);
+    }
+    private static String workInteractionSummary(RoutineGoal root){return root.workInteraction()?"&7Atención extra: &aactivada en todas las opciones":"&7Atención extra: &7desactivada en todas las opciones";}
+    private static ItemStack workInteractionItem(RoutineGoal root){
+        return item(root.workInteraction()?Material.LIME_DYE:Material.GRAY_DYE,"&eAtender durante este goal",List.of(
+                root.workInteraction()?"&aAtención extra activada":"&7Atención extra desactivada",
+                "&7Permite comandos y compras del NPC",
+                "&7mientras realiza esta actividad.",
+                "&7También al caminar hacia el destino.",
+                "&7Se aplica a todas las opciones del goal.",
+                "&8Trabajo sigue atendiendo en su puesto.",
+                "&eClic para cambiar"));
     }
     private static Material material(RoutineGoal.Type type){return switch(type){case SLEEP->Material.RED_BED;case WALK->Material.LEATHER_BOOTS;case SIT->Material.OAK_STAIRS;case WORK->Material.IRON_PICKAXE;};}
     private static ItemStack item(Material material,String name,List<String> lore){ItemStack stack=new ItemStack(material);ItemMeta meta=stack.getItemMeta();meta.setDisplayName(c(name));meta.setLore(lore.stream().map(RoutineEditor::c).toList());stack.setItemMeta(meta);return stack;}
