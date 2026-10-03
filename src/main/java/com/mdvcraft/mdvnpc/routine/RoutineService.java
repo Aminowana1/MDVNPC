@@ -32,6 +32,7 @@ public final class RoutineService {
     private int passiveCadence,pathStarts;
     private double activationRange;
     private boolean danceEnabled;
+    private long danceSeatedTicks;
     private int clockElapsed;
     private UUID internalEntity;
     private boolean mounting;
@@ -47,7 +48,10 @@ public final class RoutineService {
     private static final class State {
         ActiveNpc npc; RoutineSchedule.Window window; int chain,point; RoutineGoal goal;
         RoutineGoal.Point destination; Location approach; RoutineVisuals.Pose pose;
-        boolean working,paused,dancing; long nextPick, travelSince, nextPresence, nextDialogue, nextPoseCheck, nextDanceCheck, nextUpdate;
+        boolean working,paused,dancing,returningFromDance;
+        long nextPick, travelSince, nextPresence, nextDialogue, nextPoseCheck, nextDanceCheck, nextUpdate,nextReturnCheck,returnWaitingSince;
+        int returnDoorway,returnFailedDoorways;
+        final Map<RoutineGoal.Point,Long> blockedDanceSeats=new HashMap<>();
         int lastMinute=-1; String status="esperando";
         final RoutineLook.State look=new RoutineLook.State();
     }
@@ -67,6 +71,7 @@ public final class RoutineService {
         activationRange=Math.max(16,Math.min(128,plugin.settings().messages().getDouble("routines.activation-range",48)));
         if(!Double.isFinite(activationRange))activationRange=48;
         danceEnabled=plugin.settings().messages().getBoolean("routines.dancing",true);
+        danceSeatedTicks=Math.max(1,Math.min(600,plugin.settings().messages().getInt("routines.dance-seated-seconds",30)))*20L;
         navigator=new RoutineNavigator(doors,this::teleport); failed.clear();
         dancers=new DanceController(plugin,navigator,this::teleport);
         clocks.configure(repository.snapshot().clocks());
@@ -194,6 +199,7 @@ public final class RoutineService {
         if(s.pose!=null) { visuals.leave(s.pose,reposition);s.pose=null; }
         if(s.destination!=null) occupied.remove(key(s.destination),s.npc.definition().id());
         s.destination=null;s.approach=null; navigator.cancel(s.npc.definition().id());
+        s.returningFromDance=false;s.nextReturnCheck=0;s.returnWaitingSince=0;s.returnDoorway=0;s.returnFailedDoorways=0;
     }
     public void remove(String id) {
         State s=states.remove(id); if(s!=null) release(s,false);
@@ -276,7 +282,7 @@ public final class RoutineService {
             // Cada entrada a un goal comienza su propio intervalo/demora inicial. Sin esto,
             // un intervalo largo de ayer podría impedir que el NPC hable hoy.
             clearGoalDialogue(id);
-            s.goal=goal; s.point=0; s.nextDialogue=0;
+            s.goal=goal; s.point=0; s.nextDialogue=0;s.blockedDanceSeats.clear();
         }
         if(plugin.reactions()!=null && plugin.reactions().busy(id)){s.status="enfadado: mirando al jugador";s.travelSince=ticks;return;}
         if(plugin.traits()!=null && plugin.traits().busy(id)) {s.status="bebiendo cerveza ofrecida";s.travelSince=ticks;return;}
@@ -285,6 +291,7 @@ public final class RoutineService {
             var dance=dancers.tick(npc,ticks,cadence,goal.speed());
             if(dance!=DanceController.Result.FINISHED) {s.status=dance==DanceController.Result.DANCING?"bailando junto a músicos":"acercándose a los músicos";return;}
             endDance(s);s.nextPick=0;
+            position=npc.position();
         }
         if(s.pose!=null) {
             if(!validFurniture(goal,s.destination,position.getWorld()) || s.pose.seat!=null && (!s.pose.seat.isValid() || !npc.entity().isInsideVehicle())) {
@@ -308,7 +315,20 @@ public final class RoutineService {
             return;
         }
         if(s.working) { s.status="trabajando";return; }
-        if(s.destination!=null && ticks-s.travelSince>1200) {
+        if(s.returningFromDance && ticks>=s.nextReturnCheck) {
+            s.nextReturnCheck=ticks+100;
+            if(!validFurniture(goal,s.destination,position.getWorld())) {
+                // A removed/unloaded seat cannot hold a returning dancer indefinitely.
+                // Release its reservation and look only for another loaded seat in this goal.
+                release(s,false);s.nextPick=0;
+            } else {
+                Location returnApproach=returnApproach(s.destination,position,s.returnDoorway);
+                if(returnApproach!=null) {
+                    returnApproach.setYaw(s.destination.yaw());s.approach=returnApproach;
+                }
+            }
+        }
+        if(s.destination!=null && !s.returningFromDance && ticks-s.travelSince>1200) {
             release(s,true);s.nextPick=ticks+100;s.status="ruta inaccesible; esperando reintento";return;
         }
         if(s.destination==null) {
@@ -324,18 +344,42 @@ public final class RoutineService {
             if(goal.type()==RoutineGoal.Type.SIT || goal.type()==RoutineGoal.Type.SLEEP) occupied.put(key(s.destination),id);
         }
         Location beforeMove=npc.position();
-        var result=navigator.move(npc,s.approach,goal.speed(),ticks,cadence);
+        // Joining a seat from its checked doorway needs no exact native waypoint. This also
+        // recovers a return that ends a few centimetres short without a visible long teleport.
+        var result=s.returningFromDance && readyToSit(npc,s.approach)
+                ?RoutineNavigator.Result.ARRIVED:navigator.move(npc,s.approach,goal.speed(),ticks,cadence);
+        if(s.returningFromDance) {
+            if(result!=RoutineNavigator.Result.WAITING) {
+                s.returnWaitingSince=0;
+                if(npc.position().distanceSquared(beforeMove)>.0001)s.returnFailedDoorways=0;
+            }
+            else if(s.returnWaitingSince==0)s.returnWaitingSince=ticks;
+            else if(ticks-s.returnWaitingSince>=100) {
+                // Native routes may reject one doorway while another side is reachable.
+                // Spread these retries over time; never release the reserved chair mid-return.
+                s.returnDoorway++;s.returnFailedDoorways++;s.nextReturnCheck=0;s.returnWaitingSince=0;navigator.cancel(id);
+                if(s.returnFailedDoorways>=4) {
+                    // Four failed local doorways with no walking progress are a genuine
+                    // inaccessible-seat case, not an excuse to reserve it or idle forever.
+                    s.blockedDanceSeats.put(key(s.destination),ticks+1200);
+                    release(s,false);s.nextPick=0;s.nextUpdate=ticks+cadence;
+                    s.status="asiento sin ruta; buscando otro asiento";return;
+                }
+            }
+        }
         if(plugin.sounds()!=null)plugin.sounds().moved(npc,beforeMove,npc.position(),ticks);
         if(result==RoutineNavigator.Result.MOVING) {
             var moved=npc.position().toVector().subtract(beforeMove.toVector());moved.setY(0);
             float bodyYaw=moved.lengthSquared()>.00001?beforeMove.clone().setDirection(moved).getYaw():s.look.initialized?s.look.bodyYaw:beforeMove.getYaw();
             looks.tick(npc,s.look,ticks,bodyYaw,false,false);
-        } else if(goal.type()==RoutineGoal.Type.WALK) {
+        } else if(goal.type()==RoutineGoal.Type.WALK || s.returningFromDance) {
             // Keep the occasional-glance timer across short waypoints; otherwise a route
             // made of short segments would reset it forever and never produce a glance.
             looks.tick(npc,s.look,ticks,s.look.initialized?s.look.bodyYaw:beforeMove.getYaw(),false,false);
         } else looks.clear(npc,s.look);
-        s.status=result==RoutineNavigator.Result.WAITING?"esperando ruta (reintentos limitados)":"caminando a "+goal.type();
+        s.status=s.returningFromDance
+                ?result==RoutineNavigator.Result.WAITING?"volviendo al asiento: esperando ruta":"volviendo al asiento"
+                :result==RoutineNavigator.Result.WAITING?"esperando ruta (reintentos limitados)":"caminando a "+goal.type();
         if(result!=RoutineNavigator.Result.ARRIVED) return;
         switch(goal.type()) {
             case WORK -> { s.working=true; if(plugin.music()!=null)plugin.music().working(npc); npc.anchor().setYaw(s.approach.getYaw()); npc.entity().setRotation(s.approach.getYaw(),0);s.status="trabajando"; }
@@ -349,15 +393,48 @@ public final class RoutineService {
                 UUID before=internalEntity; internalEntity=npc.entity().getUniqueId();mounting=true;
                 try {s.pose=visuals.enter(npc,goal,s.destination,s.approach,ticks);}
                 finally {internalEntity=before;mounting=false;}
-                if(s.pose==null) {release(s,true);s.nextPick=ticks+100;}
-                else s.status=goal.type()==RoutineGoal.Type.SLEEP?"durmiendo":"sentado";
+                if(s.pose==null) {
+                    boolean afterDance=s.returningFromDance;
+                    if(afterDance)s.blockedDanceSeats.put(key(s.destination),ticks+1200);
+                    release(s,true);s.nextPick=afterDance?0:ticks+100;
+                    if(afterDance)s.status="asiento no disponible; buscando otro asiento";
+                }
+                else {
+                    navigator.cancel(id);s.returningFromDance=false;s.nextReturnCheck=0;s.returnWaitingSince=0;s.returnDoorway=0;s.returnFailedDoorways=0;
+                    // The seated part of the cycle starts after mounting, never while walking
+                    // back from the band. Initial seating follows the same quiet interval.
+                    s.nextDanceCheck=ticks+danceSeatedTicks;
+                    s.status=goal.type()==RoutineGoal.Type.SLEEP?"durmiendo":"sentado";
+                }
             }
         }
     }
     private void endDance(State s) {
         if(!s.dancing)return;
         if(dancers!=null)dancers.cancel(s.npc.definition().id());
-        s.dancing=false;s.nextDanceCheck=ticks+600;s.nextUpdate=0;s.travelSince=ticks;
+        s.dancing=false;s.returningFromDance=s.goal!=null && s.goal.type()==RoutineGoal.Type.SIT
+                && s.destination!=null && s.approach!=null;
+        s.nextDanceCheck=Long.MAX_VALUE;s.nextReturnCheck=0;s.returnWaitingSince=0;s.returnDoorway=0;s.returnFailedDoorways=0;
+        s.nextUpdate=0;s.travelSince=ticks;
+    }
+    private Location returnApproach(RoutineGoal.Point point,Location from,int attempt) {
+        var terrain=new RoutineTerrain(from.getWorld(),doors);
+        List<Location> approaches=new ArrayList<>(4);
+        // Four local doorways are bounded and checked only every five seconds of a return.
+        for(int[] side:new int[][]{{0,1},{1,0},{0,-1},{-1,0}}) {
+            var node=terrain.near(new Location(from.getWorld(),point.x()+side[0]+.5,point.y(),point.z()+side[1]+.5));
+            if(node==null)continue;
+            approaches.add(terrain.location(node));
+        }
+        approaches.sort(java.util.Comparator.comparingDouble(from::distanceSquared));
+        return approaches.isEmpty()?null:approaches.get(Math.floorMod(attempt,approaches.size()));
+    }
+    private boolean readyToSit(ActiveNpc npc,Location approach) {
+        if(approach==null || npc.position().getWorld()!=approach.getWorld()
+                || npc.position().distanceSquared(approach)>.36)return false;
+        var at=npc.position();var terrain=new RoutineTerrain(at.getWorld(),doors);var floor=terrain.near(at);
+        return floor!=null && Math.abs(terrain.height(floor)-at.getY())<.12
+                && terrain.fits(at.getX(),at.getY(),at.getZ(),false);
     }
     private void updateDialogue(ActiveNpc npc,RoutineGoal goal,long now) {
         RoutineGoal.Dialogue dialogue=goal.dialogue();
@@ -390,10 +467,12 @@ public final class RoutineService {
         if(goal.type()==RoutineGoal.Type.WALK && goal.mode()!=RoutineGoal.WalkMode.RANDOM) return goal.points().get(state.point);
         if(goal.type()==RoutineGoal.Type.WORK) return goal.points().getFirst();
         List<RoutineGoal.Point> candidates=new ArrayList<>(); RoutineGoal.Point nearest=null;double best=Double.MAX_VALUE;
+        state.blockedDanceSeats.entrySet().removeIf(entry->ticks>=entry.getValue());
         for(var point:goal.points()) {
             if(!point.world().equals(from.getWorld().getUID())) continue;
             if(goal.type()==RoutineGoal.Type.SIT || goal.type()==RoutineGoal.Type.SLEEP) {
-                if(occupied.containsKey(key(point)) || !validFurniture(goal,point,from.getWorld())) continue;
+                if(occupied.containsKey(key(point)) || state.blockedDanceSeats.containsKey(key(point))
+                        || !validFurniture(goal,point,from.getWorld())) continue;
                 var data=from.getWorld().getBlockAt(point.x(),point.y(),point.z()).getBlockData();
                 if(data instanceof Bed bed && bed.isOccupied()) continue;
                 candidates.add(point);continue;

@@ -17,6 +17,19 @@ public record Settings(int intervalTicks, int lookIntervalTicks, boolean ignoreI
         if (ticks < 1 || ticks > 200) throw new IllegalArgumentException("update-interval-ticks: usar 1..200");
         if (!Double.isFinite(threshold) || threshold < 0 || threshold > 180)
             throw new IllegalArgumentException("rotation-threshold-degrees: usar 0..180");
+        for (String key : java.util.List.of("routines.seat-offset-y", "routines.name-offset-seated-y",
+                "routines.name-offset-sleeping-y")) {
+            Object value = yaml.get(key);
+            if (value != null && (!(value instanceof Number number) || !Double.isFinite(number.doubleValue())
+                    || number.doubleValue() < -4 || number.doubleValue() > 4))
+                throw new IllegalArgumentException(key + ": usar un número entre -4 y 4");
+        }
+        for (String key : java.util.List.of("routines.dance-duration-seconds", "routines.dance-seated-seconds")) {
+            Object value = yaml.get(key);
+            if (value != null && (!(value instanceof Number number) || number.doubleValue() != number.intValue()
+                    || number.intValue() < 1 || number.intValue() > 600))
+                throw new IllegalArgumentException(key + ": usar segundos enteros entre 1 y 600");
+        }
         return new Settings(ticks, lookTicks, yaml.getBoolean("ignore-invisible-players", true),
                 yaml.getBoolean("ignore-spectators", true), threshold, yaml);
     }

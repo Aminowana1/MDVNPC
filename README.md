@@ -1,4 +1,12 @@
-# MDVNPC 1.9.0
+# MDVNPC 1.10.0
+
+El baile usa una pista plana con separación entre participantes y desplazamientos continuos,
+sin subir a mesas o escalones. Los NPC Fiestero alternan 60 segundos de baile y 30 segundos
+sentados; el descanso comienza después de volver a la silla. Se añaden ajustes globales
+de altura del nombre al sentarse/acostarse y el asiento tiene un offset predeterminado de 0.5.
+Consulta [la guía de esta entrega](GUIA-1.10.md). Se conservan músicos, canciones y editor.
+
+## Actualización 1.9.0
 
 Los músicos muestran un instrumento durante el trabajo: bambú para flauta y armadura de
 caballo de hierro para guitarra. Mueven la cabeza, gesticulan al tocar y emiten notas

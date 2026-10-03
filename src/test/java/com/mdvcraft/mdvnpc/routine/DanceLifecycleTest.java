@@ -48,6 +48,7 @@ class DanceLifecycleTest {
         var def=NpcParser.parse(yaml).get("guest");
         Villager entity=mock(Villager.class);when(entity.getUniqueId()).thenReturn(UUID.randomUUID());when(entity.isValid()).thenReturn(true);when(entity.getWorld()).thenReturn(world);
         when(entity.isInsideVehicle()).thenReturn(true);when(entity.getLocation()).thenAnswer(i->new Location(world,.5,64,1.5));
+        when(entity.getEyeLocation()).thenAnswer(i->new Location(world,.5,65.6,1.5));
         npc=new ActiveNpc(def,new Location(world,.5,64,1.5),entity,null);
         manager=mock(NpcManager.class);when(plugin.manager()).thenReturn(manager);when(manager.activeNpcs()).thenReturn(List.of(npc));
         visuals=mock(RoutineVisuals.class);pose=new RoutineVisuals.Pose();pose.npc=npc;pose.seat=mock(ArmorStand.class);when(pose.seat.isValid()).thenReturn(true);
@@ -61,7 +62,7 @@ class DanceLifecycleTest {
     }
     @AfterEach void cleanup(){try{if(service!=null)service.close();}finally{MockBukkit.unmock();}}
     @Test void dancingReleasesVisualSeatButRetainsReservationAndReturnsToSit() {
-        server.getScheduler().performTicks(14);
+        server.getScheduler().performTicks(620);
         assertTrue(service.status("guest").contains("bailando"));assertTrue(service.claimed(point));
         verify(visuals).leave(pose,true);
         when(dancers.tick(eq(npc),anyLong(),anyInt(),anyDouble())).thenReturn(DanceController.Result.FINISHED);
@@ -69,12 +70,12 @@ class DanceLifecycleTest {
         verify(visuals,times(2)).enter(eq(npc),any(),eq(point),any(),anyLong());assertTrue(service.claimed(point));
     }
     @Test void scheduleBoundaryStopsDancingAndFreesSeat() {
-        server.getScheduler().performTicks(14);
+        server.getScheduler().performTicks(620);
         when(world.getFullTime()).thenReturn(12000L);server.getScheduler().performTicks(2);
         verify(dancers).cancel("guest");assertFalse(service.claimed(point));assertFalse(service.status("guest").contains("bailando"));
     }
     @Test void noObserversCancelsTemporaryDance() {
-        server.getScheduler().performTicks(14);
+        server.getScheduler().performTicks(620);
         when(world.getNearbyPlayers(any(Location.class),anyDouble(),any())).thenReturn(List.of());server.getScheduler().performTicks(22);
         verify(dancers).cancel("guest");assertTrue(service.status("guest").contains("suspendido"));
     }

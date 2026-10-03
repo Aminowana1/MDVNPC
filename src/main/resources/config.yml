@@ -22,9 +22,12 @@ routines:
   passive-update-ticks: 8 # 2..20; NPC quietos actualizan menos, horario/presencia siguen vigilados
   path-starts-per-update: 2 # 1..8; máximo compartido de nuevas búsquedas Paper por actualización
   dancing: true # solo NPC con rasgo Fiestero: dejan la silla, bailan junto a músicos y vuelven
-  dance-min-seconds: 20
-  dance-max-seconds: 40
-  seat-offset-y: 0.0 # ajustar si otro plugin cambia la altura visual del disfraz
+  dance-duration-seconds: 60 # tiempo bailando; empieza al llegar a la pista (1..600)
+  dance-seated-seconds: 30 # descanso completo desde que vuelve a sentarse (1..600)
+  seat-offset-y: 0.5 # altura del asiento respecto del bloque de escalera (-4..4)
+  # Ajuste adicional del nombre respecto a su altura habitual; positivo=subir, negativo=bajar.
+  name-offset-seated-y: 0.0 # todos los NPC sentados (-4..4 bloques)
+  name-offset-sleeping-y: 0.0 # todos los NPC acostados (-4..4 bloques)
   seated-consumption: true
   seated-reading: true
   reading-chance: 0.30 # probabilidad de leer en lugar de comer/beber

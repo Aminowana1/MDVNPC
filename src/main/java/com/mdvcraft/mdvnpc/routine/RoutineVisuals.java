@@ -4,10 +4,15 @@ import com.mdvcraft.mdvnpc.MdvNpcPlugin;
 import com.mdvcraft.mdvnpc.trait.TraitBehavior;
 import com.mdvcraft.mdvnpc.runtime.ActiveNpc;
 import com.mdvcraft.mdvnpc.shop.MmoItemBridge;
+import com.mdvcraft.mdvnpc.util.Text;
 import com.github.retrooper.packetevents.util.Vector3i;
+import me.libraryaddict.disguise.disguisetypes.watchers.PlayerWatcher;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.*;
 import org.bukkit.block.data.type.*;
 import org.bukkit.entity.ArmorStand;
+import org.bukkit.entity.Display;
+import org.bukkit.entity.TextDisplay;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.persistence.PersistentDataType;
 import java.util.*;
@@ -19,6 +24,9 @@ public final class RoutineVisuals {
         ActiveNpc npc; ArmorStand seat; Location exit; boolean sleeping;
         long nextMeal, mealUntil, nextEffect; ItemStack previous, meal; boolean drinking, reading;
         Location sleepingLocation; Vector3i bedPosition; float bodyYaw;
+        PlayerWatcher nameWatcher; float originalNameOffset, posedNameOffset;
+        TextDisplay nameDisplay; Location nameLocation; String displayedName;
+        boolean restoreNativeName, originalNameVisible;
     }
     private final MdvNpcPlugin plugin;
     private final MmoItemBridge mmo;
@@ -39,10 +47,11 @@ public final class RoutineVisuals {
             if(!teleport.test(npc,location)) return null;
             p.sleepingLocation=location.clone();p.bedPosition=new Vector3i(point.x(),point.y(),point.z());
             npc.disguise().getWatcher().setBedPosition(p.bedPosition);
-            npc.disguise().getWatcher().setSleeping(true); p.sleeping=true; return p;
+            npc.disguise().getWatcher().setSleeping(true); p.sleeping=true;
+            return applyNameOffset(p,"routines.name-offset-sleeping-y");
         }
         if (!(block.getBlockData() instanceof Stairs stairs) || stairs.getHalf()!=org.bukkit.block.data.Bisected.Half.BOTTOM) return null;
-        Location location=block.getLocation().add(.5,plugin.settings().messages().getDouble("routines.seat-offset-y",0),.5);
+        Location location=block.getLocation().add(.5,plugin.settings().messages().getDouble("routines.seat-offset-y",.5),.5);
         location.setDirection(stairs.getFacing().getOppositeFace().getDirection());
         p.seat=world.spawn(location,ArmorStand.class,stand -> {
             stand.setVisible(false); stand.setMarker(true); stand.setSmall(true); stand.setGravity(false);
@@ -50,7 +59,70 @@ public final class RoutineVisuals {
             stand.getPersistentDataContainer().set(marker,PersistentDataType.STRING,npc.definition().id());
         });
         if(!p.seat.isValid() || !p.seat.addPassenger(npc.entity())) { p.seat.remove(); return null; }
-        p.bodyYaw=location.getYaw();npc.entity().setRotation(p.bodyYaw,0); return p;
+        p.bodyYaw=location.getYaw();npc.entity().setRotation(p.bodyYaw,0);
+        return applyNameOffset(p,"routines.name-offset-seated-y");
+    }
+    /** Native player nametags have no adjustable height; use a temporary display for those modes. */
+    private Pose applyNameOffset(Pose p,String key) {
+        double additional=plugin.settings().messages().getDouble(key,0);
+        if(additional==0 || p.npc.disguise()==null)return p;
+        try {
+            if(!Double.isFinite(additional) || additional < -4 || additional > 4)throw new IllegalArgumentException(key+": usar -4..4 bloques");
+            p.nameWatcher=p.npc.disguise().getWatcher();p.originalNameOffset=p.nameWatcher.getNameYModifier();
+            p.posedNameOffset=(float)(p.originalNameOffset+additional);
+            if(p.npc.disguise().getInternals().getNameDisplayType().isFakeEntity())refreshNameOffset(p);
+            else if(p.npc.definition().nameVisible() && p.npc.disguise().isNameVisible()) {
+                p.originalNameVisible=p.npc.disguise().isNameVisible();
+                Location location=nameLocation(p);p.displayedName=currentName(p);
+                p.nameDisplay=location.getWorld().spawn(location,TextDisplay.class,display -> {
+                    // Keep a reference before configuring, so a failed spawn callback can still be cleaned up.
+                    p.nameDisplay=display;
+                    display.setPersistent(false);display.setGravity(false);display.setInvulnerable(true);display.setSilent(true);
+                    display.setBillboard(Display.Billboard.CENTER);display.setAlignment(TextDisplay.TextAlignment.CENTER);display.setLineWidth(4096);
+                    display.setShadowed(true);display.setSeeThrough(false);display.setViewRange(1);
+                    display.setInterpolationDuration(0);display.setTeleportDuration(0);
+                    display.text(LegacyComponentSerializer.legacySection().deserialize(p.displayedName));
+                });
+                if(!p.nameDisplay.isValid())throw new IllegalStateException("No se pudo crear el nombre del NPC");
+                p.nameLocation=location;p.restoreNativeName=true;
+                p.npc.disguise().setNameVisible(false);
+            }else p.nameWatcher=null;
+            return p;
+        }catch(RuntimeException | LinkageError ex){
+            try{leave(p,true);}catch(RuntimeException | LinkageError cleanup){ex.addSuppressed(cleanup);}
+            throw ex;
+        }
+    }
+    private String currentName(Pose p) {
+        String name=p.npc.disguise().getName();
+        return Text.color(name==null?p.npc.definition().name():name);
+    }
+    private Location nameLocation(Pose p) {
+        var disguise=p.npc.disguise();
+        // Match the public LibsDisguises text-display baseline, including its existing name modifier.
+        double scale=disguise.getDisguiseScale();
+        Location location=p.npc.position().clone();
+        location.add(0,(disguise.getHeight()+p.posedNameOffset)*scale+.27,0);
+        location.setYaw(0);location.setPitch(0);return location;
+    }
+    private void refreshNameOffset(Pose p) {
+        if(p.nameDisplay!=null) {
+            Location location=nameLocation(p);
+            if(!location.equals(p.nameLocation) && p.nameDisplay.teleport(location))p.nameLocation=location;
+            String name=currentName(p);
+            if(!name.equals(p.displayedName)) {p.nameDisplay.text(LegacyComponentSerializer.legacySection().deserialize(name));p.displayedName=name;}
+        }else if(p.nameWatcher!=null && Float.compare(p.nameWatcher.getNameYModifier(),p.posedNameOffset)!=0)
+            p.nameWatcher.setNameYModifier(p.posedNameOffset);
+    }
+    private void restoreNameOffset(Pose p) {
+        try {
+            if(p.restoreNativeName)p.npc.disguise().setNameVisible(p.originalNameVisible);
+            else if(p.nameWatcher!=null && p.nameDisplay==null && Float.compare(p.nameWatcher.getNameYModifier(),p.originalNameOffset)!=0)
+                p.nameWatcher.setNameYModifier(p.originalNameOffset);
+        }finally {
+            try{if(p.nameDisplay!=null)p.nameDisplay.remove();}
+            finally{p.nameDisplay=null;p.nameLocation=null;p.displayedName=null;p.restoreNativeName=false;p.nameWatcher=null;}
+        }
     }
     private long mealDelay() {
         int min=Math.max(10,Math.min(3600,plugin.settings().messages().getInt("routines.meal-min-seconds",30)));
@@ -58,6 +130,7 @@ public final class RoutineVisuals {
         return ThreadLocalRandom.current().nextLong(min,Math.max((long)min+1,(long)max+1))*20;
     }
     public void tick(Pose p,long tick) {
+        refreshNameOffset(p);
         if(p.sleeping) return;
         if(p.mealUntil>0 && tick>=p.mealUntil) { finishMeal(p); p.nextMeal=tick+TraitBehavior.activityDelay(p.npc.definition().traits().type(),mealDelay()); }
         if(p.mealUntil==0 && tick>=p.nextMeal) {
@@ -128,14 +201,17 @@ public final class RoutineVisuals {
             watcher.setSleeping(false);watcher.setBedPosition(p.bedPosition);watcher.setSleeping(true);
             p.npc.entity().setRotation(bed.getYaw(),0);
         }
+        refreshNameOffset(p);
         return true;
     }
     public void leave(Pose p, boolean reposition) {
-        finishMeal(p);
-        if(p.sleeping) { p.npc.disguise().getWatcher().setSleeping(false); p.npc.disguise().getWatcher().setBedPosition(Optional.empty()); }
-        if(p.seat!=null) { p.npc.entity().leaveVehicle(); p.seat.remove(); }
-        if(reposition && p.exit.getWorld().isChunkLoaded(p.exit.getBlockX()>>4,p.exit.getBlockZ()>>4)) {
-            Location exit=p.exit.clone();exit.setPitch(0);teleport.test(p.npc,exit);
-        }
+        try{
+            finishMeal(p);
+            if(p.sleeping) { p.npc.disguise().getWatcher().setSleeping(false); p.npc.disguise().getWatcher().setBedPosition(Optional.empty()); }
+            if(p.seat!=null) { p.npc.entity().leaveVehicle(); p.seat.remove(); }
+            if(reposition && p.exit.getWorld().isChunkLoaded(p.exit.getBlockX()>>4,p.exit.getBlockZ()>>4)) {
+                Location exit=p.exit.clone();exit.setPitch(0);teleport.test(p.npc,exit);
+            }
+        }finally{restoreNameOffset(p);}
     }
 }
