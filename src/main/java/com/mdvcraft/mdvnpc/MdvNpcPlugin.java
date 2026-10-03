@@ -28,6 +28,8 @@ public final class MdvNpcPlugin extends JavaPlugin {
     private com.mdvcraft.mdvnpc.trait.HitReactionService reactions;
     public com.mdvcraft.mdvnpc.trait.PrefixEditor prefixEditor(){return prefixEditor;}
     public com.mdvcraft.mdvnpc.trait.HitReactionService reactions(){return reactions;}
+    private com.mdvcraft.mdvnpc.music.MusicService music;
+    public com.mdvcraft.mdvnpc.music.MusicService music() { return music; }
     private Settings settings;
     private NpcRepository repository;
     private NpcManager manager;
@@ -51,6 +53,7 @@ public final class MdvNpcPlugin extends JavaPlugin {
             traits = new com.mdvcraft.mdvnpc.trait.TraitService(this);
             shops = new ShopService(this);
             shops.load();
+            music = new com.mdvcraft.mdvnpc.music.MusicService(this);
             routines = new com.mdvcraft.mdvnpc.routine.RoutineService(this);
             routineCommands = new com.mdvcraft.mdvnpc.routine.RoutineCommands(this);
             traitEditor = new com.mdvcraft.mdvnpc.trait.TraitEditor(this);
@@ -87,6 +90,7 @@ public final class MdvNpcPlugin extends JavaPlugin {
         }
         shops.prepareReload();
         shops.load(); // Validate everything before touching active NPCs.
+        music.stop();
         routines.stop();
         if (manager != null) manager.stop();
         settings = snapshot.settings();
@@ -105,6 +109,7 @@ public final class MdvNpcPlugin extends JavaPlugin {
         if (routineCommands != null) routineCommands.clear();
         if (routines != null) try { routines.close(); }
         catch (RuntimeException ex) { getLogger().log(Level.SEVERE, "No se pudo restaurar un reloj; conserva clock-state.yml para recuperarlo", ex); }
+        if (music != null) music.stop();
         if (manager != null) manager.stop();
         if (traits != null) traits.close();
         if (sounds != null) sounds.clear();

@@ -36,7 +36,9 @@ public record NpcDefinition(String id, boolean enabled, String name, boolean nam
         this(id, enabled, name, nameVisible, position, skin, look, dialogue, interaction,
                 Mode.NORMAL, new TradeDialogue(false, 20, true, List.of()));
     }
-    public enum Mode { NORMAL, SHOP }
+    public enum Mode { NORMAL, SHOP, MUSICIAN_FLUTE, MUSICIAN_GUITAR;
+        public boolean musician() { return this == MUSICIAN_FLUTE || this == MUSICIAN_GUITAR; }
+    }
     public record TradeDialogue(boolean enabled, double cooldownSeconds, boolean random, List<String> lines) {
         public TradeDialogue { lines = List.copyOf(lines); }
     }

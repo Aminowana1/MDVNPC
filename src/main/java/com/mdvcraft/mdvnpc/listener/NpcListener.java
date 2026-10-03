@@ -37,6 +37,7 @@ public final class NpcListener implements Listener {
         // A protected lobby may cancel the villager's normal interaction; permit our own SHOP UI only when configured.
         if (wasCancelled && (npc.definition().mode() != Mode.SHOP
                 || !plugin.settings().messages().getBoolean("shop-allow-cancelled-interaction", false))) return;
+        if (npc.definition().mode().musician()) return;
         if (npc.definition().mode() == Mode.SHOP) {
             if (event.getPlayer().isSneaking() && event.getPlayer().hasPermission("mdvnpc.admin"))
                 plugin.shops().openEditor(event.getPlayer(), npc.definition().id());
@@ -60,7 +61,7 @@ public final class NpcListener implements Listener {
         event.setCancelled(true);
         var npc = manager.find(event.getAttacked());
         if (!cancelled && npc!=null && plugin.reactions()!=null)plugin.reactions().hit(npc,event.getPlayer());
-        if (!cancelled && npc != null && plugin.canInteract(npc) && PlayerFilter.accepts(event.getPlayer(), plugin.settings()))
+        if (!cancelled && npc != null && !npc.definition().mode().musician() && plugin.canInteract(npc) && PlayerFilter.accepts(event.getPlayer(), plugin.settings()))
             manager.interactions().click(npc, event.getPlayer(), Click.LEFT, System.nanoTime());
     }
     @EventHandler(priority = EventPriority.HIGHEST)

@@ -39,6 +39,15 @@ class RoutineRuntimeTest {
         var yaml=new YamlConfiguration();yaml.set("npcs.shop.location.world","world");yaml.set("npcs.shop.location.y",64);
         var definitions=NpcParser.parse(yaml);when(plugin.definitions()).thenReturn(definitions);
         entity=mock(Villager.class);when(entity.isValid()).thenReturn(true);when(entity.getUniqueId()).thenReturn(UUID.randomUUID());when(entity.getWorld()).thenReturn(world);
+        when(entity.isOnGround()).thenReturn(true);
+        var pathfinder=mock(com.destroystokyo.paper.entity.Pathfinder.class);when(entity.getPathfinder()).thenReturn(pathfinder);
+        when(pathfinder.findPath(any(Location.class))).thenAnswer(call->{
+            Location target=call.getArgument(0);var path=mock(com.destroystokyo.paper.entity.Pathfinder.PathResult.class);
+            List<Location> points=new ArrayList<>();int step=position.getBlockX()<=target.getBlockX()?1:-1;
+            for(int x=position.getBlockX();x!=target.getBlockX();x+=step)points.add(new Location(world,x,64,0));
+            points.add(new Location(world,target.getBlockX(),64,target.getBlockZ()));
+            when(path.getPoints()).thenReturn(points);when(path.canReachFinalPoint()).thenReturn(true);return path;
+        });
         position=new Location(world,.5,64,.5);when(entity.getLocation()).thenAnswer(i -> position.clone());
         when(entity.teleport(any(Location.class))).thenAnswer(i -> {position=((Location)i.getArgument(0)).clone();return true;});
         npc=new ActiveNpc(definitions.get("shop"),position.clone(),entity,null);

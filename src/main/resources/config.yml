@@ -18,10 +18,12 @@ routines:
   default-speed: 2.4 # bloques/segundo; cada goal puede sustituirlo
   random-radius: 20
   activation-range: 48
-  movement-interval-ticks: 2 # 1..4; interpolación de pequeños pasos, IA vanilla apagada
-  max-search-nodes: 2048 # límite por búsqueda, no se explora el mundo entero
-  search-nodes-per-tick: 160 # presupuesto por actualización compartido por todos
-  cached-routes: 32 # caché global en RAM, no se escribe cada paso
+  movement-interval-ticks: 2 # 1..4; seguimiento de rutas Paper, IA autónoma apagada
+  passive-update-ticks: 8 # 2..20; NPC quietos actualizan menos, horario/presencia siguen vigilados
+  path-starts-per-update: 2 # 1..8; máximo compartido de nuevas búsquedas Paper por actualización
+  dancing: true # NPC sentados pueden acercarse a músicos y volver a su silla
+  dance-min-seconds: 20
+  dance-max-seconds: 40
   seat-offset-y: 0.0 # ajustar si otro plugin cambia la altura visual del disfraz
   seated-consumption: true
   seated-reading: true
@@ -158,3 +160,7 @@ npc-reactions:
     - '&7{npc} &f» &c¡Eh, no me pegues!'
     - '&7{npc} &f» &c¡Un poco de respeto, {player}!'
     - '&7{npc} &f» &c¡Estate quieto con esas manos!'
+music:
+  group-radius: 8 # Distancia entre músicos vecinos de la misma sesión (2..16)
+  audio-radius: 14 # Límite estricto por NPC, en bloques (12..15)
+

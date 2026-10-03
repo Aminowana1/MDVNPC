@@ -9,7 +9,7 @@ import org.bukkit.entity.Player;
 import java.util.*;
 
 public final class NpcCommand implements CommandExecutor, TabCompleter {
-    private static final List<String> COMMANDS = List.of("help", "list", "status", "create", "movehere", "delete", "rename", "skin", "enable", "mode", "shop", "reload", "routine", "rutina", "rutinas", "clock", "rasgo", "trait");
+    private static final List<String> COMMANDS = List.of("trabajo", "help", "list", "status", "create", "movehere", "delete", "rename", "skin", "enable", "mode", "shop", "reload", "routine", "rutina", "rutinas", "clock", "rasgo", "trait");
     private final MdvNpcPlugin plugin;
     public NpcCommand(MdvNpcPlugin plugin) { this.plugin = plugin; }
     @Override public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
@@ -35,6 +35,21 @@ public final class NpcCommand implements CommandExecutor, TabCompleter {
                         if(!yaml.contains(path+".beer-dialogues"))yaml.set(path+".beer-dialogues",npc.traits().beerLines());
                     });
                     plugin.reloadNpcs();msg.send(sender,"saved","npc",id);
+                }
+                case "trabajo" -> {
+                    if(args.length!=4 || !Set.of("musico","músico").contains(args[2].toLowerCase(Locale.ROOT)))
+                        throw new IllegalArgumentException("/mdvnpc trabajo <id> musico <flauta|guitarra>");
+                    String id=args[1]; NpcParser.validateId(id);
+                    if(!plugin.definitions().containsKey(id))throw new IllegalArgumentException("NPC no encontrado: "+id);
+                    String mode=switch(args[3].toLowerCase(Locale.ROOT)) {
+                        case "flauta" -> "musician_flute";
+                        case "guitarra" -> "musician_guitar";
+                        default -> throw new IllegalArgumentException("Instrumento: flauta o guitarra");
+                    };
+                    plugin.shops().prepareReload();
+                    plugin.repository().edit(yaml -> yaml.set("npcs."+id+".mode",mode));
+                    plugin.reloadNpcs();
+                    sender.sendMessage("Trabajo Músico asignado a "+id+" ("+args[3]+"). Usa una rutina de trabajo para establecer el horario y el puesto.");
                 }
                 case "clock" -> plugin.routineCommands().clock(sender, args);
                 case "list" -> msg.send(sender, "list", "npcs", String.join(", ", plugin.definitions().keySet()));
@@ -124,6 +139,13 @@ public final class NpcCommand implements CommandExecutor, TabCompleter {
     }
     @Override public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (!sender.hasPermission("mdvnpc.admin")) return List.of();
+        if(args.length>=2 && args[0].equalsIgnoreCase("trabajo")) {
+            Collection<String> options=switch(args.length) {
+                case 2 -> plugin.definitions().keySet(); case 3 -> List.of("musico");
+                case 4 -> List.of("flauta","guitarra"); default -> List.of();
+            };
+            return options.stream().filter(v->v.startsWith(args[args.length-1].toLowerCase(Locale.ROOT))).sorted().toList();
+        }
         if (args.length >= 2 && Set.of("routine", "rutina", "rutinas").contains(args[0].toLowerCase(Locale.ROOT))) {
             Collection<String> options = switch(args.length) {
                 case 2 -> { var ids = new ArrayList<>(plugin.definitions().keySet()); ids.add("cancelar"); yield ids; }

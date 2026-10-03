@@ -19,10 +19,10 @@ public final class RoutineCommands implements Listener {
     private final RoutineEditor editor;
     private final Map<UUID,Selection> selections=new ConcurrentHashMap<>();
     private static final class Selection {
-        String npc; UUID world; int order,start,end,stage;
+        String npc; UUID world; int order,start,end,stage,option;
         RoutineGoal.Type type; RoutineGoal.WalkMode mode; double speed,radius;
         RoutineGoal.Dialogue dialogue=RoutineGoal.Dialogue.disabled();
-        RoutineGoal original; long expires; boolean reopenEditor;
+        RoutineGoal original; long expires; boolean reopenEditor,optionSelection;
         final List<RoutineGoal.Point> points=new ArrayList<>();
     }
     public RoutineCommands(MdvNpcPlugin plugin) { this.plugin=plugin; this.editor=new RoutineEditor(plugin,this); }
@@ -46,7 +46,7 @@ public final class RoutineCommands implements Listener {
             case "list","lista","status" -> {
                 say(sender,id+": "+plugin.routines().status(id));
                 if(plan!=null) for(var goal:plan.goals()) say(sender,goal.order()+" - "+goal.type()+" "+goal.mode()+" "+
-                        (goal.target()?"sin horario (meta)":RoutineSchedule.format(goal.start())+"–"+RoutineSchedule.format(goal.end()))+"; "+goal.points().size()+" puntos; "+goal.speed()+" bloques/s");
+                        (goal.target()?"sin horario (meta)":RoutineSchedule.format(goal.start())+"–"+RoutineSchedule.format(goal.end()))+"; "+goal.points().size()+" puntos; "+goal.speed()+" bloques/s; "+(goal.randomChoice()?"aleatorio: "+goal.choiceCount()+" opciones":"fijo: principal"));
                 say(sender,plugin.routines().metrics());
             }
             case "enable","activar" -> {
@@ -95,12 +95,33 @@ public final class RoutineCommands implements Listener {
         } catch(Exception ex){say(p,"No se pudo iniciar: "+ex.getMessage());}
     }
     public void beginReselect(Player p,String id,RoutineGoal goal) {
+        beginReselect(p,id,goal,0);
+    }
+    public void beginReselect(Player p,String id,RoutineGoal goal,int option) {
         var def=plugin.definitions().get(id); if(def==null){say(p,"NPC no encontrado: "+id);return;}
         try {
             World world=plugin.manager().resolveWorld(def);if(world==null || p.getWorld()!=world)throw new IllegalArgumentException("Debes estar en el mundo del NPC");
-            Selection s=new Selection();s.npc=id;s.order=goal.order();s.type=goal.type();s.mode=goal.mode();s.start=goal.start();s.end=goal.end();s.speed=goal.speed();s.radius=goal.radius();s.dialogue=goal.dialogue();s.original=goal;
+            var plan=repo().snapshot().plans().get(id);RoutineGoal root=plan==null?null:plan.goals().stream().filter(g->g.order()==goal.order()).findFirst().orElse(null);
+            if(root==null || option<0 || option>=root.choiceCount())throw new IllegalArgumentException("Ese goal u opción ya no existe");
+            Selection s=new Selection();s.npc=id;s.order=goal.order();s.type=goal.type();s.mode=goal.mode();s.start=root.start();s.end=root.end();s.speed=goal.speed();s.radius=goal.radius();s.dialogue=goal.dialogue();s.original=root;s.option=option;s.optionSelection=true;
             s.world=world.getUID();s.expires=System.nanoTime()+600_000_000_000L;s.stage=2;s.reopenEditor=true;
             editor.cancelInput(p);p.closeInventory();selections.put(p.getUniqueId(),s);say(p,"Puntos reiniciados a 0 para la nueva selección.");prompt(p,s);
+        } catch(Exception ex){say(p,"No se pudo iniciar: "+ex.getMessage());}
+    }
+    public void beginOption(Player p,String id,int order,int option,RoutineGoal.Type type,RoutineGoal.WalkMode mode) {
+        var def=plugin.definitions().get(id);if(def==null){say(p,"NPC no encontrado: "+id);return;}
+        try {
+            World world=plugin.manager().resolveWorld(def);if(world==null || p.getWorld()!=world)throw new IllegalArgumentException("Debes estar en el mundo del NPC");
+            var plan=repo().snapshot().plans().get(id);RoutineGoal root=plan==null?null:plan.goals().stream().filter(g->g.order()==order).findFirst().orElse(null);
+            if(root==null || option<0 || option>root.choiceCount())throw new IllegalArgumentException("Ese goal u opción ya no existe");
+            if(option==root.choiceCount() && root.choiceCount()>=RoutineGoal.MAX_CHOICES)throw new IllegalArgumentException("Máximo "+RoutineGoal.MAX_CHOICES+" opciones");
+            if(root.target()!=(type==RoutineGoal.Type.WALK && mode==RoutineGoal.WalkMode.TARGET))throw new IllegalArgumentException("Las opciones META deben ser recorridos META; las demás heredan el horario");
+            Selection s=new Selection();s.npc=id;s.order=order;s.option=option;s.optionSelection=true;s.original=root;s.type=type;s.mode=mode;s.start=root.start();s.end=root.end();
+            s.world=world.getUID();s.expires=System.nanoTime()+600_000_000_000L;s.stage=2;s.reopenEditor=true;
+            s.speed=plugin.settings().messages().getDouble("routines.default-speed",2.4);s.radius=plugin.settings().messages().getDouble("routines.random-radius",20);
+            if(option<root.choiceCount())s.dialogue=root.choice(option).dialogue();
+            editor.cancelInput(p);p.closeInventory();selections.put(p.getUniqueId(),s);
+            say(p,"Opción "+(option+1)+": "+(root.target()?"recorrido META":RoutineSchedule.format(s.start)+"–"+RoutineSchedule.format(s.end))+". Selecciona su destino.");prompt(p,s);
         } catch(Exception ex){say(p,"No se pudo iniciar: "+ex.getMessage());}
     }
     public void clock(CommandSender sender,String[] a) throws Exception {
@@ -186,9 +207,13 @@ public final class RoutineCommands implements Listener {
         World world=plugin.manager().resolveWorld(definition);
         if(world==null || !world.getUID().equals(s.world))throw new IllegalArgumentException("El NPC cambió de mundo");
         RoutineGoal goal=new RoutineGoal(s.order,s.type,s.mode,s.start,s.end,s.speed,s.radius,s.points,s.dialogue);
+        if(s.optionSelection && current!=null) {
+            if(s.option==current.choiceCount()){List<RoutineGoal> next=new ArrayList<>(current.alternatives());next.add(goal);goal=current.withAlternatives(next);}
+            else goal=current.withChoice(s.option,goal);
+        } else if(current!=null) goal=current.withChoice(0,goal);
         plugin.shops().prepareReload();repo().put(s.npc,goal);selections.remove(p.getUniqueId(),s);plugin.reloadNpcs();
-        say(p,"Goal "+s.order+" guardado para "+s.npc+".");
-        if(s.reopenEditor) Bukkit.getScheduler().runTask(plugin,()->editor.openGoal(p,s.npc,s.order));
+        say(p,(s.optionSelection?"Opción "+(s.option+1)+" del goal ":"Goal ")+s.order+" guardado para "+s.npc+".");
+        if(s.reopenEditor) Bukkit.getScheduler().runTask(plugin,()->editor.openChoice(p,s.npc,s.order,s.optionSelection?s.option:0));
     }
     @EventHandler(priority=EventPriority.HIGHEST) public void breakBlock(BlockBreakEvent e) {if(selections.containsKey(e.getPlayer().getUniqueId()))e.setCancelled(true);}
     @EventHandler public void quit(PlayerQuitEvent e) {selections.remove(e.getPlayer().getUniqueId());}

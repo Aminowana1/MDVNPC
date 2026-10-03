@@ -43,18 +43,7 @@ public final class RoutineRepository {
         edit(y -> {
             String root = "npcs." + npc; String p = root + ".goals." + goal.order();
             if (!y.contains(root + ".enabled")) y.set(root + ".enabled", true);
-            y.set(p, null); y.set(p + ".type", goal.type().name()); y.set(p + ".mode", goal.mode().name());
-            y.set(p + ".from", RoutineSchedule.format(goal.start())); y.set(p + ".until", RoutineSchedule.format(goal.end()));
-            y.set(p + ".speed", goal.speed()); y.set(p + ".radius", goal.radius());
-            y.set(p + ".points", goal.points().stream().map(v -> Map.of("world", v.world().toString(), "x", v.x(), "y", v.y(), "z", v.z(), "yaw", v.yaw())).toList());
-            var d = goal.dialogue();
-            y.set(p + ".dialogue", null);
-            if (d.configured()) {
-                y.set(p + ".dialogue.enabled", d.enabled()); y.set(p + ".dialogue.range", d.range());
-                y.set(p + ".dialogue.interval-seconds", d.intervalSeconds()); y.set(p + ".dialogue.initial-delay-seconds", d.initialDelaySeconds());
-                y.set(p + ".dialogue.random", d.random()); y.set(p + ".dialogue.require-line-of-sight", d.lineOfSight());
-                y.set(p + ".dialogue.lines", d.lines());
-            }
+            writeGoal(y,p,goal,true);
         });
     }
     public static Snapshot parse(YamlConfiguration y) {
@@ -66,19 +55,19 @@ public final class RoutineRepository {
             if (gs != null) for (String key : gs.getKeys(false)) {
                 int order = Integer.parseInt(key); if (!Integer.toString(order).equals(key)) throw new IllegalArgumentException("Número no canónico: " + key);
                 var g = Objects.requireNonNull(gs.getConfigurationSection(key), "Goal inválido");
-                List<RoutineGoal.Point> points = new ArrayList<>();
-                for (var point : g.getMapList("points")) points.add(new RoutineGoal.Point(UUID.fromString(String.valueOf(point.get("world"))),
-                        integer(point.get("x")), integer(point.get("y")), integer(point.get("z")), point.containsKey("yaw") ? Float.parseFloat(point.get("yaw").toString()) : 0));
-                RoutineGoal.Dialogue dialogue;
-                var d = g.getConfigurationSection("dialogue");
-                if (d == null) dialogue = RoutineGoal.Dialogue.disabled();
-                else dialogue = new RoutineGoal.Dialogue(d.getBoolean("enabled", false), number(d, "range", 6),
-                        number(d, "interval-seconds", 40), number(d, "initial-delay-seconds", 2), d.getBoolean("random", true),
-                        d.getBoolean("require-line-of-sight", false), d.getStringList("lines"));
-                goals.add(new RoutineGoal(order, RoutineGoal.Type.valueOf(g.getString("type", "").toUpperCase(Locale.ROOT)),
-                        RoutineGoal.WalkMode.valueOf(g.getString("mode", "CYCLE").toUpperCase(Locale.ROOT)),
-                        RoutineSchedule.parseHour(g.getString("from", "00:00")), RoutineSchedule.parseHour(g.getString("until", "00:00")),
-                        number(g, "speed", 2.4), number(g, "radius", 20), points, dialogue));
+                RoutineGoal base = readGoal(g,order,RoutineSchedule.parseHour(g.getString("from", "00:00")),RoutineSchedule.parseHour(g.getString("until", "00:00")));
+                List<RoutineGoal> alternatives = new ArrayList<>(); var options = g.getConfigurationSection("alternatives");
+                if (options != null) {
+                    if (options.getKeys(false).size() >= RoutineGoal.MAX_CHOICES) throw new IllegalArgumentException("Demasiadas opciones de goal");
+                    for (String option : options.getKeys(false).stream().sorted(Comparator.comparingInt(Integer::parseInt)).toList()) {
+                        int index = Integer.parseInt(option);
+                        if (index != alternatives.size()+1 || !Integer.toString(index).equals(option)) throw new IllegalArgumentException("Opciones numeradas consecutivamente desde 1");
+                        var sectionOption = Objects.requireNonNull(options.getConfigurationSection(option),"Opción inválida");
+                        if (sectionOption.contains("alternatives")) throw new IllegalArgumentException("Una opción no puede contener otras opciones");
+                        alternatives.add(readGoal(sectionOption,order,base.start(),base.end()));
+                    }
+                }
+                goals.add(base.withAlternatives(alternatives).withRandomChoice(g.getBoolean("random-choice",!alternatives.isEmpty())));
             }
             goals.sort(Comparator.comparingInt(RoutineGoal::order)); plans.put(id, new Plan(section.getBoolean("enabled", true), goals));
         }
@@ -88,6 +77,33 @@ public final class RoutineRepository {
             clocks.put(name, new Clock(number(c, "day-minutes", 10), number(c, "night-minutes", 10)));
         }
         return new Snapshot(Collections.unmodifiableMap(plans), Collections.unmodifiableMap(clocks));
+    }
+
+    private static RoutineGoal readGoal(ConfigurationSection g,int order,int start,int end) {
+        List<RoutineGoal.Point> points = new ArrayList<>();
+        for (var point : g.getMapList("points")) points.add(new RoutineGoal.Point(UUID.fromString(String.valueOf(point.get("world"))),
+                integer(point.get("x")),integer(point.get("y")),integer(point.get("z")),point.containsKey("yaw")?Float.parseFloat(point.get("yaw").toString()):0));
+        var d = g.getConfigurationSection("dialogue");
+        RoutineGoal.Dialogue dialogue = d == null ? RoutineGoal.Dialogue.disabled() : new RoutineGoal.Dialogue(d.getBoolean("enabled",false),number(d,"range",6),
+                number(d,"interval-seconds",40),number(d,"initial-delay-seconds",2),d.getBoolean("random",true),d.getBoolean("require-line-of-sight",false),d.getStringList("lines"));
+        return new RoutineGoal(order,RoutineGoal.Type.valueOf(g.getString("type","").toUpperCase(Locale.ROOT)),RoutineGoal.WalkMode.valueOf(g.getString("mode","CYCLE").toUpperCase(Locale.ROOT)),
+                start,end,number(g,"speed",2.4),number(g,"radius",20),points,dialogue);
+    }
+    private static void writeGoal(YamlConfiguration y,String p,RoutineGoal goal,boolean schedule) {
+        y.set(p,null); y.set(p+".type",goal.type().name()); y.set(p+".mode",goal.mode().name());
+        if (schedule) { y.set(p+".from",RoutineSchedule.format(goal.start())); y.set(p+".until",RoutineSchedule.format(goal.end())); }
+        y.set(p+".speed",goal.speed()); y.set(p+".radius",goal.radius());
+        y.set(p+".points",goal.points().stream().map(v->Map.of("world",v.world().toString(),"x",v.x(),"y",v.y(),"z",v.z(),"yaw",v.yaw())).toList());
+        var d = goal.dialogue();
+        if (d.configured()) {
+            y.set(p+".dialogue.enabled",d.enabled()); y.set(p+".dialogue.range",d.range()); y.set(p+".dialogue.interval-seconds",d.intervalSeconds());
+            y.set(p+".dialogue.initial-delay-seconds",d.initialDelaySeconds()); y.set(p+".dialogue.random",d.random());
+            y.set(p+".dialogue.require-line-of-sight",d.lineOfSight()); y.set(p+".dialogue.lines",d.lines());
+        }
+        if (!goal.alternatives().isEmpty()) {
+            y.set(p+".random-choice",goal.randomChoice());
+            for (int index=1;index<goal.choiceCount();index++) writeGoal(y,p+".alternatives."+index,goal.choice(index),false);
+        }
     }
 
     private YamlConfiguration aggregate() throws Exception {

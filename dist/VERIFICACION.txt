@@ -1,0 +1,5 @@
+MDVNPC 1.7.0: compilación limpia Maven verify, Java 21.
+138 pruebas; 0 errores, 0 fallos, 0 omitidas.
+Incluye pruebas de opciones/menu, música, baile, límites compartidos para 25 NPC y navegación Paper.
+No se ha realizado prueba en servidor real ni medición de consumo/TPS.
+

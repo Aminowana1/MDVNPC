@@ -21,9 +21,16 @@ public final class RoutineService {
     private final RoutineVisuals visuals;
     private final RoutineLook looks;
     private RoutineNavigator navigator;
+    private DanceController dancers;
+    private final RoutineChoices choices=new RoutineChoices();
+    private record CachedWindow(World world,long time,RoutineRepository.Plan plan,RoutineSchedule.Window value) {}
+    private final Map<String,CachedWindow> windows=new HashMap<>();
     private BukkitTask task;
     private long ticks;
     private int cadence;
+    private int passiveCadence,pathStarts;
+    private double activationRange;
+    private boolean danceEnabled;
     private int clockElapsed;
     private UUID internalEntity;
     private boolean mounting;
@@ -39,7 +46,8 @@ public final class RoutineService {
     private static final class State {
         ActiveNpc npc; RoutineSchedule.Window window; int chain,point; RoutineGoal goal;
         RoutineGoal.Point destination; Location approach; RoutineVisuals.Pose pose;
-        boolean working,paused; long nextPick, travelSince, nextPresence, nextDialogue, nextPoseCheck; String status="esperando";
+        boolean working,paused,dancing; long nextPick, travelSince, nextPresence, nextDialogue, nextPoseCheck, nextDanceCheck, nextUpdate;
+        int lastMinute=-1; String status="esperando";
         final RoutineLook.State look=new RoutineLook.State();
     }
     public RoutineService(MdvNpcPlugin plugin) throws Exception {
@@ -53,9 +61,13 @@ public final class RoutineService {
     public RoutineRepository repository() { return repository; }
     public void start() {
         cadence=Math.max(1,Math.min(4,plugin.settings().messages().getInt("routines.movement-interval-ticks",2)));
-        int nodes=Math.max(128,Math.min(8192,plugin.settings().messages().getInt("routines.max-search-nodes",2048)));
-        int cache=Math.max(0,Math.min(128,plugin.settings().messages().getInt("routines.cached-routes",32)));
-        navigator=new RoutineNavigator(doors,this::teleport,nodes,cache); failed.clear();
+        passiveCadence=Math.max(2,Math.min(20,plugin.settings().messages().getInt("routines.passive-update-ticks",8)));
+        pathStarts=Math.max(1,Math.min(8,plugin.settings().messages().getInt("routines.path-starts-per-update",2)));
+        activationRange=Math.max(16,Math.min(128,plugin.settings().messages().getDouble("routines.activation-range",48)));
+        if(!Double.isFinite(activationRange))activationRange=48;
+        danceEnabled=plugin.settings().messages().getBoolean("routines.dancing",true);
+        navigator=new RoutineNavigator(doors,this::teleport); failed.clear();
+        dancers=new DanceController(plugin,navigator,this::teleport);
         clocks.configure(repository.snapshot().clocks());
         task=Bukkit.getScheduler().runTaskTimer(plugin,this::tick,cadence,cadence);
     }
@@ -63,6 +75,7 @@ public final class RoutineService {
         if(task!=null) {task.cancel();task=null;}
         for(String id:List.copyOf(states.keySet())) remove(id);
         if(navigator!=null) navigator.clear(); doors.close();
+        if(dancers!=null)dancers.clear();choices.clear();windows.clear();
         dialogueStates.clear(); unavailableStates.clear();
     }
     public void close() { stop(); clocks.close(); }
@@ -70,7 +83,9 @@ public final class RoutineService {
     public boolean enabled(String id) { var plan=repository.snapshot().plans().get(id); return plan!=null && plan.enabled() && !plan.goals().isEmpty(); }
     public List<RoutineGoal.Point> points(String id) {
         var plan=repository.snapshot().plans().get(id);
-        return plan==null || !plan.enabled()?List.of():plan.goals().stream().flatMap(g -> g.points().stream()).toList();
+        return plan==null || !plan.enabled()?List.of():plan.goals().stream()
+                .flatMap(g->java.util.stream.IntStream.range(0,g.choiceCount()).mapToObj(g::choice))
+                .flatMap(g->g.points().stream()).distinct().toList();
     }
     public boolean internal(Entity e) { return e.getUniqueId().equals(internalEntity); }
     public boolean mounting(Entity e) { return mounting && internal(e); }
@@ -87,7 +102,11 @@ public final class RoutineService {
     private RoutineSchedule.Window window(String id,World world) {
         var plan=repository.snapshot().plans().get(id);
         if(plan==null || !plan.enabled() || plan.goals().isEmpty() || !plan.goals().getFirst().points().getFirst().world().equals(world.getUID())) return null;
-        return RoutineSchedule.window(plan.goals(),world.getFullTime());
+        long time=world.getFullTime(),stamp=Math.floorDiv(time+6000,24000)*1440+RoutineSchedule.minute(time);
+        CachedWindow cached=windows.get(id);
+        if(cached!=null && cached.world()==world && cached.time()==stamp && cached.plan()==plan)return cached.value();
+        var value=RoutineSchedule.window(plan.goals(),time);
+        windows.put(id,new CachedWindow(world,stamp,plan,value));return value;
     }
     /** Recover by current world time when a destination chunk loads, with no forced chunk tickets. */
     public Location spawnLocation(NpcDefinition definition,World world) {
@@ -95,7 +114,8 @@ public final class RoutineService {
         if(!enabled(definition.id())) return new Location(world,p.x(),p.y(),p.z(),p.yaw(),p.pitch());
         var w=window(definition.id(),world);
         if(w==null) return new Location(world,p.x(),p.y(),p.z(),p.yaw(),p.pitch());
-        var goal=w.chain().getFirst(); var terrain=new RoutineTerrain(world,doors);
+        var goal=choices.select(definition.id(),w,w.chain().getFirst(),ThreadLocalRandom.current());
+        var terrain=new RoutineTerrain(world,doors);
         for(var point:goal.points()) {
             var node=terrain.approach(point,goal.type()==RoutineGoal.Type.SIT || goal.type()==RoutineGoal.Type.SLEEP);
             if(node!=null) { Location location=terrain.location(node); location.setYaw(point.yaw()); return location; }
@@ -121,6 +141,7 @@ public final class RoutineService {
     }
     public void prepareReaction(ActiveNpc npc) {
         State s=states.get(npc.definition().id());if(s==null)return;
+        endDance(s);
         looks.clear(npc,s.look);navigator.cancel(npc.definition().id());
         if(s.pose!=null && s.pose.sleeping)release(s,true);
         else if(s.pose!=null)visuals.suspend(s.pose,ticks);
@@ -128,7 +149,7 @@ public final class RoutineService {
     }
     public RoutineVisuals.Pose beginDrink(ActiveNpc npc,org.bukkit.inventory.ItemStack beer,long tick) {
         State s=states.get(npc.definition().id());
-        if(s!=null){looks.clear(npc,s.look);navigator.cancel(npc.definition().id());}
+        if(s!=null){endDance(s);looks.clear(npc,s.look);navigator.cancel(npc.definition().id());}
         return visuals.beginDrink(npc,s==null?null:s.pose,beer,tick);
     }
     public boolean drinkTick(RoutineVisuals.Pose pose,long tick){return visuals.drinkTick(pose,tick);}
@@ -163,10 +184,12 @@ public final class RoutineService {
         return a==b || a!=null && b!=null && a.occurrence()==b.occurrence() && a.timedOrder()==b.timedOrder();
     }
     private void release(State s,boolean reposition) {
+        endDance(s);
         if(plugin.traits()!=null)plugin.traits().cancel(s.npc.definition().id());
         looks.clear(s.npc,s.look);
         if(s.working) plugin.shops().invalidateNpc(s.npc.definition().id());
         s.working=false;
+        if(plugin.music()!=null) plugin.music().remove(s.npc.definition().id());
         if(s.pose!=null) { visuals.leave(s.pose,reposition);s.pose=null; }
         if(s.destination!=null) occupied.remove(key(s.destination),s.npc.definition().id());
         s.destination=null;s.approach=null; navigator.cancel(s.npc.definition().id());
@@ -180,8 +203,12 @@ public final class RoutineService {
         ticks+=cadence; clockElapsed+=cadence;
         if(clockElapsed>=10) {clocks.tick(clockElapsed);clockElapsed=0;}
         var manager=plugin.manager(); if(manager==null) return;
+        navigator.beginTick(ticks,pathStarts,2_000_000);
         for(ActiveNpc npc:manager.activeNpcs()) {
             String id=npc.definition().id(); if(!enabled(id) || failed.contains(id) || !npc.entity().isValid()) continue;
+            State previous=states.get(id);
+            int minute=RoutineSchedule.minute(npc.entity().getWorld().getFullTime());
+            if(previous!=null && ticks<previous.nextUpdate && ticks<previous.nextPresence && previous.lastMinute==minute)continue;
             try { update(npc); }
             catch(RuntimeException ex) {
                 failed.add(id); try { remove(id); } catch(RuntimeException cleanup) { ex.addSuppressed(cleanup); }
@@ -191,8 +218,6 @@ public final class RoutineService {
         if(plugin.reactions()!=null)plugin.reactions().tick(ticks);
         if(plugin.sounds()!=null)plugin.sounds().tick(ticks);
         if(plugin.traits()!=null)plugin.traits().tick(ticks);
-        int budget=Math.max(16,Math.min(2048,plugin.settings().messages().getInt("routines.search-nodes-per-tick",160)));
-        navigator.searchBudget(budget,2_000_000);
         if(ticks%20<cadence) {
             if(plugin.prefixEditor()!=null)plugin.prefixEditor().prune();
             doors.tick(ticks,false); if(plugin.routineCommands()!=null)plugin.routineCommands().prune();
@@ -201,8 +226,10 @@ public final class RoutineService {
     }
     private void update(ActiveNpc npc) {
         String id=npc.definition().id(); State s=states.computeIfAbsent(id,k -> {State n=new State(); n.npc=npc;return n;});
+        s.lastMinute=RoutineSchedule.minute(npc.entity().getWorld().getFullTime());
+        s.nextUpdate=ticks+(s.paused?20:!s.dancing && (s.pose!=null || s.working)?passiveCadence:cadence);
         Location position=npc.entity().getLocation();
-        double range=Math.max(16,Math.min(128,plugin.settings().messages().getDouble("routines.activation-range",48)));
+        double range=activationRange;
         // Nearby-player queries every second; no per-tick whole-world scans.
         if(ticks>=s.nextPresence) {
             s.nextPresence=ticks+20;
@@ -243,7 +270,7 @@ public final class RoutineService {
         var w=window(id,position.getWorld());
         if(!same(s.window,w)) { release(s,true); s.window=w; s.chain=0; s.point=0; s.goal=null; s.nextPick=0; }
         if(w==null || s.chain>=w.chain().size()) { s.status="fuera de horario / secuencia terminada"; return; }
-        RoutineGoal goal=w.chain().get(s.chain);
+        RoutineGoal goal=choices.select(id,w,w.chain().get(s.chain),ThreadLocalRandom.current());
         if(s.goal!=goal) {
             // Cada entrada a un goal comienza su propio intervalo/demora inicial. Sin esto,
             // un intervalo largo de ayer podría impedir que el NPC hable hoy.
@@ -253,6 +280,11 @@ public final class RoutineService {
         if(plugin.reactions()!=null && plugin.reactions().busy(id)){s.status="enfadado: mirando al jugador";s.travelSince=ticks;return;}
         if(plugin.traits()!=null && plugin.traits().busy(id)) {s.status="bebiendo cerveza ofrecida";s.travelSince=ticks;return;}
         if(ticks>=s.nextDialogue) { s.nextDialogue=ticks+20; updateDialogue(npc,goal,System.nanoTime()); }
+        if(s.dancing) {
+            var dance=dancers.tick(npc,ticks,cadence,goal.speed());
+            if(dance!=DanceController.Result.FINISHED) {s.status=dance==DanceController.Result.DANCING?"bailando junto a músicos":"acercándose a los músicos";return;}
+            endDance(s);s.nextPick=0;
+        }
         if(s.pose!=null) {
             if(!validFurniture(goal,s.destination,position.getWorld()) || s.pose.seat!=null && (!s.pose.seat.isValid() || !npc.entity().isInsideVehicle())) {
                 release(s,true);s.nextPick=ticks+100;return;
@@ -260,6 +292,13 @@ public final class RoutineService {
             if(s.pose.sleeping && ticks>=s.nextPoseCheck) {
                 s.nextPoseCheck=ticks+40;
                 if(!visuals.restoreSleep(s.pose,false)) {release(s,true);s.nextPick=ticks+40;return;}
+            }
+            if(!s.pose.sleeping && ticks>=s.nextDanceCheck && danceEnabled) {
+                s.nextDanceCheck=ticks+40;
+                if(dancers.start(npc,s.approach,ticks)) {
+                    looks.clear(npc,s.look);visuals.leave(s.pose,true);s.pose=null;s.dancing=true;
+                    s.nextUpdate=ticks+cadence;s.status="acercándose a los músicos";return;
+                }
             }
             visuals.tick(s.pose,ticks);
             s.status=s.pose.sleeping?"durmiendo":s.pose.reading?"sentado: leyendo":"sentado";
@@ -297,7 +336,7 @@ public final class RoutineService {
         s.status=result==RoutineNavigator.Result.WAITING?"esperando ruta (reintentos limitados)":"caminando a "+goal.type();
         if(result!=RoutineNavigator.Result.ARRIVED) return;
         switch(goal.type()) {
-            case WORK -> { s.working=true; npc.anchor().setYaw(s.approach.getYaw()); npc.entity().setRotation(s.approach.getYaw(),0);s.status="trabajando"; }
+            case WORK -> { s.working=true; if(plugin.music()!=null)plugin.music().working(npc); npc.anchor().setYaw(s.approach.getYaw()); npc.entity().setRotation(s.approach.getYaw(),0);s.status="trabajando"; }
             case WALK -> {
                 s.point++;
                 if(goal.target() && s.point>=goal.points().size()) {s.chain++;s.goal=null;s.point=0;}
@@ -312,6 +351,11 @@ public final class RoutineService {
                 else s.status=goal.type()==RoutineGoal.Type.SLEEP?"durmiendo":"sentado";
             }
         }
+    }
+    private void endDance(State s) {
+        if(!s.dancing)return;
+        if(dancers!=null)dancers.cancel(s.npc.definition().id());
+        s.dancing=false;s.nextDanceCheck=ticks+600;s.nextUpdate=0;s.travelSince=ticks;
     }
     private void updateDialogue(ActiveNpc npc,RoutineGoal goal,long now) {
         RoutineGoal.Dialogue dialogue=goal.dialogue();
@@ -364,5 +408,5 @@ public final class RoutineService {
         if(failed.contains(id)) return "error: revisa consola";
         State s=states.get(id); return s==null?"pendiente de cargar zona":s.status+(s.goal==null?"":"; goal "+s.goal.order());
     }
-    public String metrics() { return "rutas cacheadas="+navigator.cachedRoutes()+", búsquedas pendientes="+navigator.searches()+", NPC con estado="+states.size(); }
+    public String metrics() { return "rutas Paper activas="+navigator.activeRoutes()+", búsquedas pendientes="+navigator.searches()+", NPC con estado="+states.size(); }
 }
