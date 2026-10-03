@@ -13,9 +13,19 @@ class TraitPolicyTest {
         var traits=NpcParser.parse(yaml).get("manolito").traits();
         assertEquals(Trait.ALCOHOLIC,traits.type());assertEquals(37,traits.beerCooldownSeconds());
         assertEquals(Trait.GLUTTON,Trait.parse("glotón"));
+        assertEquals(Trait.PARTYGOER,Trait.parse("Fiestero"));
+        assertEquals(Trait.PARTYGOER,Trait.parse("partygoer"));
         assertThrows(IllegalArgumentException.class,()->Trait.parse("lector,gloton"));
         yaml.set("npcs.manolito.trait.beer-cooldown-seconds",-1);
         assertThrows(IllegalArgumentException.class,()->NpcParser.parse(yaml));
+    }
+    @Test void partygoerRoundTripsThroughNpcConfiguration() {
+        var yaml=new YamlConfiguration();yaml.set("npcs.guest.location.world","world");
+        yaml.set("npcs.guest.trait.type","fiestero");
+        assertEquals(Trait.PARTYGOER,NpcParser.parse(yaml).get("guest").traits().type());
+        yaml.set("npcs.guest.trait.type",Trait.PARTYGOER.name().toLowerCase(java.util.Locale.ROOT));
+        assertEquals(Trait.PARTYGOER,NpcParser.parse(yaml).get("guest").traits().type());
+        assertEquals("Fiestero",TraitEditor.name(Trait.PARTYGOER));
     }
     @Test void readerTriplesDurationAndGluttonFavorsFood() {
         assertEquals(1500,TraitBehavior.readingDuration(Trait.READER,500));
