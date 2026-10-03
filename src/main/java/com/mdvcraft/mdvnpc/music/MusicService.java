@@ -11,8 +11,9 @@ import java.util.concurrent.ThreadLocalRandom;
 
 /** Main-thread only. Routine lifecycle supplies working musicians; never scans all NPCs or players. */
 public final class MusicService {
+    static final List<String> REPERTOIRE=List.of("tourdion","jabali","farol","romeria","cuervo","roble");
     private final MdvNpcPlugin plugin;
-    private final List<Song> songs=List.of(Song.load("tourdion"),Song.load("jabali"),Song.load("farol"));
+    private final List<Song> songs=REPERTOIRE.stream().map(Song::load).toList();
     private final Map<String,ActiveNpc> workers=new HashMap<>();
     private Map<Set<String>,Session> sessions=new HashMap<>();
     private final Map<Cell,List<ActiveNpc>> performers=new HashMap<>();

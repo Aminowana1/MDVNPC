@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
-  <groupId>com.mdvcraft</groupId><artifactId>MDVNPC</artifactId><version>1.7.0</version>
+  <groupId>com.mdvcraft</groupId><artifactId>MDVNPC</artifactId><version>1.8.0</version>
   <name>MDVNPC</name><description>NPC, tiendas y rutinas para MDVCRAFT</description>
   <properties>
     <maven.compiler.release>21</maven.compiler.release>
@@ -11,6 +11,7 @@
     <packetevents.version>2.14.0</packetevents.version>
   </properties>
   <repositories>
+    <repository><id>mojang</id><url>https://libraries.minecraft.net/</url></repository>
     <repository><id>papermc</id><url>https://repo.papermc.io/repository/maven-public/</url></repository>
     <repository><id>libsdisguises</id><url>https://mvn.lib.co.nz/public/</url></repository>
     <repository><id>enginehub</id><url>https://maven.enginehub.org/repo/</url></repository>
@@ -24,6 +25,11 @@
     <dependency><groupId>com.sk89q.worldguard</groupId><artifactId>worldguard-bukkit</artifactId><version>7.0.14</version><scope>provided</scope></dependency>
     <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><version>5.11.4</version><scope>test</scope></dependency>
     <dependency><groupId>org.mockito</groupId><artifactId>mockito-core</artifactId><version>5.15.2</version><scope>test</scope></dependency>
+    <!-- LibsDisguises test doubles inspect GameProfile; retain Paper's shared library versions. -->
+    <dependency>
+      <groupId>com.mojang</groupId><artifactId>authlib</artifactId><version>6.0.58</version><scope>test</scope>
+      <exclusions><exclusion><groupId>*</groupId><artifactId>*</artifactId></exclusion></exclusions>
+    </dependency>
   </dependencies>
   <build>
     <finalName>MDVNPC-${project.version}</finalName>

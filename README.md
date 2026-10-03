@@ -1,4 +1,13 @@
-# MDVNPC 1.5.0
+# MDVNPC 1.8.0
+
+Editor de NPC con selección de trabajo Normal/Tienda/Músico, instrumento Flauta/Guitarra y cambio
+de nombre desde un yunque gráfico. Abre `/mdvnpc edit <id>`; también se accede desde Rutinas.
+El baile junto a músicos queda reservado al rasgo **Fiestero** y se corrige la espera de navegación
+al levantarse de una silla. Se añaden tres canciones originales de 30 segundos a las tres anteriores.
+Consulta [la guía de esta entrega](GUIA-1.8.md). Java 21 y Paper/Purpur 1.21.6; compilación y pruebas
+locales documentadas en `dist/VERIFICACION.txt`. Los informes siguientes son históricos.
+
+## Historial anterior
 
 Prefijo de diálogo por NPC desde el editor, voces en secuencias, ruido espontáneo del ruidoso, reacción a golpes y miradas configurables por contexto. [Guía y cambios de esta entrega](PERSONALIDAD-1.5.0.md). Base: MDVNPC-1.4.2-source.zip del usuario. Entrega fuente, sin compilación ni pruebas Java locales. Los informes que siguen corresponden a versiones anteriores.
 

@@ -4,6 +4,7 @@ import com.mdvcraft.mdvnpc.MdvNpcPlugin;
 import com.mdvcraft.mdvnpc.model.NpcDefinition;
 import com.mdvcraft.mdvnpc.runtime.ActiveNpc;
 import com.mdvcraft.mdvnpc.runtime.PlayerFilter;
+import com.mdvcraft.mdvnpc.trait.Trait;
 import com.mdvcraft.mdvnpc.util.Text;
 import org.bukkit.*;
 import org.bukkit.block.data.type.*;
@@ -293,7 +294,8 @@ public final class RoutineService {
                 s.nextPoseCheck=ticks+40;
                 if(!visuals.restoreSleep(s.pose,false)) {release(s,true);s.nextPick=ticks+40;return;}
             }
-            if(!s.pose.sleeping && ticks>=s.nextDanceCheck && danceEnabled) {
+            if(!s.pose.sleeping && npc.definition().traits().type()==Trait.PARTYGOER
+                    && ticks>=s.nextDanceCheck && danceEnabled) {
                 s.nextDanceCheck=ticks+40;
                 if(dancers.start(npc,s.approach,ticks)) {
                     looks.clear(npc,s.look);visuals.leave(s.pose,true);s.pose=null;s.dancing=true;

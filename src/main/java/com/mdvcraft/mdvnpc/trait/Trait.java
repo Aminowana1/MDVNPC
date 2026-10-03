@@ -5,7 +5,7 @@ import java.util.Locale;
 
 /** Exactly one enum value per NPC, including NONE for existing configurations. */
 public enum Trait {
-    NONE, ALCOHOLIC, READER, GLUTTON, RESTLESS, NOISY;
+    NONE, ALCOHOLIC, READER, GLUTTON, RESTLESS, NOISY, PARTYGOER;
     public static Trait parse(String value) {
         String text=Normalizer.normalize(value,Normalizer.Form.NFD).replaceAll("\\p{M}","").toLowerCase(Locale.ROOT);
         return switch(text) {
@@ -15,7 +15,8 @@ public enum Trait {
             case "gloton","glutton" -> GLUTTON;
             case "inquieto","restless" -> RESTLESS;
             case "ruidoso","noisy" -> NOISY;
-            default -> throw new IllegalArgumentException("Rasgo: ninguno, alcoholico, lector, gloton, inquieto o ruidoso");
+            case "fiestero","partygoer" -> PARTYGOER;
+            default -> throw new IllegalArgumentException("Rasgo: ninguno, alcoholico, lector, gloton, inquieto, ruidoso o fiestero");
         };
     }
 }

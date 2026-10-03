@@ -17,6 +17,12 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class RoutineNavigatorTest {
+    public interface NativeHandleAccess { NativeHandle getHandle(); }
+    public static final class NativeHandle {
+        boolean onGround;
+        final List<Boolean> changes = new ArrayList<>();
+        public void setOnGround(boolean value) { onGround = value; changes.add(value); }
+    }
     World world;
     RoutineNavigator navigator;
     final Map<String, Location> positions = new HashMap<>();
@@ -45,11 +51,20 @@ class RoutineNavigatorTest {
     @AfterEach void cleanup() { navigator.clear(); MockBukkit.unmock(); }
 
     private ActiveNpc npc(String id) {
+        return npc(id, null);
+    }
+    private ActiveNpc npc(String id, NativeHandle handle) {
         YamlConfiguration yaml = new YamlConfiguration();
         yaml.set("npcs." + id + ".location.world", "world"); yaml.set("npcs." + id + ".location.y", 64);
-        Villager entity = mock(Villager.class); Pathfinder finder = mock(Pathfinder.class);
+        Villager entity = handle == null ? mock(Villager.class)
+                : mock(Villager.class, withSettings().extraInterfaces(NativeHandleAccess.class));
+        Pathfinder finder = mock(Pathfinder.class);
         when(entity.getWorld()).thenReturn(world); when(entity.isValid()).thenReturn(true);
         when(entity.isOnGround()).thenReturn(true); when(entity.getPathfinder()).thenReturn(finder);
+        if (handle != null) {
+            when(((NativeHandleAccess)entity).getHandle()).thenReturn(handle);
+            when(entity.isOnGround()).thenAnswer(call -> handle.onGround);
+        }
         Location at = new Location(world, .5, 64, .5); positions.put(id, at);
         when(entity.getLocation()).thenAnswer(call -> positions.get(id).clone()); pathfinders.put(id, finder);
         Pathfinder.PathResult path = mock(Pathfinder.PathResult.class);
@@ -135,22 +150,49 @@ class RoutineNavigatorTest {
         assertEquals(0, navigator.activeRoutes()); assertEquals(1, navigator.searches());
     }
 
-    @Test void groundingAndCancellationRestoreGravityWithoutStartingAi() {
-        ActiveNpc npc = npc("grounding"); when(npc.entity().isOnGround()).thenReturn(false);
-        assertEquals(RoutineNavigator.Result.WAITING, navigator.move(npc, destination(), 2.4, 0, 2));
-        verify(npc.entity()).setGravity(true); verify(npc.entity()).setVelocity(new Vector(0, -.08, 0));
-        verify(pathfinders.get("grounding"), never()).findPath(any(Location.class));
-        navigator.cancel("grounding");
-        verify(npc.entity()).setGravity(false); verify(npc.entity()).setVelocity(new Vector());
+    @Test void disabledPhysicsUsesScopedGroundFlagAndStartsOnTheFirstUpdate() {
+        NativeHandle handle = new NativeHandle(); ActiveNpc npc = npc("grounding", handle);
+        when(pathfinders.get("grounding").findPath(any(Location.class))).thenAnswer(call -> {
+            assertTrue(handle.onGround);
+            Pathfinder.PathResult path = mock(Pathfinder.PathResult.class);
+            when(path.getPoints()).thenReturn(List.of(new Location(world, 0, 64, 0), new Location(world, 2, 64, 2)));
+            return path;
+        });
+        assertEquals(RoutineNavigator.Result.MOVING, navigator.move(npc, destination(), 2.4, 0, 2));
+        assertFalse(handle.onGround); assertEquals(List.of(true, false), handle.changes);
+        verify(pathfinders.get("grounding")).findPath(any(Location.class));
         verify(npc.entity(), never()).setAI(anyBoolean()); verify(npc.entity(), never()).setAware(anyBoolean());
+        verify(npc.entity(), never()).setGravity(anyBoolean()); verify(npc.entity(), never()).setVelocity(any(Vector.class));
+        navigator.cancel("grounding");
         assertEquals(0, navigator.searches());
     }
 
-    @Test void groundingAllowsNativeSearchOnlyAfterPhysicsConfirmsTheFloor() {
-        ActiveNpc npc = npc("settle"); when(npc.entity().isOnGround()).thenReturn(false);
-        navigator.move(npc, destination(), 2.4, 0, 2);
-        when(npc.entity().isOnGround()).thenReturn(true);
-        assertEquals(RoutineNavigator.Result.MOVING, navigator.move(npc, destination(), 2.4, 2, 2));
-        verify(pathfinders.get("settle")).findPath(any(Location.class)); verify(npc.entity()).setGravity(false);
+    @Test void nativeGroundFlagIsRestoredEvenWhenPaperThrows() {
+        NativeHandle handle = new NativeHandle(); ActiveNpc npc = npc("throwing", handle);
+        IllegalStateException problem = new IllegalStateException("native path error");
+        when(pathfinders.get("throwing").findPath(any(Location.class))).thenAnswer(call -> {
+            assertTrue(handle.onGround); throw problem;
+        });
+        assertSame(problem, assertThrows(IllegalStateException.class,
+                () -> navigator.move(npc, destination(), 2.4, 0, 2)));
+        assertFalse(handle.onGround); assertEquals(List.of(true, false), handle.changes);
+        verify(npc.entity(), never()).setAI(anyBoolean()); verify(npc.entity(), never()).setGravity(anyBoolean());
+    }
+
+    @Test void unavailableNativeBridgeFailsExplicitlyRatherThanWaitingForDisabledPhysics() {
+        ActiveNpc npc = npc("unsupported"); when(npc.entity().isOnGround()).thenReturn(false);
+        IllegalStateException problem = assertThrows(IllegalStateException.class,
+                () -> navigator.move(npc, destination(), 2.4, 0, 2));
+        assertTrue(problem.getMessage().contains("getHandle/setOnGround"));
+        verify(pathfinders.get("unsupported"), never()).findPath(any(Location.class));
+        verify(npc.entity(), never()).setGravity(anyBoolean()); verify(npc.entity(), never()).setVelocity(any(Vector.class));
+    }
+
+    @Test void nonexistentFloorCannotBeMarkedGroundedOrStartNativeSearch() {
+        NativeHandle handle = new NativeHandle(); ActiveNpc npc = npc("floating", handle);
+        Block air = mock(Block.class); when(air.getType()).thenReturn(Material.AIR);
+        when(world.getBlockAt(anyInt(), anyInt(), anyInt())).thenReturn(air);
+        assertEquals(RoutineNavigator.Result.WAITING, navigator.move(npc, destination(), 2.4, 0, 2));
+        assertTrue(handle.changes.isEmpty()); verify(pathfinders.get("floating"), never()).findPath(any(Location.class));
     }
 }

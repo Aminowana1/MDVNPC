@@ -6,7 +6,9 @@ import com.mdvcraft.mdvnpc.runtime.ActiveNpc;
 import org.bukkit.Location;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
+import org.bukkit.entity.Entity;
 import org.bukkit.util.Vector;
+import java.lang.reflect.Method;
 import java.util.*;
 import java.util.function.BiPredicate;
 
@@ -30,8 +32,8 @@ public final class RoutineNavigator {
         final Location destination;
         List<Location> path;
         int index;
-        long retry, groundingSince;
-        boolean pending = true, grounding, priorGravity;
+        long retry;
+        boolean pending = true;
         Travel(ActiveNpc npc, Location destination, DoorController doors) {
             this.npc = npc; this.destination = destination.clone();
             terrain = new RoutineTerrain(destination.getWorld(), doors);
@@ -75,19 +77,18 @@ public final class RoutineNavigator {
                     || !travel.terrain.loaded(destination.getBlockX(), destination.getBlockZ())) {
                 failed(travel, tick); return Result.WAITING;
             }
-            // Ground navigation needs the entity's onGround flag even with AI disabled.
-            // Settle on a verified floor once before requesting the route, without waking its brain.
-            if (!grounded(travel, current, tick)) return Result.WAITING;
             if (startsLeft <= 0 || spentNanos >= maximumNanos) return Result.WAITING;
             startsLeft--;
             long started = System.nanoTime();
             try {
-                travel.path = findPaperPath(travel, current);
+                Location start = prepareStart(travel, current, tick);
+                if (start == null) { failed(travel, tick); return Result.WAITING; }
+                current = start;
+                travel.path = findPaperPath(travel, start);
                 travel.index = 0; travel.pending = false;
                 if (travel.path == null) { failed(travel, tick); return Result.WAITING; }
             } finally {
                 spentNanos += System.nanoTime() - started;
-                finishGrounding(travel);
             }
         }
         while (travel.index < travel.path.size()
@@ -125,26 +126,17 @@ public final class RoutineNavigator {
         return Result.MOVING;
     }
 
-    private boolean grounded(Travel travel, Location current, long tick) {
-        if (travel.npc.entity().isOnGround()) return true;
-        if (travel.grounding) {
-            if (tick - travel.groundingSince >= 10) failed(travel, tick);
-            return false;
-        }
+    private Location prepareStart(Travel travel, Location current, long tick) {
         Node start = travel.terrain.near(current);
-        if (start == null) { failed(travel, tick); return false; }
+        if (start == null) return null;
         Location floor = current.clone(); floor.setY(travel.terrain.height(start));
         if (!doors.openNear(travel.npc.entity(), floor, tick)
                 || !travel.terrain.fits(floor.getX(), floor.getY(), floor.getZ(), false)
                 || Math.abs(floor.getY() - current.getY()) > 1.01
                 || current.distanceSquared(floor) > .0001 && !teleport.test(travel.npc, floor)) {
-            failed(travel, tick); return false;
+            return null;
         }
-        travel.priorGravity = travel.npc.entity().hasGravity();
-        travel.grounding = true; travel.groundingSince = tick;
-        travel.npc.entity().setGravity(true);
-        travel.npc.entity().setVelocity(new Vector(0, -.08, 0));
-        return false;
+        return floor;
     }
 
     private List<Location> findPaperPath(Travel travel, Location current) {
@@ -162,7 +154,11 @@ public final class RoutineNavigator {
             double nativeRange = range == null ? PAPER_SEARCH_RANGE : range.getValue();
             if (!Double.isFinite(nativeRange) || nativeRange < 1 || nativeRange > 32
                     || !queryAreaLoaded(current, (int)Math.ceil(nativeRange) + 8)) return null;
-            result = pathfinder.findPath(travel.destination);
+            // NoAI villagers cannot be expected to tick physics and establish onGround.
+            // The verified floor above supplies that flag only for this synchronous query.
+            try (GroundFlag ignored = NativeGroundFlag.open(travel.npc.entity())) {
+                result = pathfinder.findPath(travel.destination);
+            }
         } finally {
             if (range != null) range.setBaseValue(priorRange);
         }
@@ -199,21 +195,52 @@ public final class RoutineNavigator {
     }
 
     private void failed(Travel travel, long tick) {
-        finishGrounding(travel);
         travel.path = null; travel.pending = true; travel.retry = tick + RETRY_TICKS;
     }
-    private static void finishGrounding(Travel travel) {
-        if (!travel.grounding) return;
-        travel.grounding = false;
-        travel.npc.entity().setVelocity(new Vector());
-        travel.npc.entity().setGravity(travel.priorGravity);
-    }
-    public void cancel(String npc) {
-        Travel travel = travels.remove(npc); if (travel != null) finishGrounding(travel);
-    }
+    public void cancel(String npc) { travels.remove(npc); }
     public void clear() {
-        for (Travel travel : travels.values()) finishGrounding(travel);
         travels.clear(); budgetTick = Long.MIN_VALUE;
+    }
+
+    /**
+     * Paper 1.21.6 uses Mojang names at runtime: CraftEntity.getHandle and Entity.setOnGround.
+     * Reflection is resolved once per implementation class; it never enables AI, physics or goals.
+     * Keep the flag scoped to findPath so neither dancing nor idle entities inherit a fake state.
+     */
+    private static final class NativeGroundFlag {
+        private static final ClassValue<Optional<Method>> HANDLES = methods("getHandle");
+        private static final ClassValue<Optional<Method>> SETTERS = methods("setOnGround", boolean.class);
+        private static ClassValue<Optional<Method>> methods(String name, Class<?>... arguments) {
+            return new ClassValue<>() {
+                @Override protected Optional<Method> computeValue(Class<?> type) {
+                    try { return Optional.of(type.getMethod(name, arguments)); }
+                    catch (NoSuchMethodException ex) { return Optional.empty(); }
+                }
+            };
+        }
+        static GroundFlag open(Entity entity) {
+            if (entity.isOnGround()) return GroundFlag.UNCHANGED;
+            Method getHandle = HANDLES.get(entity.getClass()).orElseThrow(() -> unsupported(entity.getClass()));
+            Object handle = call(getHandle, entity);
+            if (handle == null) throw unsupported(entity.getClass());
+            Method setter = SETTERS.get(handle.getClass()).orElseThrow(() -> unsupported(handle.getClass()));
+            call(setter, handle, true);
+            return new GroundFlag(setter, handle);
+        }
+        private static IllegalStateException unsupported(Class<?> type) {
+            return new IllegalStateException("No se pudo preparar la navegación Paper 1.21.6: " + type.getName()
+                    + " no expone getHandle/setOnGround; la rutina se pausa para conservar la IA desactivada.");
+        }
+        static Object call(Method method, Object target, Object... arguments) {
+            try { return method.invoke(target, arguments); }
+            catch (ReflectiveOperationException ex) {
+                throw new IllegalStateException("No se pudo ajustar/restaurar onGround durante la búsqueda Paper", ex);
+            }
+        }
+    }
+    private record GroundFlag(Method setter, Object handle) implements AutoCloseable {
+        private static final GroundFlag UNCHANGED = new GroundFlag(null, null);
+        @Override public void close() { if (setter != null) NativeGroundFlag.call(setter, handle, false); }
     }
     public int activeRoutes() { return (int)travels.values().stream().filter(t -> t.path != null).count(); }
     public int searches() { return (int)travels.values().stream().filter(t -> t.pending).count(); }

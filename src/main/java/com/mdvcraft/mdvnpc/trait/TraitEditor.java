@@ -20,7 +20,7 @@ import java.util.*;
 public final class TraitEditor implements Listener {
     private final MdvNpcPlugin plugin;
     private static final Map<Integer,Trait> CHOICES=Map.of(10,Trait.ALCOHOLIC,11,Trait.READER,
-            12,Trait.GLUTTON,13,Trait.RESTLESS,14,Trait.NOISY,16,Trait.NONE);
+            12,Trait.GLUTTON,13,Trait.RESTLESS,14,Trait.NOISY,15,Trait.PARTYGOER,16,Trait.NONE);
     private static final class Holder implements InventoryHolder {
         final UUID player;final String npc;final int page;Inventory inventory;
         Holder(Player player,String npc,int page){this.player=player.getUniqueId();this.npc=npc;this.page=page;}
@@ -29,7 +29,7 @@ public final class TraitEditor implements Listener {
     public TraitEditor(MdvNpcPlugin plugin){this.plugin=plugin;}
     public static String name(Trait trait){return switch(trait){
         case NONE->"Sin rasgo";case ALCOHOLIC->"Alcohólico";case READER->"Lector";
-        case GLUTTON->"Glotón";case RESTLESS->"Inquieto";case NOISY->"Ruidoso";
+        case GLUTTON->"Glotón";case RESTLESS->"Inquieto";case NOISY->"Ruidoso";case PARTYGOER->"Fiestero";
     };}
     public void open(Player player,String npc,int page){
         if(!player.hasPermission("mdvnpc.admin"))return;
@@ -42,10 +42,12 @@ public final class TraitEditor implements Listener {
                 List.of("&7Cada NPC tiene un solo rasgo.","&7Elegir otro sustituye al anterior.")));
         CHOICES.forEach((slot,trait)->{
             Material icon=switch(trait){case ALCOHOLIC->Material.POTION;case READER->Material.BOOK;
-                case GLUTTON->Material.COOKED_BEEF;case RESTLESS->Material.FEATHER;case NOISY->Material.NOTE_BLOCK;case NONE->Material.BARRIER;};
+                case GLUTTON->Material.COOKED_BEEF;case RESTLESS->Material.FEATHER;case NOISY->Material.NOTE_BLOCK;
+                case PARTYGOER->Material.JUKEBOX;case NONE->Material.BARRIER;};
             String description=switch(trait){case ALCOHOLIC->"Recoge y bebe cerveza ofrecida.";case READER->"Lee más seguido y durante el triple de tiempo.";
                 case GLUTTON->"Prefiere comer; apenas lee o bebe.";case RESTLESS->"Mira más seguido y gesticula.";
-                case NOISY->"Habla con un sonido más fuerte.";case NONE->"Quita el rasgo actual.";};
+                case NOISY->"Habla con un sonido más fuerte.";case PARTYGOER->"Se levanta de la silla y baila con música cercana.";
+                case NONE->"Quita el rasgo actual.";};
             boolean selected=def.traits().type()==trait;
             inventory.setItem(slot,item(icon,(selected?"&a✔ ":"&e")+name(trait),List.of("&7"+description,
                     selected?"&aSeleccionado":trait==Trait.NONE?"&eClic para quitar el rasgo":"&eClic para asignar y guardar")));

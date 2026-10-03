@@ -5,6 +5,9 @@ import com.mdvcraft.mdvnpc.config.NpcParser;
 import com.mdvcraft.mdvnpc.config.Settings;
 import com.mdvcraft.mdvnpc.music.MusicService;
 import com.mdvcraft.mdvnpc.runtime.ActiveNpc;
+import com.mdvcraft.mdvnpc.trait.Trait;
+import me.libraryaddict.disguise.disguisetypes.PlayerDisguise;
+import me.libraryaddict.disguise.disguisetypes.watchers.PlayerWatcher;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
@@ -87,8 +90,13 @@ class DanceControllerTest {
     }
 
     private ActiveNpc npc(String id, double x) {
+        return npc(id, x, "fiestero");
+    }
+
+    private ActiveNpc npc(String id, double x, String trait) {
         var yaml = new YamlConfiguration();
         yaml.set("npcs." + id + ".location.world", "world");
+        yaml.set("npcs." + id + ".trait.type", trait);
         Villager entity = mock(Villager.class);
         when(entity.isValid()).thenReturn(true);
         when(entity.getWorld()).thenReturn(world);
@@ -99,6 +107,19 @@ class DanceControllerTest {
     }
 
     @AfterEach void cleanup() { dances.clear(); MockBukkit.unmock(); }
+
+    @Test void everyOtherTraitSkipsMusicSearchAndCannotDance() {
+        clearInvocations(music, world);
+        for (Trait trait : Trait.values()) {
+            if (trait == Trait.PARTYGOER) continue;
+            ActiveNpc ordinary = npc("ordinary_" + trait.name().toLowerCase(java.util.Locale.ROOT), 2.5,
+                    trait.name().toLowerCase(java.util.Locale.ROOT));
+            assertFalse(dances.start(ordinary, ordinary.position(), 0), trait.name());
+            assertEquals(DanceController.Result.FINISHED, dances.tick(ordinary, 2, 2, 2.4));
+        }
+        verifyNoInteractions(music, navigator, teleport);
+        verify(world, never()).getBlockAt(anyInt(), anyInt(), anyInt());
+    }
 
     @Test void startPreservesSeatAndReturnPointUntilOwnerUnmounts() {
         Location returnTo = seated.position();
@@ -151,6 +172,40 @@ class DanceControllerTest {
         assertEquals(64, seated.position().getY());
         verify(seated.entity(), never()).setAI(anyBoolean());
         verify(seated.entity(), never()).setGravity(anyBoolean());
+    }
+
+    @Test void dancerAlreadyWithinThreeBlocksJumpsEvenIfTheExactWaypointCannotBeReached() {
+        positions.put("seated", new Location(world, 2.5, 64, .5));
+        doReturn(RoutineNavigator.Result.WAITING).when(navigator).move(any(), any(), anyDouble(), anyLong(), anyInt());
+        when(random.nextInt(4)).thenReturn(1);
+        assertTrue(dances.start(seated, seated.position(), 0));
+        assertEquals(DanceController.Result.DANCING, dances.tick(seated, 0, 2, 2.4));
+        assertEquals(DanceController.Result.DANCING, dances.tick(seated, 2, 2, 2.4));
+        assertTrue(seated.position().getY() > 64);
+        verify(navigator, never()).move(any(), any(), anyDouble(), anyLong(), anyInt());
+        verify(seated.entity(), never()).setAI(anyBoolean()); verify(seated.entity(), never()).setGravity(anyBoolean());
+    }
+
+    @Test void failedLocalSidestepKeepsTheDancerAnimatingAndAllowsJumping() {
+        assertTrue(dances.start(seated, seated.position(), 0));
+        dances.tick(seated, 0, 2, 2.4);
+        doReturn(RoutineNavigator.Result.WAITING).when(navigator).move(any(), any(), anyDouble(), anyLong(), anyInt());
+        when(random.nextInt(4)).thenReturn(1);
+        assertEquals(DanceController.Result.DANCING, dances.tick(seated, 24, 2, 2.4));
+        assertEquals(DanceController.Result.DANCING, dances.tick(seated, 26, 2, 2.4));
+        assertTrue(seated.position().getY() > 64);
+    }
+
+    @Test void partygoerSneaksAndRestoresItsPreviousDisguiseState() {
+        positions.put("seated", new Location(world, 2.5, 64, .5));
+        PlayerDisguise disguise = mock(PlayerDisguise.class); PlayerWatcher watcher = mock(PlayerWatcher.class);
+        when(disguise.getWatcher()).thenReturn(watcher);
+        ActiveNpc dressed = new ActiveNpc(seated.definition(), seated.anchor(), seated.entity(), disguise);
+        when(random.nextInt(4)).thenReturn(0);
+        assertTrue(dances.start(dressed, dressed.position(), 0));
+        assertEquals(DanceController.Result.DANCING, dances.tick(dressed, 0, 2, 2.4));
+        verify(watcher).setSneaking(true);
+        dances.cancel("seated"); verify(watcher).setSneaking(false);
     }
 
     @Test void lowCeilingPreventsJumpAndNearbyPlayersAreNeverScanned() {

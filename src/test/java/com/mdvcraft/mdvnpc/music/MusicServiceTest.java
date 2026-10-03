@@ -98,7 +98,7 @@ class MusicServiceTest {
     @Test void completedSongAdvancesAndStopClearsAllSessions() throws Exception {
         music.working(npc("a","musician_flute",0));server.getScheduler().performTicks(23);
         Object session=sessions().get(Set.of("a"));var start=session.getClass().getDeclaredField("start");start.setAccessible(true);
-        long first=start.getLong(session);server.getScheduler().performTicks(310);
+        long first=start.getLong(session);server.getScheduler().performTicks(650);
         assertTrue(start.getLong(session)>first);music.stop();assertTrue(sessions().isEmpty());
     }
     @Test void respawnWithSameIdReplacesOldEntityInSession() throws Exception {

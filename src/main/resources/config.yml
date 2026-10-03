@@ -21,7 +21,7 @@ routines:
   movement-interval-ticks: 2 # 1..4; seguimiento de rutas Paper, IA autónoma apagada
   passive-update-ticks: 8 # 2..20; NPC quietos actualizan menos, horario/presencia siguen vigilados
   path-starts-per-update: 2 # 1..8; máximo compartido de nuevas búsquedas Paper por actualización
-  dancing: true # NPC sentados pueden acercarse a músicos y volver a su silla
+  dancing: true # solo NPC con rasgo Fiestero: dejan la silla, bailan junto a músicos y vuelven
   dance-min-seconds: 20
   dance-max-seconds: 40
   seat-offset-y: 0.0 # ajustar si otro plugin cambia la altura visual del disfraz

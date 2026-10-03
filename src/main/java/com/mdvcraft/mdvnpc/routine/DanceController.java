@@ -2,6 +2,7 @@ package com.mdvcraft.mdvnpc.routine;
 
 import com.mdvcraft.mdvnpc.MdvNpcPlugin;
 import com.mdvcraft.mdvnpc.runtime.ActiveNpc;
+import com.mdvcraft.mdvnpc.trait.Trait;
 import org.bukkit.Location;
 import org.bukkit.World;
 
@@ -48,7 +49,8 @@ public final class DanceController {
 
     /** Only called after the owner confirms that this NPC is sitting and may leave its seat. */
     public boolean start(ActiveNpc npc, Location returnTo, long tick) {
-        if (active.containsKey(npc.definition().id()) || !npc.entity().isValid()
+        if (npc.definition().traits().type() != Trait.PARTYGOER
+                || active.containsKey(npc.definition().id()) || !npc.entity().isValid()
                 || plugin.music() == null || returnTo == null) return false;
         Location current = npc.position();
         ActiveNpc musician = plugin.music().nearestPerformer(current, HEARING_RADIUS);
@@ -80,7 +82,8 @@ public final class DanceController {
         if (state == null) return Result.FINISHED;
         Location current = npc.position();
         Location source = state.musician.position();
-        if (!npc.entity().isValid() || !state.musician.entity().isValid() || plugin.music() == null
+        if (npc.definition().traits().type() != Trait.PARTYGOER
+                || !npc.entity().isValid() || !state.musician.entity().isValid() || plugin.music() == null
                 || !plugin.music().isPerforming(state.musician)
                 || current.getWorld() != source.getWorld()
                 || !loaded(source) || !loaded(current)
@@ -96,7 +99,7 @@ public final class DanceController {
             }
             return Result.DANCING;
         }
-        if (!state.started || current.distanceSquared(source) > DANCE_RADIUS_SQUARED) {
+        if (current.distanceSquared(source) > DANCE_RADIUS_SQUARED) {
             if (!safeDestination(state.destination, source)) {
                 state.destination = safeSpot(npc, state.musician, null);
                 if (state.destination == null) {
@@ -104,11 +107,16 @@ public final class DanceController {
                     return Result.FINISHED;
                 }
             }
-            RoutineNavigator.Result result = navigator.move(npc, state.destination, speed, tick, cadence);
-            if (result != RoutineNavigator.Result.ARRIVED) return Result.MOVING;
+            navigator.move(npc, state.destination, speed, tick, cadence);
+            // Entering the dance radius is enough; waiting for an exact waypoint can leave
+            // a dancer standing silently beside the band during a limited or failed search.
             if (npc.position().distanceSquared(source) > DANCE_RADIUS_SQUARED) return Result.MOVING;
-            if (!state.started) state.until = tick + state.duration;
+        }
+        if (!state.started) {
+            state.until = tick + state.duration;
             state.started = true;
+            navigator.cancel(npc.definition().id());
+            state.destination = null;
             state.nextMove = tick + 24;
             state.nextGesture = tick;
         }
@@ -119,7 +127,10 @@ public final class DanceController {
         }
         if (state.destination != null) {
             RoutineNavigator.Result moved = navigator.move(npc, state.destination, Math.min(speed, 1.4), tick, cadence);
-            if (moved == RoutineNavigator.Result.ARRIVED) {
+            if (moved == RoutineNavigator.Result.ARRIVED || moved == RoutineNavigator.Result.WAITING) {
+                // Keep dancing on the checked floor while a local sidestep is unavailable.
+                // A fresh, nearby sidestep may be chosen at the next bounded movement interval.
+                if (moved == RoutineNavigator.Result.WAITING) navigator.cancel(npc.definition().id());
                 state.destination = null;
                 faceMusic(npc, source);
             }
