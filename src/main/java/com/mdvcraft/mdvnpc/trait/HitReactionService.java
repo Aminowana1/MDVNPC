@@ -26,6 +26,7 @@ public final class HitReactionService {
         if(busy(id) || now<due.getOrDefault(id,0L))return;
         double cooldown=BehaviorConfig.number(plugin,"npc-reactions.cooldown-seconds",5,.5,300);
         due.put(id,now+(long)(cooldown*1_000_000_000L));
+        if(plugin.music()!=null)plugin.music().suspendVisuals(id);
         plugin.traits().cancel(id);plugin.routines().prepareReaction(npc);
         Location location=npc.position();
         long duration=(long)(BehaviorConfig.number(plugin,"npc-reactions.look-seconds",3,.2,15)*1_000_000_000L);

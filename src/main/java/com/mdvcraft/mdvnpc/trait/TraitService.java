@@ -94,6 +94,7 @@ public final class TraitService {
             if(event.isCancelled() || !npc.entity().isValid() || !plugin.manager().activeNpcs().contains(npc)
                     || !plugin.routines().canReceiveBeer(npc) || eligible(npc,item)!=player
                     || !original.equals(item.getItemStack()))return false;
+            if(plugin.music()!=null)plugin.music().suspendVisuals(id);
             pose=plugin.routines().beginDrink(npc,original,tick);
             ItemStack rest=original.clone();rest.setAmount(original.getAmount()-1);
             if(rest.getAmount()==0)item.remove();else item.setItemStack(rest);

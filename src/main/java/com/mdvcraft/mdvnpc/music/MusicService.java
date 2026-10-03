@@ -8,13 +8,16 @@ import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitTask;
 import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.logging.Level;
 
 /** Main-thread only. Routine lifecycle supplies working musicians; never scans all NPCs or players. */
 public final class MusicService {
     static final List<String> REPERTOIRE=List.of("tourdion","jabali","farol","romeria","cuervo","roble");
     private final MdvNpcPlugin plugin;
+    private final MusicianVisuals visuals;
     private final List<Song> songs=REPERTOIRE.stream().map(Song::load).toList();
     private final Map<String,ActiveNpc> workers=new HashMap<>();
+    private final Set<String> visualFailures=new HashSet<>();
     private Map<Set<String>,Session> sessions=new HashMap<>();
     private final Map<Cell,List<ActiveNpc>> performers=new HashMap<>();
     private BukkitTask task;
@@ -31,10 +34,13 @@ public final class MusicService {
         Song song; long start;
         Session(List<Member> members){this.members=members;}
     }
-    public MusicService(MdvNpcPlugin plugin){this.plugin=plugin;}
+    public MusicService(MdvNpcPlugin plugin){this(plugin,new MusicianVisuals(plugin));}
+    MusicService(MdvNpcPlugin plugin,MusicianVisuals visuals){this.plugin=plugin;this.visuals=Objects.requireNonNull(visuals);}
     public void working(ActiveNpc npc) {
         if(!npc.definition().mode().musician())return;
-        workers.put(npc.definition().id(),npc);
+        String id=npc.definition().id();
+        ActiveNpc prior=workers.put(id,npc);
+        if(prior!=npc){if(prior!=null)removeVisuals(id);visualFailures.remove(id);}
         if(task==null) {
             groupRadius=bounded("music.group-radius",8,2,16);
             audioRadius=bounded("music.audio-radius",14,12,15);
@@ -47,12 +53,30 @@ public final class MusicService {
         return Double.isFinite(value)?Math.max(min,Math.min(max,value)):fallback;
     }
     public void remove(String id) {
+        removeVisuals(id);
         workers.remove(id);
+        visualFailures.remove(id);
         if(workers.isEmpty())stop();
     }
     public void stop() {
         if(task!=null)task.cancel(); task=null;
+        try{visuals.stop();}catch(RuntimeException | LinkageError ex){plugin.getLogger().log(Level.WARNING,"No se pudieron restaurar todos los efectos musicales",ex);}
         workers.clear();sessions.clear();performers.clear();tick=0;
+        visualFailures.clear();
+    }
+    /** Give temporary reactions/beer ownership before they capture equipment or head orientation. */
+    public void suspendVisuals(String id){removeVisuals(id);}
+    public boolean isAnimating(ActiveNpc npc){return npc!=null && !visualFailures.contains(npc.definition().id()) && eligible(npc) && visuals.isAnimating(npc);}
+    private void removeVisuals(String id){
+        try{visuals.remove(id);}catch(RuntimeException | LinkageError ex){visualFailure(id,ex);}
+    }
+    private void visualFailure(String id,Throwable ex){
+        if(visualFailures.add(id))plugin.getLogger().log(Level.WARNING,"Animación musical pausada para "+id+"; el audio continúa. Revisa el error y usa /mdvnpc reload",ex);
+    }
+    private void animate(Member member,long elapsed,boolean played){
+        String id=member.npc.definition().id();if(visualFailures.contains(id))return;
+        try{visuals.tick(member.npc,member.audience,audioRadius,elapsed,tick,played);}
+        catch(RuntimeException | LinkageError ex){visualFailure(id,ex);removeVisuals(id);}
     }
     private boolean eligible(ActiveNpc npc) {
         String id=npc.definition().id();
@@ -129,15 +153,22 @@ public final class MusicService {
         s.song=songs.get(ThreadLocalRandom.current().nextInt(songs.size()));s.start=start;
     }
     private void tick() {
+        // Includes off-duty/busy workers excluded by regroup: no stale instrument or head pose.
+        if(tick%4==0)for(var worker:workers.values())if(!eligible(worker))removeVisuals(worker.definition().id());
         if(tick%20==0)regroup();
         for(Session session:sessions.values()) {
             long elapsed=tick-session.start;
-            if(elapsed>=session.song.duration()) {choose(session,tick+20);continue;}
-            var notes=session.song.frames().get((int)elapsed);if(notes==null)continue;
+            if(elapsed>=session.song.duration()) {choose(session,tick+20);elapsed=tick-session.start;}
+            var notes=session.song.frames().get((int)elapsed);
+            boolean flutePlayed=false,guitarPlayed=false;
+            if(notes!=null)for(var note:notes){if(note.flute())flutePlayed=true;else guitarPlayed=true;}
             for(Member member:session.members) {
-                if(member.audience.isEmpty() || !eligible(member.npc))continue;
-                Location origin=member.npc.entity().getLocation();
+                if(!eligible(member.npc)){removeVisuals(member.npc.definition().id());continue;}
                 boolean flute=member.npc.definition().mode()==Mode.MUSICIAN_FLUTE;
+                boolean played=flute?flutePlayed:guitarPlayed;
+                animate(member,elapsed,played);
+                if(member.audience.isEmpty() || !played)continue;
+                Location origin=member.npc.entity().getLocation();
                 for(Player player:member.audience) {
                     if(!audible(origin,player,audioRadius))continue;
                     for(var note:notes)if(note.flute()==flute)

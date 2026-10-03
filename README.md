@@ -1,4 +1,12 @@
-# MDVNPC 1.8.0
+# MDVNPC 1.9.0
+
+Los músicos muestran un instrumento durante el trabajo: bambú para flauta y armadura de
+caballo de hierro para guitarra. Mueven la cabeza, gesticulan al tocar y emiten notas
+ascendentes para jugadores cercanos. Las animaciones usan el reloj musical compartido y
+restauran el equipo al finalizar o al interrumpirse. Consulta [la guía de esta entrega](GUIA-1.9.md).
+Se conserva el editor y las seis canciones de 1.8.0; los informes anteriores son históricos.
+
+## Actualización 1.8.0
 
 Editor de NPC con selección de trabajo Normal/Tienda/Músico, instrumento Flauta/Guitarra y cambio
 de nombre desde un yunque gráfico. Abre `/mdvnpc edit <id>`; también se accede desde Rutinas.

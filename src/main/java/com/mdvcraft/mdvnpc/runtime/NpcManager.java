@@ -162,6 +162,7 @@ public final class NpcManager {
         }
     }
     private void remove(ActiveNpc npc) {
+        if(plugin.music()!=null)plugin.music().remove(npc.definition().id());
         if(plugin.reactions()!=null)plugin.reactions().cancel(npc.definition().id());
         if(plugin.traits()!=null)plugin.traits().cancel(npc.definition().id());
         if(plugin.sounds()!=null)plugin.sounds().forget(npc.definition().id());
@@ -232,12 +233,13 @@ public final class NpcManager {
             }
             var definition = npc.definition();
             if (!plugin.routines().canLook(npc)) continue;
-            double range = Math.max(checkLook && definition.look().enabled() ? definition.look().range() : 0,
+            boolean allowLook = checkLook && (plugin.music() == null || !plugin.music().isAnimating(npc));
+            double range = Math.max(allowLook && definition.look().enabled() ? definition.look().range() : 0,
                     checkDialogue && !plugin.routines().enabled(definition.id()) && definition.dialogue().enabled() && !definition.dialogue().lines().isEmpty() ? definition.dialogue().range() : 0);
             if (range <= 0) continue;
             Collection<Player> players = npc.position().getWorld().getNearbyPlayers(npc.position(), range,
                     player -> PlayerFilter.accepts(player, plugin.settings()));
-            if (checkLook) look.update(npc, players, plugin.settings().rotationThreshold());
+            if (allowLook) look.update(npc, players, plugin.settings().rotationThreshold());
             // NPC con rutina usan exclusivamente los diálogos del goal (WORK antiguo hereda
             // el diálogo global desde RoutineService). Evita duplicar frases mientras trabaja.
             if (checkDialogue && !plugin.routines().enabled(definition.id())) dialogue.update(npc, players, now);

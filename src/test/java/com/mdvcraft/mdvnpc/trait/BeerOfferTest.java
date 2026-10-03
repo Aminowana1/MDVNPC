@@ -4,6 +4,7 @@ import com.mdvcraft.mdvnpc.MdvNpcPlugin;
 import com.mdvcraft.mdvnpc.config.NpcParser;
 import com.mdvcraft.mdvnpc.runtime.*;
 import com.mdvcraft.mdvnpc.routine.*;
+import com.mdvcraft.mdvnpc.music.MusicService;
 import org.bukkit.*;
 import org.bukkit.entity.*;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -21,12 +22,13 @@ import static org.junit.jupiter.api.Assertions.*;
 /** Offer transaction tests; visual rendering and MMO identity resolution require the real server. */
 class BeerOfferTest {
     MockedStatic<Bukkit> bukkit;TraitService service;ActiveNpc npc;Item item;Player player;
-    PluginManager events;RoutineService routines;ItemStack stack;
+    PluginManager events;RoutineService routines;ItemStack stack;MusicService music;
     @BeforeEach void setup() {
         MockBukkit.mock();
         bukkit=mockStatic(Bukkit.class,CALLS_REAL_METHODS);events=mock(PluginManager.class);bukkit.when(Bukkit::getPluginManager).thenReturn(events);
         var plugin=mock(MdvNpcPlugin.class);when(plugin.getLogger()).thenReturn(Logger.getAnonymousLogger());
         routines=mock(RoutineService.class);when(plugin.routines()).thenReturn(routines);
+        music=mock(MusicService.class);when(plugin.music()).thenReturn(music);
         var yaml=new YamlConfiguration();yaml.set("npcs.manolito.location.world","world");yaml.set("npcs.manolito.trait.type","alcoholico");
         World world=mock(World.class);Villager entity=mock(Villager.class);
         Location at=new Location(world,0,64,0);when(entity.getLocation()).thenReturn(at);when(entity.getWorld()).thenReturn(world);when(entity.isValid()).thenReturn(true);
@@ -48,6 +50,7 @@ class BeerOfferTest {
         doAnswer(c->{((EntityPickupItemEvent)c.getArgument(0)).setCancelled(true);return null;}).when(events).callEvent(any());
         assertFalse(service.accept(npc,item,player,stack,System.nanoTime()));
         verify(item,never()).setItemStack(any());verify(item,never()).remove();verify(routines,never()).beginDrink(any(),any(),anyLong());
+        verifyNoInteractions(music);
     }
     @Test void oneBeerOnlyAndCooldownSurvivesVisualCancellation() {
         long now=System.nanoTime();assertTrue(service.accept(npc,item,player,stack,now));
@@ -58,10 +61,18 @@ class BeerOfferTest {
     }
     @Test void listenerChangingStackAbortsWithoutDebit() {
         doAnswer(c->{when(item.getItemStack()).thenReturn(mock(ItemStack.class));return null;}).when(events).callEvent(any());
-        assertFalse(service.accept(npc,item,player,stack,System.nanoTime()));verify(item,never()).setItemStack(any());
+        assertFalse(service.accept(npc,item,player,stack,System.nanoTime()));verify(item,never()).setItemStack(any());verifyNoInteractions(music);
     }
     @Test void foreignOwnerPreventsTakingBeer() {
         when(item.getOwner()).thenReturn(UUID.randomUUID());
-        assertFalse(service.accept(npc,item,player,stack,System.nanoTime()));verify(item,never()).setItemStack(any());
+        assertFalse(service.accept(npc,item,player,stack,System.nanoTime()));verify(item,never()).setItemStack(any());verifyNoInteractions(music);
+    }
+    @Test void validatedBeerOfferReleasesMusicHandsBeforeDrinkCapturesThem() {
+        assertTrue(service.accept(npc,item,player,stack,System.nanoTime()));
+        var order=inOrder(events,music,routines,item);
+        order.verify(events).callEvent(any());
+        order.verify(music).suspendVisuals("manolito");
+        order.verify(routines).beginDrink(eq(npc),eq(stack),anyLong());
+        order.verify(item).setItemStack(any());
     }
 }

@@ -1,7 +1,9 @@
-MDVNPC 1.8.0: compilación limpia Maven verify, Java 21.
-164 pruebas; 0 errores, 0 fallos, 0 omitidas.
-Incluye pruebas de editor/trabajos/renombre, seis canciones y audio local,
-baile exclusivo Fiestero, navegación Paper sin IA y restauración de estado.
-Las pruebas usan MockBukkit/Mockito y un handle simulado para el puente nativo.
-No se ha realizado prueba visual en servidor real ni medición de CPU/RAM/TPS.
+MDVNPC 1.9.0: compilación limpia Maven verify, Java 21.
+191 pruebas; 0 errores, 0 fallos, 0 omitidas.
+Incluye equipo/gestos musicales, partículas locales y límites de frecuencia,
+restauración de mano/cabeza, prioridad para golpes/bebida y continuidad del audio.
+Las pruebas usan MockBukkit/Mockito. La fábrica de items se sustituye en los
+tests de poses porque MockBukkit no implementa el registro de componentes de Paper.
+No se ha comprobado la apariencia en cliente conectado a servidor real ni
+medido CPU/RAM/TPS. El componente TOOT_HORN se compila contra Paper 1.21.6.
 

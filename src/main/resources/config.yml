@@ -163,4 +163,8 @@ npc-reactions:
 music:
   group-radius: 8 # Distancia entre músicos vecinos de la misma sesión (2..16)
   audio-radius: 14 # Límite estricto por NPC, en bloques (12..15)
+  visuals:
+    enabled: true # instrumento y gestos cosméticos solo durante el trabajo musical
+    head-movement: true # movimiento suave al ritmo; respeta golpes y otras actividades
+    note-particles: true # notas ascendentes enviadas solo a la audiencia cercana
 
