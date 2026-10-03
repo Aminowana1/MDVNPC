@@ -1,9 +1,17 @@
-# MDVNPC 1.11.0
+# MDVNPC 1.11.1
+
+Se restauran los nombres nativos de LibsDisguises de la versión 1.9: sin rótulos
+independientes que persigan al NPC ni offsets de nombre al sentarse o dormir.
+La recuperación de rutinas evita saltos frente a observadores y las poses validan
+la proximidad antes de sentarse, acostarse o regresar a su punto de salida.
+Consulta [la guía de esta entrega](GUIA-1.11.1.md).
+
+## Actualización 1.11.0
 
 El editor de cada goal permite activar **Atender durante este goal**: comandos y
 compras siguen disponibles mientras el NPC se sienta, duerme o camina. El ajuste
 se aplica a todas las variantes del goal y viene desactivado en los goals anteriores.
-Consulta [la guía de esta entrega](GUIA-1.11.0.md).
+Consulta [la guía de atención por goal](GUIA-1.11.0.md).
 
 ## Actualización 1.10.1
 

@@ -195,4 +195,24 @@ class RoutineNavigatorTest {
         assertEquals(RoutineNavigator.Result.WAITING, navigator.move(npc, destination(), 2.4, 0, 2));
         assertTrue(handle.changes.isEmpty()); verify(pathfinders.get("floating"), never()).findPath(any(Location.class));
     }
+
+    @Test void floorPreparationSettlesVerticallyAtWalkingSpeedBeforeQueryingPaper() {
+        ActiveNpc npc=npc("settling");Location previous=new Location(world,.5,64.8,.5);
+        positions.put("settling",previous.clone());
+        assertEquals(RoutineNavigator.Result.MOVING,navigator.move(npc,destination(),2.4,0,2));
+        Location step=positions.get("settling");assertEquals(64.56,step.getY(),.000001);
+        assertTrue(previous.distance(step)<=.240001);verify(pathfinders.get("settling"),never()).findPath(any(Location.class));
+        previous=step;
+        for(int tick=2;tick<=10;tick+=2) {
+            navigator.move(npc,destination(),2.4,tick,2);step=positions.get("settling");
+            assertTrue(previous.distance(step)<=.240001,"vertical preparation must not add a hidden full-block snap");previous=step;
+        }
+        assertEquals(64,step.getY(),.000001);verify(pathfinders.get("settling"),times(1)).findPath(any(Location.class));
+    }
+
+    @Test void floorPreparationDoesNotSnapAnEmbeddedNpcThroughSolidBlocks() {
+        ActiveNpc npc=npc("embedded");Location original=new Location(world,.5,63.3,.5);positions.put("embedded",original.clone());
+        assertEquals(RoutineNavigator.Result.WAITING,navigator.move(npc,destination(),2.4,0,2));
+        assertEquals(original,positions.get("embedded"));verify(pathfinders.get("embedded"),never()).findPath(any(Location.class));
+    }
 }

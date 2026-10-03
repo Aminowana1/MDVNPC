@@ -81,8 +81,11 @@ public final class RoutineNavigator {
             startsLeft--;
             long started = System.nanoTime();
             try {
-                Location start = prepareStart(travel, current, tick);
+                Location start = prepareStart(travel, current, tick, speed, cadence);
                 if (start == null) { failed(travel, tick); return Result.WAITING; }
+                // Settling onto a nearby verified floor follows the same speed limit as
+                // walking. Do not combine a full-block vertical snap with the first step.
+                if (current.distanceSquared(start) > .0001) return Result.MOVING;
                 current = start;
                 travel.path = findPaperPath(travel, start);
                 travel.index = 0; travel.pending = false;
@@ -126,17 +129,25 @@ public final class RoutineNavigator {
         return Result.MOVING;
     }
 
-    private Location prepareStart(Travel travel, Location current, long tick) {
+    private Location prepareStart(Travel travel, Location current, long tick, double speed, int cadence) {
         Node start = travel.terrain.near(current);
         if (start == null) return null;
         Location floor = current.clone(); floor.setY(travel.terrain.height(start));
         if (!doors.openNear(travel.npc.entity(), floor, tick)
                 || !travel.terrain.fits(floor.getX(), floor.getY(), floor.getZ(), false)
-                || Math.abs(floor.getY() - current.getY()) > 1.01
-                || current.distanceSquared(floor) > .0001 && !teleport.test(travel.npc, floor)) {
+                || Math.abs(floor.getY() - current.getY()) > 1.01) {
             return null;
         }
-        return floor;
+        double dy=floor.getY()-current.getY();
+        if(Math.abs(dy)<=.01)return current;
+        double distance=Math.max(.01,speed)*Math.max(1,cadence)/20.0;
+        Location step=current.clone().add(0,Math.copySign(Math.min(Math.abs(dy),distance),dy),0);
+        int samples=Math.max(1,(int)Math.ceil(Math.abs(step.getY()-current.getY())/.16));
+        for(int i=1;i<=samples;i++) {
+            double y=current.getY()+(step.getY()-current.getY())*i/samples;
+            if(!travel.terrain.fits(current.getX(),y,current.getZ(),false))return null;
+        }
+        return teleport.test(travel.npc,step)?step:null;
     }
 
     private List<Location> findPaperPath(Travel travel, Location current) {

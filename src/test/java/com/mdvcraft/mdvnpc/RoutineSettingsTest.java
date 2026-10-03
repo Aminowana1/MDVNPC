@@ -19,18 +19,27 @@ class RoutineSettingsTest {
             assertEquals(60, settings.messages().getInt("routines.dance-duration-seconds"));
             assertEquals(30, settings.messages().getInt("routines.dance-seated-seconds"));
             assertEquals(.5, settings.messages().getDouble("routines.seat-offset-y"));
-            assertEquals(0, settings.messages().getDouble("routines.name-offset-seated-y"));
-            assertEquals(0, settings.messages().getDouble("routines.name-offset-sleeping-y"));
+            assertFalse(settings.messages().contains("routines.name-offset-seated-y"));
+            assertFalse(settings.messages().contains("routines.name-offset-sleeping-y"));
         }
     }
 
-    @Test void malformedOffsetsAreRejectedBeforeNpcReload() {
-        for (var key : List.of("routines.seat-offset-y", "routines.name-offset-seated-y", "routines.name-offset-sleeping-y")) {
+    @Test void malformedSeatOffsetsAreRejectedBeforeNpcReload() {
+        for (var key : List.of("routines.seat-offset-y")) {
             for (var value : List.of(Double.NaN, Double.POSITIVE_INFINITY, -4.01, 4.01, "alto")) {
                 var yaml = new YamlConfiguration(); yaml.set(key, value);
                 var error = assertThrows(IllegalArgumentException.class, () -> Settings.parse(yaml));
                 assertTrue(error.getMessage().contains(key));
             }
+        }
+    }
+
+    @Test void retiredNameOffsetsNeverBlockReloadOfExistingConfigurations() {
+        for (var value : List.of(Double.NaN, Double.POSITIVE_INFINITY, -10, 10, "alto")) {
+            var yaml = new YamlConfiguration();
+            yaml.set("routines.name-offset-seated-y", value);
+            yaml.set("routines.name-offset-sleeping-y", value);
+            assertDoesNotThrow(() -> Settings.parse(yaml));
         }
     }
 

@@ -17,8 +17,8 @@ public record Settings(int intervalTicks, int lookIntervalTicks, boolean ignoreI
         if (ticks < 1 || ticks > 200) throw new IllegalArgumentException("update-interval-ticks: usar 1..200");
         if (!Double.isFinite(threshold) || threshold < 0 || threshold > 180)
             throw new IllegalArgumentException("rotation-threshold-degrees: usar 0..180");
-        for (String key : java.util.List.of("routines.seat-offset-y", "routines.name-offset-seated-y",
-                "routines.name-offset-sleeping-y")) {
+        // Legacy name-offset keys are ignored: LibsDisguises owns the native nametag again.
+        for (String key : java.util.List.of("routines.seat-offset-y")) {
             Object value = yaml.get(key);
             if (value != null && (!(value instanceof Number number) || !Double.isFinite(number.doubleValue())
                     || number.doubleValue() < -4 || number.doubleValue() > 4))

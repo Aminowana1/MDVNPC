@@ -1,57 +1,37 @@
-MDVNPC 1.11.0 corregido: Maven verify completo tras compilación limpia, Java 21.
-303 pruebas; 0 errores, 0 fallos, 0 omitidas.
-RoutineJobInteractionTest: dependencias preparadas antes de thenReturn y nombre del jugador definido.
-Suite completa ejecutada, incluidos los 14 casos que fallaban en GitHub.
-Entrega sólo ZIP de fuentes, sin JAR compilado. La comprobación in-game la hará el usuario.
-Base: entrega MDVNPC 1.10.1.
-Nueva atención de comandos/tienda por goal, con work-interaction=false por defecto.
-Todas las variantes heredan el ajuste del goal principal.
-El editor permite activar/desactivar el ajuste desde el goal y sus variantes.
-La atención respeta el goal/horario actual y el estado activo del NPC.
-La música y las miradas siguen usando el estado real de Trabajo en su puesto.
-Tiendas conservan su revalidación en interacción, apertura diferida y compra.
-Sin tareas adicionales por NPC ni escaneos globales por tick.
-Las ocho partituras se verificaron idénticas a 1.10.1.
-Se conservan baile, nombres, navegación Paper y demás sistemas.
-Pruebas MockBukkit/Mockito; no se comprobó apariencia en cliente real ni
-se midió CPU/RAM/TPS. Paper 1.21.6 y LibsDisguises 11.0.18.
+MDVNPC 1.11.1: compilación limpia y Maven clean verify con Java 21.
+313 pruebas; 0 errores, 0 fallos, 0 omitidas.
+Base: MDVNPC-1.11.0-atencion-por-goal-corregido.zip del usuario.
+Nombres: DisguiseService idéntico al de 1.9; se elimina el TextDisplay propio.
+Los offsets de nombre antiguos se ignoran; se mantiene el offset de asiento 0.5.
+Limpieza de rótulos antiguos al arrancar y cargar entidades marcadas.
+Recuperación por horario solo sin observadores próximos en origen y destino.
+Transiciones observadas recorren la ruta antes de sentarse/trabajar/dormir.
+Las poses desplazadas no hacen teleport largo al salir/restaurar.
+Se conservan variantes, diálogo, atención por goal, tiendas, música y baile.
+Las ocho partituras se verificaron idénticas a la entrega anterior.
+Sin nuevas tareas por NPC ni escaneos globales por tick.
+Pruebas MockBukkit/Mockito; no se comprobó apariencia en cliente real ni TPS/CPU/RAM.
+Paper/Purpur 1.21.6, LibsDisguises 11.0.18, PacketEvents 2.14.0.
+Entrega solo ZIP de fuentes, sin JAR compilado.
 
-Archivos cambiados o nuevos respecto a las fuentes originales 1.9.0:
-GUIA-1.10.1.md
-GUIA-1.10.md
-GUIA-1.11.0.md
-pom.xml
+Archivos cambiados o nuevos respecto a 1.11.0 corregido:
+GUIA-1.11.1.md
 README.md
-src/main/java/com/mdvcraft/mdvnpc/command/NpcCommand.java
+pom.xml
 src/main/java/com/mdvcraft/mdvnpc/config/Settings.java
-src/main/java/com/mdvcraft/mdvnpc/MdvNpcPlugin.java
-src/main/java/com/mdvcraft/mdvnpc/music/MusicService.java
-src/main/java/com/mdvcraft/mdvnpc/routine/DanceController.java
-src/main/java/com/mdvcraft/mdvnpc/routine/DanceCrowd.java
-src/main/java/com/mdvcraft/mdvnpc/routine/DanceFloor.java
-src/main/java/com/mdvcraft/mdvnpc/routine/RoutineEditor.java
-src/main/java/com/mdvcraft/mdvnpc/routine/RoutineGoal.java
-src/main/java/com/mdvcraft/mdvnpc/routine/RoutineRepository.java
+src/main/java/com/mdvcraft/mdvnpc/routine/RoutineNavigator.java
 src/main/java/com/mdvcraft/mdvnpc/routine/RoutineService.java
 src/main/java/com/mdvcraft/mdvnpc/routine/RoutineVisuals.java
 src/main/java/com/mdvcraft/mdvnpc/runtime/NpcManager.java
-src/main/java/com/mdvcraft/mdvnpc/runtime/NpcNameService.java
 src/main/java/com/mdvcraft/mdvnpc/skin/DisguiseService.java
 src/main/resources/config.yml
-src/main/resources/music/meson.csv
-src/main/resources/music/puerto.csv
-src/test/java/com/mdvcraft/mdvnpc/music/MusicServiceTest.java
-src/test/java/com/mdvcraft/mdvnpc/music/MusicWorkRecoveryTest.java
-src/test/java/com/mdvcraft/mdvnpc/music/SongRepertoireTest.java
-src/test/java/com/mdvcraft/mdvnpc/NpcStatusCommandTest.java
-src/test/java/com/mdvcraft/mdvnpc/routine/DanceControllerTest.java
-src/test/java/com/mdvcraft/mdvnpc/routine/DanceCycleRecoveryTest.java
-src/test/java/com/mdvcraft/mdvnpc/routine/DanceLifecycleTest.java
-src/test/java/com/mdvcraft/mdvnpc/routine/RoutineJobInteractionTest.java
-src/test/java/com/mdvcraft/mdvnpc/routine/RoutineNameOffsetTest.java
-src/test/java/com/mdvcraft/mdvnpc/routine/RoutineWorkInteractionEditorTest.java
 src/test/java/com/mdvcraft/mdvnpc/RoutineSettingsTest.java
-src/test/java/com/mdvcraft/mdvnpc/RoutineWorkInteractionModelTest.java
-src/test/java/com/mdvcraft/mdvnpc/runtime/NpcNameServiceTest.java
+src/test/java/com/mdvcraft/mdvnpc/routine/RoutineNameOffsetTest.java
+src/test/java/com/mdvcraft/mdvnpc/routine/RoutineNavigatorTest.java
+src/test/java/com/mdvcraft/mdvnpc/routine/RoutineTransitionTest.java
+src/test/java/com/mdvcraft/mdvnpc/runtime/NpcManagerLegacyNameCleanupTest.java
 src/test/java/com/mdvcraft/mdvnpc/skin/DisguiseNameRendererTest.java
 
+Archivos retirados:
+src/main/java/com/mdvcraft/mdvnpc/runtime/NpcNameService.java
+src/test/java/com/mdvcraft/mdvnpc/runtime/NpcNameServiceTest.java

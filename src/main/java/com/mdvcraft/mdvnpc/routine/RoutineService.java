@@ -15,6 +15,7 @@ import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
 
 public final class RoutineService {
+    private static final double MIN_VISIBILITY_RANGE=96;
     private final MdvNpcPlugin plugin;
     private final RoutineRepository repository;
     private final WorldClockManager clocks;
@@ -46,10 +47,10 @@ public final class RoutineService {
     private final Map<DialogueKey,DialogueState> dialogueStates=new HashMap<>();
     private final Map<UnavailableKey,UnavailableState> unavailableStates=new HashMap<>();
     private static final class State {
-        ActiveNpc npc; RoutineSchedule.Window window; int chain,point; RoutineGoal goal;
+        ActiveNpc npc; RoutineSchedule.Window window,recoveryWindow; int chain,point; RoutineGoal goal;
         RoutineGoal.Point destination; Location approach; RoutineVisuals.Pose pose;
-        boolean working,paused,dancing,returningFromDance;
-        long nextPick, travelSince, nextPresence, nextDialogue, nextPoseCheck, nextDanceCheck, nextUpdate,nextReturnCheck,returnWaitingSince;
+        boolean working,paused,dancing,returningFromDance,recoveryDone;
+        long nextPick, travelSince, nextPresence, nextDialogue, nextPoseCheck, nextDanceCheck, nextUpdate,nextReturnCheck,returnWaitingSince,nextRecoveryCheck;
         int returnDoorway,returnFailedDoorways;
         final Map<RoutineGoal.Point,Long> blockedDanceSeats=new HashMap<>();
         int lastMinute=-1; String status="esperando";
@@ -233,8 +234,6 @@ public final class RoutineService {
             if(previous!=null && ticks<previous.nextUpdate && ticks<previous.nextPresence && previous.lastMinute==minute)continue;
             try {
                 update(npc);
-                // Moving/dancing NPC names follow the same clock; no label-specific tasks.
-                if(manager.names()!=null)manager.names().tick(npc);
             }
             catch(RuntimeException ex) {
                 failed.add(id); try { remove(id); } catch(RuntimeException cleanup) { ex.addSuppressed(cleanup); }
@@ -259,7 +258,9 @@ public final class RoutineService {
         // Nearby-player queries every second; no per-tick whole-world scans.
         if(ticks>=s.nextPresence) {
             s.nextPresence=ticks+20;
-            boolean absent=position.getWorld().getNearbyPlayers(position,range,p -> !p.isDead() && p.getGameMode()!=GameMode.SPECTATOR).isEmpty();
+            // Spectators can follow an NPC too. Keep the configured activation range;
+            // the wider visibility guard below is queried only for pending recovery.
+            boolean absent=position.getWorld().getNearbyPlayers(position,range,p -> !p.isDead()).isEmpty();
             if(absent) {
                 if(!s.paused) {
                     if(plugin.traits()!=null)plugin.traits().cancel(id);
@@ -275,13 +276,28 @@ public final class RoutineService {
                     release(s,true);s.window=null;s.goal=null;s.chain=0;s.point=0;s.nextPick=0;
                 }
                 if(s.pose!=null)return;
-                // Off-screen recovery only into an already-loaded destination observed by a player.
+                if(!same(s.recoveryWindow,dormantWindow)) {
+                    s.recoveryWindow=dormantWindow;s.recoveryDone=false;s.nextRecoveryCheck=0;
+                }
+                // Catch up to the current schedule only while BOTH ends are unseen.
+                // Cache completed occurrences and spread inaccessible/observed retries
+                // over five seconds instead of recalculating destination geometry every tick.
+                if(dormantWindow==null || s.recoveryDone || ticks<s.nextRecoveryCheck)return;
+                s.nextRecoveryCheck=ticks+100;
+                // Respect the server's actual entity trackers as well as the local radius.
+                // Servers may configure tracking distances larger than the visibility guard.
+                if(!npc.entity().getTrackedBy().isEmpty())return;
+                double visibleRange=Math.max(range,MIN_VISIBILITY_RANGE);
+                if(!position.getWorld().getNearbyPlayers(position,visibleRange,p -> true).isEmpty())return;
                 Location recovery=spawnLocation(npc.definition(),position.getWorld());
-                if(recovery!=null && recovery.distanceSquared(position)>4
-                        && !recovery.getWorld().getNearbyPlayers(recovery,range,p -> !p.isDead() && p.getGameMode()!=GameMode.SPECTATOR).isEmpty()
-                        && teleport(npc,recovery)) {s.window=null;s.goal=null;s.chain=0;s.point=0;s.nextPick=0;s.paused=false;}
+                if(recovery==null)return;
+                if(recovery.distanceSquared(position)<=4){s.recoveryDone=true;return;}
+                if(recovery.getWorld().getNearbyPlayers(recovery,visibleRange,p -> true).isEmpty() && teleport(npc,recovery)) {
+                    s.window=null;s.goal=null;s.chain=0;s.point=0;s.nextPick=0;s.recoveryDone=true;
+                }
                 return;
             }
+            s.recoveryWindow=null;s.recoveryDone=false;s.nextRecoveryCheck=0;
             if(s.paused) {
                 s.nextPick=0;s.nextDialogue=0;s.nextPoseCheck=0;
                 // Only restore an ongoing sleep, never yesterday's pose after a time jump.

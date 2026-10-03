@@ -18,7 +18,7 @@ import static org.mockito.Mockito.*;
 class DisguiseNameRendererTest {
     @BeforeEach void setup(){MockBukkit.mock();}
     @AfterEach void cleanup(){MockBukkit.unmock();}
-    @Test void armorStandNameIsSuppressedBeforeFirstDisguiseSpawn(){check(DisguiseConfig.PlayerNameType.ARMORSTANDS,true,false);}
+    @Test void armorStandNameUsesLibsDisguisesFromTheFirstSpawn(){check(DisguiseConfig.PlayerNameType.ARMORSTANDS,true,true);}
     @Test void otherNameModesKeepTheirVisibility(){
         for(var mode:DisguiseConfig.PlayerNameType.values())if(mode!=DisguiseConfig.PlayerNameType.ARMORSTANDS)check(mode,true,true);
     }
@@ -32,6 +32,8 @@ class DisguiseNameRendererTest {
             PlayerDisguise disguise=new DisguiseService().apply(entity,definition);
             assertSame(construction.constructed().getFirst(),disguise);var order=inOrder(disguise);
             order.verify(disguise).setNameVisible(expectedVisible);order.verify(disguise).setEntity(entity);order.verify(disguise).startDisguise();
+            verify(disguise,never()).getInternals();verify(disguise,never()).getWatcher();verify(entity,never()).getWorld();
+            verify(disguise).setDynamicName(false);verify(disguise).setDisplayedInTab(false);
         }
     }
 }

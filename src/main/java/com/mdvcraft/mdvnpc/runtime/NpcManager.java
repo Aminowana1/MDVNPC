@@ -15,6 +15,7 @@ public final class NpcManager {
     private record ChunkKey(UUID world, int x, int z) {}
     private final MdvNpcPlugin plugin;
     private final NamespacedKey marker;
+    private final NamespacedKey legacyNameMarker;
     private final DisguiseService skins = new DisguiseService();
     private final Map<String, ActiveNpc> active = new LinkedHashMap<>();
     private final Map<UUID, ActiveNpc> byEntity = new HashMap<>();
@@ -34,21 +35,20 @@ public final class NpcManager {
     private final LookService look = new LookService();
     private final DialogueService dialogue;
     private final InteractionService interactions;
-    private final NpcNameService names;
 
     public NpcManager(MdvNpcPlugin plugin) {
         this.plugin = plugin;
         dialogue = new DialogueService(plugin.sounds());
         marker = new NamespacedKey(plugin, "npc-id");
+        legacyNameMarker = new NamespacedKey(plugin, "npc-name");
         interactions = new InteractionService(plugin.messages(), plugin.getLogger());
-        names = new NpcNameService(plugin);
     }
     public void start(Map<String, NpcDefinition> definitions) {
         this.definitions = definitions;
         indexWorlds();
         // Startup/reload-only cleanup of entities marked by MDVNPC; never touch other plugins.
         for (World world : Bukkit.getWorlds())
-            for (Entity entity : world.getEntities()) if (owned(entity) || plugin.routines().isSeat(entity) || names.isName(entity)) entity.remove();
+            for (Entity entity : world.getEntities()) if (owned(entity) || plugin.routines().isSeat(entity) || legacyName(entity)) entity.remove();
         for (ChunkKey key : byChunk.keySet()) queue(key);
         int cadence = gcd(plugin.settings().intervalTicks(), plugin.settings().lookIntervalTicks());
         ticker = Bukkit.getScheduler().runTaskTimer(plugin, () -> tick(cadence), cadence, cadence);
@@ -60,7 +60,6 @@ public final class NpcManager {
         for (ActiveNpc npc : List.copyOf(active.values())) remove(npc);
         active.clear(); byEntity.clear(); spawning.clear(); spawnOutcomes.clear(); byChunk.clear(); pending.clear();
         dialogue.clear(); interactions.clear(); spawnRetry.clear();
-        names.clear();
     }
     private void indexWorlds() {
         byChunk.clear();
@@ -151,7 +150,6 @@ public final class NpcManager {
             ActiveNpc npc = new ActiveNpc(definition, anchor, entity, disguise);
             active.put(definition.id(), npc);
             byEntity.put(entity.getUniqueId(), npc);
-            names.register(npc);
             spawnRetry.remove(definition.id());
         } catch (RuntimeException | LinkageError ex) {
             if (entity != null) entity.remove();
@@ -171,7 +169,6 @@ public final class NpcManager {
         if(plugin.traits()!=null)plugin.traits().cancel(npc.definition().id());
         if(plugin.sounds()!=null)plugin.sounds().forget(npc.definition().id());
         plugin.routines().remove(npc.definition().id());
-        names.remove(npc);
         plugin.skins().forget(npc.definition().id());
         plugin.shops().invalidateNpc(npc.definition().id());
         active.remove(npc.definition().id(), npc);
@@ -189,7 +186,7 @@ public final class NpcManager {
     public void cleanupLoadedEntities(List<Entity> entities) {
         for (Entity entity : entities) {
             if (plugin.routines().isSeat(entity) && !plugin.routines().liveSeat(entity)) entity.remove();
-            if (names.isName(entity) && !names.liveName(entity)) entity.remove();
+            if (legacyName(entity)) entity.remove();
             if (owned(entity) && !spawning.contains(entity.getUniqueId())
                     && !byEntity.containsKey(entity.getUniqueId())) entity.remove();
         }
@@ -238,7 +235,6 @@ public final class NpcManager {
                 continue;
             }
             var definition = npc.definition();
-            names.tick(npc);
             if (!plugin.routines().canLook(npc)) continue;
             boolean allowLook = checkLook && (plugin.music() == null || !plugin.music().isAnimating(npc));
             double range = Math.max(allowLook && definition.look().enabled() ? definition.look().range() : 0,
@@ -253,9 +249,10 @@ public final class NpcManager {
         }
     }
     public boolean owned(Entity entity) { return entity.getPersistentDataContainer().has(marker, PersistentDataType.STRING); }
+    /** Compatibility cleanup only: names are rendered entirely by LibsDisguises again. */
+    private boolean legacyName(Entity entity) { return entity.getPersistentDataContainer().has(legacyNameMarker, PersistentDataType.STRING); }
     public ActiveNpc find(Entity entity) { return byEntity.get(entity.getUniqueId()); }
     public InteractionService interactions() { return interactions; }
-    public NpcNameService names() { return names; }
     public void forget(UUID player) { dialogue.forget(player); interactions.forget(player); }
     public int activeCount() { return active.size(); }
     public Collection<ActiveNpc> activeNpcs() { return List.copyOf(active.values()); }
