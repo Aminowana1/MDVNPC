@@ -111,6 +111,96 @@ class MusicServiceTest {
         music.remove("a");music.working(npc("a","musician_flute",0));
         server.getScheduler().performTicks(20);assertNotSame(previous,sessions().get(Set.of("a","b")));
     }
+    private void playWholeScore(String name,boolean flute,boolean guitar) throws Exception {
+        music.stop();music=new MusicService(plugin,mock(MusicianVisuals.class));
+        if(flute)music.working(npc("score_flute","musician_flute",0));
+        if(guitar)music.working(npc("score_guitar","musician_guitar",3));
+        server.getScheduler().performTicks(23);
+        Object session=sessions().values().iterator().next();
+        var score=session.getClass().getDeclaredField("song");score.setAccessible(true);score.set(session,Song.load(name));
+        var start=session.getClass().getDeclaredField("start");start.setAccessible(true);
+        var clock=MusicService.class.getDeclaredField("tick");clock.setAccessible(true);start.setLong(session,clock.getLong(music));
+        clearInvocations(listener);server.getScheduler().performTicks(Song.load(name).duration());
+        long fluteNotes=Song.load(name).frames().values().stream().flatMap(List::stream).filter(Song.Note::flute).count();
+        long guitarNotes=Song.load(name).frames().values().stream().flatMap(List::stream).filter(note->!note.flute()).count();
+        verify(listener,times(flute?(int)fluteNotes:0)).playSound(any(Location.class),eq(Sound.BLOCK_NOTE_BLOCK_FLUTE),eq(SoundCategory.RECORDS),anyFloat(),anyFloat());
+        verify(listener,times(guitar?(int)guitarNotes:0)).playSound(any(Location.class),eq(Sound.BLOCK_NOTE_BLOCK_GUITAR),eq(SoundCategory.RECORDS),anyFloat(),anyFloat());
+    }
+    @Test void everyScoreActuallyPlaysItsCompleteFluteAndGuitarPartInADuet() throws Exception {
+        for(String name:MusicService.REPERTOIRE)playWholeScore(name,true,true);
+    }
+    @Test void everyScoreActuallyPlaysItsCompletePartForEitherSoloInstrument() throws Exception {
+        for(String name:MusicService.REPERTOIRE) {
+            playWholeScore(name,true,false);playWholeScore(name,false,true);
+        }
+    }
+    @Test void eitherInstrumentResumesTheDuetAfterDrinkingOrAHitWithoutRemainingSilent() throws Exception {
+        for(boolean pauseFlute:List.of(true,false))for(boolean drinking:List.of(true,false)) {
+            injectedVisuals();
+            var traits=mock(com.mdvcraft.mdvnpc.trait.TraitService.class);
+            var reactions=mock(com.mdvcraft.mdvnpc.trait.HitReactionService.class);
+            when(plugin.traits()).thenReturn(traits);when(plugin.reactions()).thenReturn(reactions);
+            var flute=npc("a","musician_flute",0);var guitar=npc("b","musician_guitar",3);
+            music.working(flute);music.working(guitar);server.getScheduler().performTicks(23);
+            String paused=pauseFlute?"a":"b",other=pauseFlute?"b":"a";
+            if(drinking)when(traits.busy(paused)).thenReturn(true);else when(reactions.busy(paused)).thenReturn(true);
+            assertTrue(music.status(paused).contains(drinking?"pausa para beber":"pausa por un golpe"));
+            clearInvocations(listener);server.getScheduler().performTicks(25);
+            verify(listener,never()).playSound(any(Location.class),eq(pauseFlute?Sound.BLOCK_NOTE_BLOCK_FLUTE:Sound.BLOCK_NOTE_BLOCK_GUITAR),eq(SoundCategory.RECORDS),anyFloat(),anyFloat());
+            verify(listener,atLeastOnce()).playSound(any(Location.class),eq(pauseFlute?Sound.BLOCK_NOTE_BLOCK_GUITAR:Sound.BLOCK_NOTE_BLOCK_FLUTE),eq(SoundCategory.RECORDS),anyFloat(),anyFloat());
+            assertEquals(Set.of(Set.of(other)),sessions().keySet());
+            if(drinking)when(traits.busy(paused)).thenReturn(false);else when(reactions.busy(paused)).thenReturn(false);
+            assertTrue(music.status(paused).contains("esperando incorporarse"));
+            clearInvocations(listener);server.getScheduler().performTicks(22);
+            assertEquals(Set.of(Set.of("a","b")),sessions().keySet());assertTrue(music.isPerforming(flute));assertTrue(music.isPerforming(guitar));
+            verify(listener,atLeastOnce()).playSound(any(Location.class),eq(Sound.BLOCK_NOTE_BLOCK_FLUTE),eq(SoundCategory.RECORDS),anyFloat(),anyFloat());
+            verify(listener,atLeastOnce()).playSound(any(Location.class),eq(Sound.BLOCK_NOTE_BLOCK_GUITAR),eq(SoundCategory.RECORDS),anyFloat(),anyFloat());
+            assertTrue(music.status(paused).contains("conjunto: 2"));verifyNoInteractions(logger);
+        }
+    }
+    @Test void eitherInstrumentLeavingWorkAndRegisteringAgainRejoinsTheDuet() throws Exception {
+        for(boolean pauseFlute:List.of(true,false)) {
+            injectedVisuals();var flute=npc("a","musician_flute",0);var guitar=npc("b","musician_guitar",3);
+            music.working(flute);music.working(guitar);server.getScheduler().performTicks(23);
+            ActiveNpc absent=pauseFlute?flute:guitar;String id=absent.definition().id();
+            when(routines.canInteract(absent)).thenReturn(false);
+            assertTrue(music.status(id).contains("fuera del puesto o del horario de Trabajo"));
+            when(routines.status(id)).thenReturn("fuera de horario");music.remove(id);
+            assertEquals("sin sesión musical; fuera de horario",music.status(id));
+            clearInvocations(listener);server.getScheduler().performTicks(25);
+            verify(listener,never()).playSound(any(Location.class),eq(pauseFlute?Sound.BLOCK_NOTE_BLOCK_FLUTE:Sound.BLOCK_NOTE_BLOCK_GUITAR),eq(SoundCategory.RECORDS),anyFloat(),anyFloat());
+            when(routines.canInteract(absent)).thenReturn(true);music.working(absent);
+            assertTrue(music.status(id).contains("esperando incorporarse"));
+            clearInvocations(listener);server.getScheduler().performTicks(22);
+            assertEquals(Set.of(Set.of("a","b")),sessions().keySet());
+            verify(listener,atLeastOnce()).playSound(any(Location.class),eq(Sound.BLOCK_NOTE_BLOCK_FLUTE),eq(SoundCategory.RECORDS),anyFloat(),anyFloat());
+            verify(listener,atLeastOnce()).playSound(any(Location.class),eq(Sound.BLOCK_NOTE_BLOCK_GUITAR),eq(SoundCategory.RECORDS),anyFloat(),anyFloat());
+            assertTrue(music.status(id).contains("tocando"));assertTrue(music.status(id).contains("conjunto: 2"));verifyNoInteractions(logger);
+        }
+    }
+    @Test void statusExplainsRegistrationPreparationSongAndStrictLocalAudienceWithoutNewScans() throws Exception {
+        injectedVisuals();when(routines.status("missing")).thenReturn("sin registro de rutina");
+        assertEquals("sin sesión musical; sin registro de rutina",music.status("missing"));
+        var flute=npc("a","musician_flute",0);var guitar=npc("b","musician_guitar",3);
+        music.working(flute);music.working(guitar);assertEquals("Flauta: esperando incorporarse al conjunto",music.status("a"));
+        server.getScheduler().performTicks(21);Object session=sessions().get(Set.of("a","b"));
+        var score=session.getClass().getDeclaredField("song");score.setAccessible(true);score.set(session,Song.load("meson"));
+        var start=session.getClass().getDeclaredField("start");start.setAccessible(true);
+        var clock=MusicService.class.getDeclaredField("tick");clock.setAccessible(true);start.setLong(session,clock.getLong(music)+2);
+        assertEquals("Flauta: preparando La Vela del Mesón",music.status("a"));
+        server.getScheduler().performTicks(3);clearInvocations(world,plugin);
+        String playing=music.status("a");assertTrue(playing.contains("Flauta: tocando La Vela del Mesón (0/30 s)"));
+        assertTrue(playing.contains("conjunto: 2"));assertTrue(playing.contains("oyentes a 14 bloques: 1"));
+        when(listener.getLocation()).thenReturn(new Location(world,15,64,0));
+        assertTrue(music.status("a").contains("oyentes a 14 bloques: 0"));
+        assertTrue(music.status("b").contains("Guitarra: tocando La Vela del Mesón"));
+        assertTrue(music.status("b").contains("oyentes a 14 bloques: 1"));
+        when(listener.getWorld()).thenReturn(mock(World.class));assertTrue(music.status("b").contains("oyentes a 14 bloques: 0"));
+        when(listener.getWorld()).thenReturn(world);when(listener.isDead()).thenReturn(true);
+        assertTrue(music.status("b").contains("oyentes a 14 bloques: 0"));
+        verify(world,never()).getNearbyPlayers(any(Location.class),anyDouble());verify(world,never()).getPlayers();verify(plugin,never()).getServer();
+        verifyNoInteractions(logger);
+    }
     private MusicianVisuals injectedVisuals() {
         music.stop();var visuals=mock(MusicianVisuals.class);music=new MusicService(plugin,visuals);return visuals;
     }
@@ -160,6 +250,8 @@ class MusicServiceTest {
         var clock=MusicService.class.getDeclaredField("tick");clock.setAccessible(true);long initialClock=clock.getLong(music);
         verify(visuals).tick(same(flute),eq(List.of(listener)),eq(14d),eq(-2L),eq(0L),eq(false));verify(visuals).remove("a");
         assertFalse(music.isAnimating(flute));assertTrue(music.isPerforming(flute));
+        assertTrue(music.status("a").contains("gestos pausados, audio activo"));
+        assertFalse(music.status("b").contains("gestos pausados"));
         verify(logger).log(eq(Level.WARNING),contains("Animación musical pausada para a"),same(failure));
         clearInvocations(listener);server.getScheduler().performTicks(30);assertTrue(clock.getLong(music)>initialClock);
         verify(visuals,times(1)).tick(same(flute),anyList(),anyDouble(),anyLong(),anyLong(),anyBoolean());

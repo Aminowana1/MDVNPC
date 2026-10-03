@@ -1,6 +1,7 @@
 package com.mdvcraft.mdvnpc.skin;
 
 import com.mdvcraft.mdvnpc.model.NpcDefinition;
+import com.mdvcraft.mdvnpc.runtime.NpcNameService;
 import com.mdvcraft.mdvnpc.util.Text;
 import me.libraryaddict.disguise.disguisetypes.PlayerDisguise;
 import org.bukkit.entity.LivingEntity;
@@ -13,7 +14,7 @@ public final class DisguiseService {
     }
     public PlayerDisguise apply(LivingEntity entity, NpcDefinition npc, NpcDefinition.Skin skin) {
         PlayerDisguise disguise = new PlayerDisguise(Text.color(npc.name()), skinInput(skin));
-        disguise.setNameVisible(npc.nameVisible());
+        disguise.setNameVisible(npc.nameVisible() && !NpcNameService.usesOwnName(disguise));
         disguise.setDisplayedInTab(false);
         disguise.setDynamicName(false);
         disguise.setModifyBoundingBox(true);

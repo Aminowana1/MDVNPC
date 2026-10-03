@@ -116,7 +116,7 @@ messages:
   help:
     - "&e/mdvnpc rasgo <id> [ninguno|alcoholico|lector|gloton|inquieto|ruidoso]"
     - '&e/mdvnpc list &7- Ver los NPC.'
-    - '&e/mdvnpc status &7- Ver cuántos están activos.'
+    - '&e/mdvnpc status [id] &7- Ver activos o estado de rutina/música de un NPC.'
     - '&e/mdvnpc create <id> <skin> [normal|shop] [nombre] &7- Crear aquí.'
     - '&e/mdvnpc mode <id> normal|shop &7- Cambiar comportamiento.'
     - '&e/mdvnpc shop <id> &7- Editar trueques del NPC vendedor.'

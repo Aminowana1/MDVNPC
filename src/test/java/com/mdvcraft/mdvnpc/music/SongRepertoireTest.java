@@ -5,10 +5,10 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class SongRepertoireTest {
-    private static final List<String> ADDITIONS=List.of("romeria","cuervo","roble");
+    private static final List<String> ADDITIONS=List.of("romeria","cuervo","roble","meson","puerto");
 
-    @Test void allSixSongsLoadBothInstrumentsAndKeepTheOriginalRepertoire() {
-        assertEquals(6,MusicService.REPERTOIRE.size());
+    @Test void allEightSongsLoadBothInstrumentsAndKeepTheOriginalRepertoire() {
+        assertEquals(8,MusicService.REPERTOIRE.size());
         assertEquals(List.of("tourdion","jabali","farol"),MusicService.REPERTOIRE.subList(0,3));
         for(String name:MusicService.REPERTOIRE) {
             Song song=Song.load(name);
@@ -23,11 +23,11 @@ class SongRepertoireTest {
     @Test void newSongsHaveThirtySecondTimelinesWithCoordinatedIntroductionsAndCadences() {
         for(String name:ADDITIONS) {
             Song song=Song.load(name);
-            assertEquals(600,song.duration(),name);
+            assertEquals(name.equals("puerto")?640:600,song.duration(),name);
             assertTrue(song.frames().get(0).stream().anyMatch(Song.Note::flute),name);
             assertTrue(song.frames().get(0).stream().anyMatch(note->!note.flute()),name);
             int last=Collections.max(song.frames().keySet());
-            assertEquals(name.equals("cuervo")?594:592,last,name);
+            assertEquals(switch(name){case "cuervo","meson"->594;case "puerto"->632;default->592;},last,name);
             var ending=song.frames().get(last);
             float flute=ending.stream().filter(Song.Note::flute).findFirst().orElseThrow().pitch();
             assertTrue(ending.stream().anyMatch(note->!note.flute() && Math.abs(note.pitch()-flute)<.00001),name);
@@ -47,10 +47,10 @@ class SongRepertoireTest {
     @Test void newScoresStayWithinNoteRangesAndLimitAudioEvents() {
         for(String name:ADDITIONS) {
             Song song=Song.load(name);
-            int quantum=switch(name){case "romeria"->8;case "cuervo"->6;default->4;};
+            int quantum=switch(name){case "romeria","puerto"->8;case "cuervo","meson"->6;default->4;};
             int guitars=0;
             for(var frame:song.frames().entrySet()) {
-                assertTrue(frame.getKey()>=0 && frame.getKey()<600,name);
+                assertTrue(frame.getKey()>=0 && frame.getKey()<song.duration(),name);
                 assertEquals(0,frame.getKey()%quantum,name);
                 assertTrue(frame.getValue().size()<=3,name);
                 for(var note:frame.getValue()) {
@@ -71,15 +71,29 @@ class SongRepertoireTest {
                     .flatMap(frame->frame.getValue().stream().filter(Song.Note::flute)
                             .map(note->frame.getKey()+":"+note.pitch())).toList();
             assertTrue(tunes.add(tune),name);
-            int barTicks=switch(name){case "romeria"->48;case "cuervo"->36;default->32;};
+            int barTicks=switch(name){case "romeria","puerto"->48;case "cuervo","meson"->36;default->32;};
             Set<List<String>> bars=new HashSet<>();
-            for(int bar=0;bar<576/barTicks;bar++) {
+            for(int bar=0;bar<(name.equals("puerto")?624:576)/barTicks;bar++) {
                 final int from=bar*barTicks;
                 bars.add(song.frames().entrySet().stream().filter(frame->frame.getKey()>=from && frame.getKey()<from+barTicks)
                         .sorted(Map.Entry.comparingByKey()).flatMap(frame->frame.getValue().stream().filter(Song.Note::flute)
                                 .map(note->(frame.getKey()-from)+":"+note.pitch())).toList());
             }
             assertTrue(bars.size()>=8,name+" different melodic bars "+bars.size());
+        }
+    }
+
+    @Test void everyInstrumentBeginsImmediatelyAndHasNoUnexpectedLongSilentPart() {
+        for(String name:MusicService.REPERTOIRE) {
+            Song song=Song.load(name);
+            for(boolean flute:List.of(true,false)) {
+                var ticks=song.frames().entrySet().stream()
+                        .filter(frame->frame.getValue().stream().anyMatch(note->note.flute()==flute && note.volume()>0))
+                        .map(Map.Entry::getKey).sorted().toList();
+                assertEquals(0,ticks.getFirst(),name+" opening "+flute);
+                for(int i=1;i<ticks.size();i++)assertTrue(ticks.get(i)-ticks.get(i-1)<=24,name+" unexpected gap "+flute);
+                assertTrue(song.duration()-ticks.getLast()<=24,name+" silent ending "+flute);
+            }
         }
     }
 }

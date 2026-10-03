@@ -5,6 +5,8 @@ import com.mdvcraft.mdvnpc.MdvNpcPlugin;
 import com.mdvcraft.mdvnpc.config.NpcParser;
 import com.mdvcraft.mdvnpc.config.Settings;
 import com.mdvcraft.mdvnpc.runtime.ActiveNpc;
+import com.mdvcraft.mdvnpc.runtime.NpcManager;
+import com.mdvcraft.mdvnpc.runtime.NpcNameService;
 import me.libraryaddict.disguise.DisguiseConfig;
 import me.libraryaddict.disguise.disguisetypes.DisguiseInternals;
 import me.libraryaddict.disguise.disguisetypes.PlayerDisguise;
@@ -19,6 +21,7 @@ import org.bukkit.block.data.type.Bed;
 import org.bukkit.block.data.type.Stairs;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.ArmorStand;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.entity.Villager;
 import org.bukkit.persistence.PersistentDataContainer;
@@ -41,6 +44,9 @@ class RoutineNameOffsetTest {
     AtomicReference<Vector3i> bedPosition=new AtomicReference<>();AtomicBoolean sleeping=new AtomicBoolean();
     AtomicReference<Location> displayLocation=new AtomicReference<>();AtomicReference<Component> displayText=new AtomicReference<>();
     AtomicReference<String> actualName=new AtomicReference<>("&6Lorenzo");AtomicBoolean nameVisible=new AtomicBoolean(true);
+    AtomicReference<Entity> vehicle=new AtomicReference<>();
+    AtomicBoolean seatRemoved=new AtomicBoolean(),seatVisible=new AtomicBoolean(true),seatInvisible=new AtomicBoolean(),seatGlowing=new AtomicBoolean();
+    AtomicBoolean seatMarker=new AtomicBoolean(),seatSmall=new AtomicBoolean(),seatGravity=new AtomicBoolean(true),seatBasePlate=new AtomicBoolean(true),seatArms=new AtomicBoolean(),seatNameVisible=new AtomicBoolean();
     UUID worldId=UUID.randomUUID();
     @BeforeEach @SuppressWarnings("unchecked") void setup(){
         MockBukkit.mock();plugin=mock(MdvNpcPlugin.class);when(plugin.getName()).thenReturn("MDVNPC-test");when(plugin.getLogger()).thenReturn(Logger.getAnonymousLogger());
@@ -55,8 +61,19 @@ class RoutineNameOffsetTest {
         when(watcher.getNameYModifier()).thenAnswer(i->nameOffset.get());doAnswer(i->{nameOffset.set(i.getArgument(0));return null;}).when(watcher).setNameYModifier(anyFloat());
         when(watcher.isSleeping()).thenAnswer(i->sleeping.get());doAnswer(i->{sleeping.set(i.getArgument(0));return null;}).when(watcher).setSleeping(anyBoolean());
         when(watcher.getBedPosition()).thenAnswer(i->bedPosition.get());doAnswer(i->{bedPosition.set(i.getArgument(0));return null;}).when(watcher).setBedPosition(any(Vector3i.class));
-        seat=mock(ArmorStand.class);when(seat.isValid()).thenReturn(true);when(seat.addPassenger(entity)).thenReturn(true);when(seat.getPersistentDataContainer()).thenReturn(mock(PersistentDataContainer.class));
-        when(world.spawn(any(Location.class),eq(ArmorStand.class),any(Consumer.class))).thenAnswer(i->{seatPosition.set(((Location)i.getArgument(0)).clone());((Consumer<ArmorStand>)i.getArgument(2)).accept(seat);return seat;});
+        seat=mock(ArmorStand.class);when(seat.isValid()).thenAnswer(i->!seatRemoved.get());when(seat.getPersistentDataContainer()).thenReturn(mock(PersistentDataContainer.class));
+        when(entity.getVehicle()).thenAnswer(i->vehicle.get());when(seat.addPassenger(entity)).thenAnswer(i->{vehicle.set(seat);return true;});when(entity.leaveVehicle()).thenAnswer(i->{vehicle.set(null);return true;});
+        doAnswer(i->{seatRemoved.set(true);if(vehicle.get()==seat)vehicle.set(null);return null;}).when(seat).remove();
+        when(seat.isVisible()).thenAnswer(i->seatVisible.get());doAnswer(i->{seatVisible.set(i.getArgument(0));return null;}).when(seat).setVisible(anyBoolean());
+        when(seat.isInvisible()).thenAnswer(i->seatInvisible.get());doAnswer(i->{boolean value=i.getArgument(0);seatInvisible.set(value);seatVisible.set(!value);return null;}).when(seat).setInvisible(anyBoolean());
+        when(seat.isGlowing()).thenAnswer(i->seatGlowing.get());doAnswer(i->{seatGlowing.set(i.getArgument(0));return null;}).when(seat).setGlowing(anyBoolean());
+        when(seat.isMarker()).thenAnswer(i->seatMarker.get());doAnswer(i->{seatMarker.set(i.getArgument(0));return null;}).when(seat).setMarker(anyBoolean());
+        when(seat.isSmall()).thenAnswer(i->seatSmall.get());doAnswer(i->{seatSmall.set(i.getArgument(0));return null;}).when(seat).setSmall(anyBoolean());
+        when(seat.hasGravity()).thenAnswer(i->seatGravity.get());doAnswer(i->{seatGravity.set(i.getArgument(0));return null;}).when(seat).setGravity(anyBoolean());
+        when(seat.hasBasePlate()).thenAnswer(i->seatBasePlate.get());doAnswer(i->{seatBasePlate.set(i.getArgument(0));return null;}).when(seat).setBasePlate(anyBoolean());
+        when(seat.hasArms()).thenAnswer(i->seatArms.get());doAnswer(i->{seatArms.set(i.getArgument(0));return null;}).when(seat).setArms(anyBoolean());
+        when(seat.isCustomNameVisible()).thenAnswer(i->seatNameVisible.get());doAnswer(i->{seatNameVisible.set(i.getArgument(0));return null;}).when(seat).setCustomNameVisible(anyBoolean());
+        when(world.spawn(any(Location.class),eq(ArmorStand.class),any(Consumer.class))).thenAnswer(i->{seatRemoved.set(false);seatPosition.set(((Location)i.getArgument(0)).clone());((Consumer<ArmorStand>)i.getArgument(2)).accept(seat);return seat;});
         display=mock(TextDisplay.class);when(display.isValid()).thenReturn(true);
         when(world.spawn(any(Location.class),eq(TextDisplay.class),any(Consumer.class))).thenAnswer(i->{displayLocation.set(((Location)i.getArgument(0)).clone());((Consumer<TextDisplay>)i.getArgument(2)).accept(display);return display;});
         when(display.teleport(any(Location.class))).thenAnswer(i->{displayLocation.set(((Location)i.getArgument(0)).clone());return true;});
@@ -66,13 +83,14 @@ class RoutineNameOffsetTest {
         visuals=new RoutineVisuals(plugin,(n,target)->{position.set(target.clone());return true;});
     }
     @AfterEach void cleanup(){MockBukkit.unmock();}
-    private RoutineVisuals.Pose enter(RoutineGoal.Type type){
+    private RoutineVisuals.Pose enterRaw(RoutineGoal.Type type){
         if(type==RoutineGoal.Type.SLEEP){Bed bed=mock(Bed.class);when(bed.getFacing()).thenReturn(BlockFace.NORTH);when(furniture.getBlockData()).thenReturn(bed);}
         else{Stairs stairs=mock(Stairs.class);when(stairs.getHalf()).thenReturn(Bisected.Half.BOTTOM);when(stairs.getFacing()).thenReturn(BlockFace.NORTH);when(furniture.getBlockData()).thenReturn(stairs);}
         var point=new RoutineGoal.Point(worldId,0,64,0,0);
         var goal=new RoutineGoal(1,type,RoutineGoal.WalkMode.CYCLE,0,0,2.4,20,List.of(point));
-        var pose=visuals.enter(npc,goal,point,new Location(world,.5,64,1.5),0);assertNotNull(pose);pose.nextMeal=Long.MAX_VALUE;return pose;
+        return visuals.enter(npc,goal,point,new Location(world,.5,64,1.5),0);
     }
+    private RoutineVisuals.Pose enter(RoutineGoal.Type type){var pose=enterRaw(type);assertNotNull(pose);pose.nextMeal=Long.MAX_VALUE;return pose;}
     @Test void seatedOffsetIsAdditionalToNameBaselineAndRestoresOnLeavingEvenAfterConfigChanges(){
         config.set("routines.name-offset-seated-y",-.75);var pose=enter(RoutineGoal.Type.SIT);assertEquals(64.5,seatPosition.get().getY());assertEquals(-.4f,nameOffset.get(),.00001);
         config.set("routines.name-offset-seated-y",1.25);visuals.leave(pose,true);assertEquals(.35f,nameOffset.get(),.00001);verify(entity).leaveVehicle();verify(seat).remove();
@@ -140,5 +158,66 @@ class RoutineNameOffsetTest {
     @Test void failedDisplayConfigurationDoesNotHideTheNameOrLeaveAnOrphan(){
         nativeVisibleName();config.set("routines.name-offset-seated-y",.5);doThrow(new IllegalStateException("Text failure")).when(display).text(any(Component.class));
         assertThrows(IllegalStateException.class,()->enter(RoutineGoal.Type.SIT));assertTrue(nameVisible.get());verify(disguise,never()).setNameVisible(anyBoolean());verify(display).remove();verify(seat).remove();
+    }
+    @Test @SuppressWarnings("unchecked") void spawnListenerVisibilityChangesAreRepairedBeforeMounting(){
+        when(world.spawn(any(Location.class),eq(ArmorStand.class),any(Consumer.class))).thenAnswer(i->{((Consumer<ArmorStand>)i.getArgument(2)).accept(seat);seatVisible.set(true);seatInvisible.set(false);seatGlowing.set(true);seatMarker.set(false);return seat;});
+        doAnswer(i->{assertFalse(seatVisible.get());assertTrue(seatInvisible.get());assertFalse(seatGlowing.get());assertTrue(seatMarker.get());vehicle.set(seat);return true;}).when(seat).addPassenger(entity);
+        var pose=enter(RoutineGoal.Type.SIT);assertTrue(seatInvisible.get());visuals.leave(pose,false);assertTrue(seatRemoved.get());assertNull(vehicle.get());
+    }
+    @Test void hiddenSeatRepairsChangedFlagsAndSendsNoUpdatesWhenStable(){
+        var pose=enter(RoutineGoal.Type.SIT);clearInvocations(seat);
+        for(int tick=1;tick<=40;tick++)visuals.tick(pose,tick);verify(seat,never()).setInvisible(anyBoolean());verify(seat,never()).setVisible(anyBoolean());verify(seat,never()).setMarker(anyBoolean());
+        seatVisible.set(true);seatInvisible.set(false);seatGlowing.set(true);seatMarker.set(false);seatSmall.set(false);seatGravity.set(true);seatBasePlate.set(true);seatArms.set(true);seatNameVisible.set(true);
+        visuals.tick(pose,41);assertFalse(seatVisible.get());assertTrue(seatInvisible.get());assertFalse(seatGlowing.get());assertTrue(seatMarker.get());assertTrue(seatSmall.get());assertFalse(seatGravity.get());assertFalse(seatBasePlate.get());assertFalse(seatArms.get());assertFalse(seatNameVisible.get());
+        visuals.tick(pose,42);verify(seat).setInvisible(true);verify(seat).setVisible(false);verify(seat).setGlowing(false);verify(seat).setMarker(true);visuals.leave(pose,false);
+    }
+    @Test void dormantSeatRepairsVisibilityDuringSuspensionWithoutRemovingItsMount(){
+        var pose=enter(RoutineGoal.Type.SIT);seatVisible.set(true);seatInvisible.set(false);visuals.suspend(pose,40);
+        assertTrue(seatInvisible.get());assertFalse(seatVisible.get());assertSame(seat,vehicle.get());verify(seat,never()).remove();visuals.leave(pose,false);
+    }
+    @Test void failedMountAndRotationCannotLeaveAnUntrackedSupport(){
+        doAnswer(i->{vehicle.set(seat);throw new IllegalStateException("Mount callback");}).when(seat).addPassenger(entity);
+        assertThrows(IllegalStateException.class,()->enterRaw(RoutineGoal.Type.SIT));assertTrue(seatRemoved.get());assertNull(vehicle.get());
+        doAnswer(i->{vehicle.set(seat);return true;}).when(seat).addPassenger(entity);doThrow(new IllegalStateException("Rotation callback")).when(entity).setRotation(anyFloat(),anyFloat());
+        assertThrows(IllegalStateException.class,()->enterRaw(RoutineGoal.Type.SIT));assertTrue(seatRemoved.get());assertNull(vehicle.get());verify(seat,times(2)).remove();
+    }
+    @Test void failedSeatSpawnConfigurationRemovesSupportBeforeItCanBecomeAnOrphan(){
+        doThrow(new IllegalStateException("Spawn callback")).when(seat).setMarker(true);
+        assertThrows(IllegalStateException.class,()->enterRaw(RoutineGoal.Type.SIT));assertTrue(seatRemoved.get());verify(seat).remove();verify(seat,never()).addPassenger(any());
+    }
+    @Test void refusedMountRemovesOnlyTheUnusedSupport(){
+        doReturn(false).when(seat).addPassenger(entity);assertNull(enterRaw(RoutineGoal.Type.SIT));assertTrue(seatRemoved.get());verify(entity,never()).leaveVehicle();
+    }
+    @Test void failedMealRestorationStillRemovesTheSeatAndRestoresTheNameOnLeaving(){
+        nativeVisibleName();config.set("routines.name-offset-seated-y",.5);var pose=enter(RoutineGoal.Type.SIT);pose.mealUntil=10;
+        doThrow(new IllegalStateException("Item metadata")).when(watcher).setMainHandRaised(false);
+        assertThrows(IllegalStateException.class,()->visuals.leave(pose,false));assertTrue(seatRemoved.get());assertNull(vehicle.get());assertNull(pose.seat);assertTrue(nameVisible.get());verify(display).remove();
+    }
+    @Test void failedDismountStillRemovesTheSeatAndNormalLeavingIsIdempotent(){
+        var pose=enter(RoutineGoal.Type.SIT);doThrow(new IllegalStateException("Dismount callback")).when(entity).leaveVehicle();
+        assertThrows(IllegalStateException.class,()->visuals.leave(pose,false));assertTrue(seatRemoved.get());assertNull(pose.seat);visuals.leave(pose,false);verify(seat).remove();
+    }
+    private NpcNameService ownedNames(AtomicReference<Double> offset){
+        nativeVisibleName();when(internals.getNameDisplayType()).thenReturn(DisguiseConfig.PlayerNameType.ARMORSTANDS);nameVisible.set(false);
+        var names=mock(NpcNameService.class);var manager=mock(NpcManager.class);when(plugin.manager()).thenReturn(manager);when(manager.names()).thenReturn(names);when(names.manages(npc)).thenReturn(true);
+        when(names.offset(npc)).thenAnswer(i->offset.get());doAnswer(i->{offset.set(i.getArgument(1));return null;}).when(names).offset(eq(npc),anyDouble());return names;
+    }
+    @Test void ownedNameOffsetUsesTheExistingDisplayAndRestoresItsOriginalServiceAfterManagerReplacement(){
+        var offset=new AtomicReference<>(.2);var names=ownedNames(offset);config.set("routines.name-offset-seated-y",-.6);var pose=enter(RoutineGoal.Type.SIT);
+        assertSame(names,pose.ownedNames);assertEquals(-.4,offset.get(),.00001);assertNull(pose.nameDisplay);assertFalse(nameVisible.get());
+        verify(watcher,never()).getNameYModifier();verify(watcher,never()).setNameYModifier(anyFloat());verify(disguise,never()).setNameVisible(anyBoolean());verify(world,never()).spawn(any(Location.class),eq(TextDisplay.class),any(Consumer.class));
+        config.set("routines.name-offset-seated-y",1);offset.set(2d);visuals.tick(pose,1);assertEquals(-.4,offset.get(),.00001);
+        var replacement=mock(NpcManager.class);var replacementNames=mock(NpcNameService.class);when(plugin.manager()).thenReturn(replacement);when(replacement.names()).thenReturn(replacementNames);
+        visuals.leave(pose,false);assertEquals(.2,offset.get(),.00001);verify(names).offset(npc,.2);verify(replacementNames,never()).offset(any(),anyDouble());assertNull(pose.ownedNames);
+    }
+    @Test void ownedSleepingNameDoesNotRecreateOrResendTheDisplayDuringStablePoseUpdates(){
+        var offset=new AtomicReference<>(.25);var names=ownedNames(offset);config.set("routines.name-offset-sleeping-y",-.5);var pose=enter(RoutineGoal.Type.SLEEP);assertEquals(-.25,offset.get(),.00001);clearInvocations(names);
+        visuals.suspend(pose,20);assertTrue(visuals.restoreSleep(pose,true));for(int tick=21;tick<=40;tick++)visuals.tick(pose,tick);verify(names,never()).offset(any(),anyDouble());
+        visuals.leave(pose,true);assertEquals(.25,offset.get(),.00001);assertFalse(nameVisible.get());verify(names).offset(npc,.25);verify(disguise,never()).setNameVisible(anyBoolean());
+    }
+    @Test void failedOwnedNameAdjustmentRestoresItsBaselineAndCleansUpTheSeat(){
+        var offset=new AtomicReference<>(.25);var names=ownedNames(offset);config.set("routines.name-offset-seated-y",-.5);
+        doAnswer(i->{offset.set(-.25);throw new IllegalStateException("Display metadata");}).when(names).offset(npc,-.25);
+        assertThrows(IllegalStateException.class,()->enterRaw(RoutineGoal.Type.SIT));assertEquals(.25,offset.get(),.00001);assertTrue(seatRemoved.get());assertNull(vehicle.get());verify(names).offset(npc,.25);verify(disguise,never()).setNameVisible(anyBoolean());
     }
 }

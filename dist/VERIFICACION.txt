@@ -1,29 +1,49 @@
-MDVNPC 1.10.0: compilación limpia Maven clean verify, Java 21.
-229 pruebas; 0 errores, 0 fallos, 0 omitidas.
+MDVNPC 1.10.1: compilación limpia Maven clean verify, Java 21.
+271 pruebas; 0 errores, 0 fallos, 0 omitidas.
 Base: ZIP 1.9.0 del usuario, SHA-256
 c1b2c4de2794ad42f6a47d0c9d687c2087c41643976b55c09dec26f80544fcef.
 Regresiones de baile en suelo plano, separación local, obstáculos, saltos,
 ciclo 60s/30s, regreso a silla y cancelación por horario/ausencia.
 Ajustes globales de nombre sentado/acostado y asiento predeterminado Y=0.5.
 Fallback de texto temporal para offsets con nombres nativos de LibsDisguises.
+Rótulos TextDisplay para modo ARMORSTANDS de LD, ocultados antes del disfraz.
+Invisibilidad persistente de asientos y cleanup aunque fallen montaje/items/desmontaje.
+Nuevas canciones: La Vela del Mesón (30s), Jiga del Puerto (32s), ambas F/G.
+Las 8 partituras se reprodujeron completas en pruebas de dúo y ambos solos.
+Pruebas de pausa/reincorporación musical y diagnóstico /mdvnpc status [id].
+Recuperación del músico desplazado: regresa al mismo puesto y reanuda al llegar.
 Las seis partituras previas se verificaron idénticas a 1.9.0.
 Pruebas MockBukkit/Mockito; no se comprobó apariencia en cliente real ni
 se midió CPU/RAM/TPS. Compilado contra Paper 1.21.6 y LibsDisguises 11.0.18.
 
 Archivos cambiados o nuevos respecto a la base:
+GUIA-1.10.1.md
 GUIA-1.10.md
 pom.xml
 README.md
+src\main\java\com\mdvcraft\mdvnpc\command\NpcCommand.java
 src\main\java\com\mdvcraft\mdvnpc\config\Settings.java
+src\main\java\com\mdvcraft\mdvnpc\music\MusicService.java
 src\main\java\com\mdvcraft\mdvnpc\routine\DanceController.java
 src\main\java\com\mdvcraft\mdvnpc\routine\DanceCrowd.java
 src\main\java\com\mdvcraft\mdvnpc\routine\DanceFloor.java
 src\main\java\com\mdvcraft\mdvnpc\routine\RoutineService.java
 src\main\java\com\mdvcraft\mdvnpc\routine\RoutineVisuals.java
+src\main\java\com\mdvcraft\mdvnpc\runtime\NpcManager.java
+src\main\java\com\mdvcraft\mdvnpc\runtime\NpcNameService.java
+src\main\java\com\mdvcraft\mdvnpc\skin\DisguiseService.java
 src\main\resources\config.yml
+src\main\resources\music\meson.csv
+src\main\resources\music\puerto.csv
+src\test\java\com\mdvcraft\mdvnpc\music\MusicServiceTest.java
+src\test\java\com\mdvcraft\mdvnpc\music\MusicWorkRecoveryTest.java
+src\test\java\com\mdvcraft\mdvnpc\music\SongRepertoireTest.java
+src\test\java\com\mdvcraft\mdvnpc\NpcStatusCommandTest.java
 src\test\java\com\mdvcraft\mdvnpc\routine\DanceControllerTest.java
 src\test\java\com\mdvcraft\mdvnpc\routine\DanceCycleRecoveryTest.java
 src\test\java\com\mdvcraft\mdvnpc\routine\DanceLifecycleTest.java
 src\test\java\com\mdvcraft\mdvnpc\routine\RoutineNameOffsetTest.java
 src\test\java\com\mdvcraft\mdvnpc\RoutineSettingsTest.java
+src\test\java\com\mdvcraft\mdvnpc\runtime\NpcNameServiceTest.java
+src\test\java\com\mdvcraft\mdvnpc\skin\DisguiseNameRendererTest.java
 

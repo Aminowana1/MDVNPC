@@ -3,6 +3,7 @@ package com.mdvcraft.mdvnpc.routine;
 import com.mdvcraft.mdvnpc.MdvNpcPlugin;
 import com.mdvcraft.mdvnpc.trait.TraitBehavior;
 import com.mdvcraft.mdvnpc.runtime.ActiveNpc;
+import com.mdvcraft.mdvnpc.runtime.NpcNameService;
 import com.mdvcraft.mdvnpc.shop.MmoItemBridge;
 import com.mdvcraft.mdvnpc.util.Text;
 import com.github.retrooper.packetevents.util.Vector3i;
@@ -27,6 +28,7 @@ public final class RoutineVisuals {
         PlayerWatcher nameWatcher; float originalNameOffset, posedNameOffset;
         TextDisplay nameDisplay; Location nameLocation; String displayedName;
         boolean restoreNativeName, originalNameVisible;
+        NpcNameService ownedNames;double originalOwnedNameOffset, posedOwnedNameOffset;
     }
     private final MdvNpcPlugin plugin;
     private final MmoItemBridge mmo;
@@ -53,14 +55,46 @@ public final class RoutineVisuals {
         if (!(block.getBlockData() instanceof Stairs stairs) || stairs.getHalf()!=org.bukkit.block.data.Bisected.Half.BOTTOM) return null;
         Location location=block.getLocation().add(.5,plugin.settings().messages().getDouble("routines.seat-offset-y",.5),.5);
         location.setDirection(stairs.getFacing().getOppositeFace().getDirection());
-        p.seat=world.spawn(location,ArmorStand.class,stand -> {
-            stand.setVisible(false); stand.setMarker(true); stand.setSmall(true); stand.setGravity(false);
-            stand.setInvulnerable(true); stand.setSilent(true); stand.setPersistent(false); stand.setBasePlate(false);
-            stand.getPersistentDataContainer().set(marker,PersistentDataType.STRING,npc.definition().id());
-        });
-        if(!p.seat.isValid() || !p.seat.addPassenger(npc.entity())) { p.seat.remove(); return null; }
-        p.bodyYaw=location.getYaw();npc.entity().setRotation(p.bodyYaw,0);
-        return applyNameOffset(p,"routines.name-offset-seated-y");
+        try {
+            p.seat=world.spawn(location,ArmorStand.class,stand -> {
+                // Retain the support even if another spawn callback or configuration step fails.
+                p.seat=stand;
+                stand.setVisible(false);stand.setInvisible(true);stand.setMarker(true);stand.setSmall(true);stand.setGravity(false);
+                stand.setInvulnerable(true);stand.setSilent(true);stand.setPersistent(false);stand.setBasePlate(false);stand.setArms(false);stand.setGlowing(false);
+                stand.setCustomNameVisible(false);stand.setCustomName(null);
+                stand.getPersistentDataContainer().set(marker,PersistentDataType.STRING,npc.definition().id());
+            });
+            if(!p.seat.isValid()) {removeSeat(p);return null;}
+            // Paper's persistent invisibility also protects the shared entity metadata flag.
+            // Reapply after spawn listeners have run, before exposing a mounted passenger.
+            p.seat.setInvisible(true);repairSeat(p);
+            if(!p.seat.addPassenger(npc.entity())) {removeSeat(p);return null;}
+            p.bodyYaw=location.getYaw();npc.entity().setRotation(p.bodyYaw,0);repairSeat(p);
+            return applyNameOffset(p,"routines.name-offset-seated-y");
+        }catch(RuntimeException | LinkageError ex) {
+            try{leave(p,false);}catch(RuntimeException | LinkageError cleanup){ex.addSuppressed(cleanup);}
+            throw ex;
+        }
+    }
+    /** Existing pose cadence repairs external changes without scheduling another task or resending stable flags. */
+    private void repairSeat(Pose p) {
+        ArmorStand seat=p.seat;if(seat==null || !seat.isValid())return;
+        if(seat.isVisible() || !seat.isInvisible()) {seat.setVisible(false);seat.setInvisible(true);}
+        if(seat.isGlowing())seat.setGlowing(false);
+        if(!seat.isMarker())seat.setMarker(true);
+        if(!seat.isSmall())seat.setSmall(true);
+        if(seat.hasGravity())seat.setGravity(false);
+        if(seat.hasBasePlate())seat.setBasePlate(false);
+        if(seat.hasArms())seat.setArms(false);
+        if(seat.isCustomNameVisible())seat.setCustomNameVisible(false);
+    }
+    private void removeSeat(Pose p) {
+        ArmorStand seat=p.seat;if(seat==null)return;
+        try{if(p.npc.entity().getVehicle()==seat)p.npc.entity().leaveVehicle();}
+        finally {
+            try{seat.remove();}
+            finally{p.seat=null;}
+        }
     }
     /** Native player nametags have no adjustable height; use a temporary display for those modes. */
     private Pose applyNameOffset(Pose p,String key) {
@@ -68,6 +102,11 @@ public final class RoutineVisuals {
         if(additional==0 || p.npc.disguise()==null)return p;
         try {
             if(!Double.isFinite(additional) || additional < -4 || additional > 4)throw new IllegalArgumentException(key+": usar -4..4 bloques");
+            var manager=plugin.manager();var names=manager==null?null:manager.names();
+            if(names!=null && names.manages(p.npc)) {
+                p.ownedNames=names;p.originalOwnedNameOffset=names.offset(p.npc);
+                p.posedOwnedNameOffset=p.originalOwnedNameOffset+additional;refreshNameOffset(p);return p;
+            }
             p.nameWatcher=p.npc.disguise().getWatcher();p.originalNameOffset=p.nameWatcher.getNameYModifier();
             p.posedNameOffset=(float)(p.originalNameOffset+additional);
             if(p.npc.disguise().getInternals().getNameDisplayType().isFakeEntity())refreshNameOffset(p);
@@ -106,7 +145,9 @@ public final class RoutineVisuals {
         location.setYaw(0);location.setPitch(0);return location;
     }
     private void refreshNameOffset(Pose p) {
-        if(p.nameDisplay!=null) {
+        if(p.ownedNames!=null) {
+            if(Double.compare(p.ownedNames.offset(p.npc),p.posedOwnedNameOffset)!=0)p.ownedNames.offset(p.npc,p.posedOwnedNameOffset);
+        }else if(p.nameDisplay!=null) {
             Location location=nameLocation(p);
             if(!location.equals(p.nameLocation) && p.nameDisplay.teleport(location))p.nameLocation=location;
             String name=currentName(p);
@@ -116,12 +157,13 @@ public final class RoutineVisuals {
     }
     private void restoreNameOffset(Pose p) {
         try {
-            if(p.restoreNativeName)p.npc.disguise().setNameVisible(p.originalNameVisible);
+            if(p.ownedNames!=null)p.ownedNames.offset(p.npc,p.originalOwnedNameOffset);
+            else if(p.restoreNativeName)p.npc.disguise().setNameVisible(p.originalNameVisible);
             else if(p.nameWatcher!=null && p.nameDisplay==null && Float.compare(p.nameWatcher.getNameYModifier(),p.originalNameOffset)!=0)
                 p.nameWatcher.setNameYModifier(p.originalNameOffset);
         }finally {
             try{if(p.nameDisplay!=null)p.nameDisplay.remove();}
-            finally{p.nameDisplay=null;p.nameLocation=null;p.displayedName=null;p.restoreNativeName=false;p.nameWatcher=null;}
+            finally{p.nameDisplay=null;p.nameLocation=null;p.displayedName=null;p.restoreNativeName=false;p.nameWatcher=null;p.ownedNames=null;}
         }
     }
     private long mealDelay() {
@@ -130,6 +172,7 @@ public final class RoutineVisuals {
         return ThreadLocalRandom.current().nextLong(min,Math.max((long)min+1,(long)max+1))*20;
     }
     public void tick(Pose p,long tick) {
+        repairSeat(p);
         refreshNameOffset(p);
         if(p.sleeping) return;
         if(p.mealUntil>0 && tick>=p.mealUntil) { finishMeal(p); p.nextMeal=tick+TraitBehavior.activityDelay(p.npc.definition().traits().type(),mealDelay()); }
@@ -185,7 +228,7 @@ public final class RoutineVisuals {
         var watcher=p.npc.disguise().getWatcher(); watcher.setMainHandRaised(false); watcher.setItemInMainHand(p.previous);
         p.meal=null; p.previous=null; p.mealUntil=0;p.reading=false;
     }
-    public void suspend(Pose p,long tick) {finishMeal(p);p.nextMeal=tick+TraitBehavior.activityDelay(p.npc.definition().traits().type(),mealDelay());}
+    public void suspend(Pose p,long tick) {repairSeat(p);finishMeal(p);p.nextMeal=tick+TraitBehavior.activityDelay(p.npc.definition().traits().type(),mealDelay());}
     /** Called on activation; periodic calls only send metadata if the sleep pose drifted. */
     public boolean restoreSleep(Pose p,boolean force) {
         if(!p.sleeping || p.sleepingLocation==null)return true;
@@ -208,10 +251,13 @@ public final class RoutineVisuals {
         try{
             finishMeal(p);
             if(p.sleeping) { p.npc.disguise().getWatcher().setSleeping(false); p.npc.disguise().getWatcher().setBedPosition(Optional.empty()); }
-            if(p.seat!=null) { p.npc.entity().leaveVehicle(); p.seat.remove(); }
-            if(reposition && p.exit.getWorld().isChunkLoaded(p.exit.getBlockX()>>4,p.exit.getBlockZ()>>4)) {
-                Location exit=p.exit.clone();exit.setPitch(0);teleport.test(p.npc,exit);
-            }
-        }finally{restoreNameOffset(p);}
+        }finally {
+            // Dance, deletion and reload must never retain a mount if item/name metadata failed.
+            try{removeSeat(p);}
+            finally{restoreNameOffset(p);}
+        }
+        if(reposition && p.exit!=null && p.exit.getWorld().isChunkLoaded(p.exit.getBlockX()>>4,p.exit.getBlockZ()>>4)) {
+            Location exit=p.exit.clone();exit.setPitch(0);teleport.test(p.npc,exit);
+        }
     }
 }

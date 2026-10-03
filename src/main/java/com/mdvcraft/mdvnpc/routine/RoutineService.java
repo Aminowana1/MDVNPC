@@ -216,7 +216,11 @@ public final class RoutineService {
             State previous=states.get(id);
             int minute=RoutineSchedule.minute(npc.entity().getWorld().getFullTime());
             if(previous!=null && ticks<previous.nextUpdate && ticks<previous.nextPresence && previous.lastMinute==minute)continue;
-            try { update(npc); }
+            try {
+                update(npc);
+                // Moving/dancing NPC names follow the same clock; no label-specific tasks.
+                if(manager.names()!=null)manager.names().tick(npc);
+            }
             catch(RuntimeException ex) {
                 failed.add(id); try { remove(id); } catch(RuntimeException cleanup) { ex.addSuppressed(cleanup); }
                 plugin.getLogger().log(java.util.logging.Level.SEVERE,"Rutina pausada por error: "+id+". Corrige y usa /mdvnpc reload",ex);
@@ -314,7 +318,15 @@ public final class RoutineService {
             if(!s.pose.sleeping)looks.tick(npc,s.look,ticks,s.pose.bodyYaw,true,s.pose.reading,s.pose.mealUntil>ticks);
             return;
         }
-        if(s.working) { s.status="trabajando";return; }
+        if(s.working) {
+            if(!npc.definition().mode().musician() || s.approach!=null && position.getWorld()==s.approach.getWorld()
+                    && position.distanceSquared(s.approach)<.36) {s.status="trabajando";return;}
+            // A displaced musician becomes ineligible for audio immediately. Keep the chosen
+            // work goal and post, then use the same bounded route to rejoin on arrival.
+            s.working=false;if(plugin.music()!=null)plugin.music().remove(id);
+            looks.clear(npc,s.look);navigator.cancel(id);
+            s.travelSince=ticks;s.nextUpdate=ticks+cadence;
+        }
         if(s.returningFromDance && ticks>=s.nextReturnCheck) {
             s.nextReturnCheck=ticks+100;
             if(!validFurniture(goal,s.destination,position.getWorld())) {

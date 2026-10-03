@@ -1,4 +1,13 @@
-# MDVNPC 1.10.0
+# MDVNPC 1.10.1
+
+Los nombres de NPC evitan el rótulo de armor stand cuando LD usa ese modo y mantienen
+sus offsets al sentarse/dormir. Los asientos refuerzan su invisibilidad y limpieza.
+Se añaden «La Vela del Mesón» (30s) y «Jiga del Puerto» (32s), con ambas partes completas.
+Los músicos desplazados durante Trabajo regresan al mismo puesto y vuelven a tocar.
+`/mdvnpc status <id>` permite consultar la canción y posibles pausas de un músico.
+Consulta [la guía de esta entrega](GUIA-1.10.1.md).
+
+## Actualización 1.10.0
 
 El baile usa una pista plana con separación entre participantes y desplazamientos continuos,
 sin subir a mesas o escalones. Los NPC Fiestero alternan 60 segundos de baile y 30 segundos

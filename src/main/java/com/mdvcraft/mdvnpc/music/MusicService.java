@@ -12,7 +12,7 @@ import java.util.logging.Level;
 
 /** Main-thread only. Routine lifecycle supplies working musicians; never scans all NPCs or players. */
 public final class MusicService {
-    static final List<String> REPERTOIRE=List.of("tourdion","jabali","farol","romeria","cuervo","roble");
+    static final List<String> REPERTOIRE=List.of("tourdion","jabali","farol","romeria","cuervo","roble","meson","puerto");
     private final MdvNpcPlugin plugin;
     private final MusicianVisuals visuals;
     private final List<Song> songs=REPERTOIRE.stream().map(Song::load).toList();
@@ -104,6 +104,32 @@ public final class MusicService {
     }
     public boolean isPerforming(ActiveNpc npc) {
         return npc!=null && eligible(npc);
+    }
+    /** On-demand admin diagnosis; no additional timer or world/player scans. */
+    public String status(String id) {
+        ActiveNpc npc=workers.get(id);
+        if(npc==null)return "sin sesión musical; "+plugin.routines().status(id);
+        String instrument=npc.definition().mode()==Mode.MUSICIAN_FLUTE?"Flauta":"Guitarra";
+        if(!npc.entity().isValid())return instrument+": NPC descargado";
+        if(!plugin.routines().canInteract(npc))return instrument+": fuera del puesto o del horario de Trabajo";
+        if(plugin.traits()!=null && plugin.traits().busy(id))return instrument+": pausa para beber";
+        if(plugin.reactions()!=null && plugin.reactions().busy(id))return instrument+": pausa por un golpe";
+        for(Session session:sessions.values())for(Member member:session.members)if(member.npc==npc) {
+            String song=switch(session.song.name()) {
+                case "tourdion" -> "Tourdion";case "jabali" -> "El Jabalí";case "farol" -> "El Farol";
+                case "romeria" -> "Romería de las Linternas";case "cuervo" -> "El Cuervo y la Jarra";
+                case "roble" -> "Branle del Roble";case "meson" -> "La Vela del Mesón";
+                case "puerto" -> "Jiga del Puerto";default -> session.song.name();
+            };
+            long elapsed=tick-session.start;
+            if(elapsed<0)return instrument+": preparando "+song;
+            long listeners=member.audience.stream().filter(p->audible(npc.position(),p,audioRadius)).count();
+            return instrument+": tocando "+song+" ("+Math.min(elapsed/20,session.song.duration()/20)+"/"
+                    +session.song.duration()/20+" s); conjunto: "+session.members.size()
+                    +"; oyentes a "+Math.round(audioRadius)+" bloques: "+listeners
+                    +(visualFailures.contains(id)?"; gestos pausados, audio activo":"");
+        }
+        return instrument+": esperando incorporarse al conjunto";
     }
     private void regroup() {
         Map<String,Location> positions=new HashMap<>();
