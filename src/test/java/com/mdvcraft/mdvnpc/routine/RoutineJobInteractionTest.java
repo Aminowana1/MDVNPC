@@ -50,10 +50,12 @@ class RoutineJobInteractionTest {
         when(world.getFullTime()).thenReturn(1000L);when(world.isChunkLoaded(anyInt(),anyInt())).thenReturn(true);
         plugin=mock(MdvNpcPlugin.class);when(plugin.getName()).thenReturn("job-routine-test");when(plugin.isEnabled()).thenReturn(true);
         when(plugin.getDataFolder()).thenReturn(folder.toFile());when(plugin.getServer()).thenReturn(server);
-        when(plugin.getLogger()).thenReturn(mock(Logger.class));when(plugin.settings()).thenReturn(Settings.parse(new YamlConfiguration()));
-        when(plugin.messages()).thenReturn(mock(Messages.class));when(plugin.shops()).thenReturn(mock(ShopService.class));
+        Logger logger=mock(Logger.class);Settings settings=Settings.parse(new YamlConfiguration());
+        Messages messages=mock(Messages.class);ShopService shop=mock(ShopService.class);
+        when(plugin.getLogger()).thenReturn(logger);when(plugin.settings()).thenReturn(settings);
+        when(plugin.messages()).thenReturn(messages);when(plugin.shops()).thenReturn(shop);
         music=mock(MusicService.class);when(plugin.music()).thenReturn(music);
-        player=mock(Player.class);when(player.getUniqueId()).thenReturn(UUID.randomUUID());when(player.isOnline()).thenReturn(true);
+        player=mock(Player.class);when(player.getUniqueId()).thenReturn(UUID.randomUUID());when(player.getName()).thenReturn("Tester");when(player.isOnline()).thenReturn(true);
         when(player.getWorld()).thenReturn(world);when(player.getGameMode()).thenReturn(GameMode.SURVIVAL);
         when(player.getMetadata("vanished")).thenReturn(List.of());when(player.performCommand(anyString())).thenReturn(true);
         when(player.getLocation()).thenAnswer(ignored->new Location(world,.5,64,2.5));
@@ -65,7 +67,10 @@ class RoutineJobInteractionTest {
                 Block b=mock(Block.class);boolean solid=y==63;
                 when(b.getType()).thenReturn(solid?Material.STONE:Material.AIR);when(b.isPassable()).thenReturn(!solid);
                 when(b.getBoundingBox()).thenReturn(solid?new BoundingBox(x,y,z,x+1,y+1,z+1):new BoundingBox(x,y,z,x,y,z));
-                if(x==0 && y==64 && z==0)when(b.getBlockData()).thenReturn(furniture==RoutineGoal.Type.SLEEP?mock(Bed.class):mock(Stairs.class));
+                if(x==0 && y==64 && z==0) {
+                    var data=furniture==RoutineGoal.Type.SLEEP?mock(Bed.class):mock(Stairs.class);
+                    when(b.getBlockData()).thenReturn(data);
+                }
                 return b;
             });
         });
@@ -86,7 +91,10 @@ class RoutineJobInteractionTest {
         });
         manager=mock(NpcManager.class);when(plugin.manager()).thenReturn(manager);setMode("normal");
         when(manager.activeNpcs()).thenAnswer(ignored->List.of(npc));when(manager.find(entity)).thenAnswer(ignored->npc);when(manager.owned(entity)).thenReturn(true);
-        when(manager.interactions()).thenReturn(new InteractionService(plugin.messages(),plugin.getLogger()));
+        // Build dependencies before opening a Mockito stubbing: mock getter calls inside
+        // thenReturn(...) would interrupt when(manager.interactions()).
+        InteractionService interactions=new InteractionService(messages,logger);
+        when(manager.interactions()).thenReturn(interactions);
         visuals=mock(RoutineVisuals.class);when(visuals.restoreSleep(any(),anyBoolean())).thenReturn(true);
         when(visuals.enter(any(),any(),any(),any(),anyLong())).thenAnswer(call->{
             RoutineVisuals.Pose pose=new RoutineVisuals.Pose();pose.npc=call.getArgument(0);pose.sleeping=((RoutineGoal)call.getArgument(1)).type()==RoutineGoal.Type.SLEEP;
@@ -181,7 +189,8 @@ class RoutineJobInteractionTest {
         recipe.setIgnoreDiscounts(true);recipe.setIngredients(List.of(new ItemStack(Material.EMERALD,3)));
         Merchant merchant=mock(Merchant.class);MerchantInventory inventory=mock(MerchantInventory.class);
         when(inventory.getMerchant()).thenReturn(merchant);when(inventory.getSelectedRecipeIndex()).thenReturn(0);
-        when(inventory.getSelectedRecipe()).thenReturn(recipe);when(inventory.getItem(0)).thenReturn(new ItemStack(Material.EMERALD,3));
+        ItemStack ingredient=new ItemStack(Material.EMERALD,3);
+        when(inventory.getSelectedRecipe()).thenReturn(recipe);when(inventory.getItem(0)).thenReturn(ingredient);
         InventoryView view=mock(InventoryView.class);when(view.getTopInventory()).thenReturn(inventory);when(player.getOpenInventory()).thenReturn(view);
         var type=Class.forName("com.mdvcraft.mdvnpc.shop.ShopService$Session");var constructor=type.getDeclaredConstructors()[0];constructor.setAccessible(true);
         Object session=constructor.newInstance("npc",merchant,npc,0L,List.of(new MerchantRecipe(recipe)));

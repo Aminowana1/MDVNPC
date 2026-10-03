@@ -1,7 +1,7 @@
-MDVNPC 1.11.0: compilación limpia Maven clean test, Java 21.
-7 pruebas; 0 errores, 0 fallos, 0 omitidas.
-Por petición del usuario, sólo se ejecutaron las siete pruebas rápidas del modelo/persistencia.
-Todas las fuentes Java de producción y tests compilaron; no se ejecutó la suite completa.
+MDVNPC 1.11.0 corregido: Maven verify completo tras compilación limpia, Java 21.
+303 pruebas; 0 errores, 0 fallos, 0 omitidas.
+RoutineJobInteractionTest: dependencias preparadas antes de thenReturn y nombre del jugador definido.
+Suite completa ejecutada, incluidos los 14 casos que fallaban en GitHub.
 Entrega sólo ZIP de fuentes, sin JAR compilado. La comprobación in-game la hará el usuario.
 Base: entrega MDVNPC 1.10.1.
 Nueva atención de comandos/tienda por goal, con work-interaction=false por defecto.

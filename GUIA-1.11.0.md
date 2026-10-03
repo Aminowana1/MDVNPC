@@ -43,7 +43,7 @@ Después de editar archivos a mano, usa `/mdvnpc reload`.
 ## Actualizar
 
 Esta entrega contiene el ZIP de fuentes. Para generar el JAR con Java 21, usa
-`mvn package -DskipTests` o el flujo de compilación del repositorio. Después apaga
+`mvn clean verify` o el flujo de compilación del repositorio. Después apaga
 el servidor, respalda `plugins/MDVNPC/`, sustituye el JAR y arranca.
 Se conservan las mejoras de [1.10.1](GUIA-1.10.1.md).
 
@@ -51,6 +51,6 @@ La opción se comprueba al interactuar y durante las comprobaciones de compra qu
 ya existían. No añade tareas por NPC ni búsquedas globales por tick.
 
 Java 21, Paper/Purpur 1.21.6, LibsDisguises 11.0.18 y PacketEvents 2.14.0.
-Compilaron todas las fuentes Java y se ejecutaron siete pruebas rápidas del
-modelo y su persistencia; la comprobación en juego queda a cargo del usuario.
-El detalle está en `dist/VERIFICACION.txt`.
+Esta revisión corrige la preparación de `RoutineJobInteractionTest`, que causaba
+14 errores en GitHub. La verificación completa usa `mvn clean verify`; su resultado
+se detalla en `dist/VERIFICACION.txt`. La comprobación en juego queda a cargo del usuario.
