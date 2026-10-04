@@ -233,6 +233,7 @@ public final class RoutineNavigator {
         }
         double distance = Math.max(.01, speed) * Math.max(1, cadence) / 20.0;
         Location step = walkingStep(travel,current,next,distance,tick);
+        if(step==null) step = recoverPartialRiser(travel,current,next,distance,tick);
         if(step==null) {localFailure(travel,tick);return Result.WAITING;}
         Vector delta = step.toVector().subtract(current.toVector());
         if (Math.abs(delta.getX()) + Math.abs(delta.getZ()) > .001)
@@ -418,6 +419,42 @@ public final class RoutineNavigator {
         return axes.getFirst();
     }
 
+
+    /**
+     * Last-resort recovery for a physical half-step that Paper omitted from its node list.
+     * This is intentionally restricted to partial blocks (at most half a block above the
+     * current feet), so a wall/full cube beside a flat route can never become a fake stair.
+     * It is used only after the normal replay failed, and therefore prevents a valid
+     * slab/carpet transition from being converted into WAITING -> replan -> circling.
+     */
+    private Location recoverPartialRiser(Travel travel,Location current,Location next,double allowance,long tick) {
+        double dx=next.getX()-current.getX(),dz=next.getZ()-current.getZ();
+        double horizontal=Math.hypot(dx,dz);
+        if(horizontal<1e-7)return null;
+        double ux=dx/horizontal,uz=dz/horizontal;
+
+        // Probe from just beyond the leading edge through a small forward band. The first
+        // collision can occur between Paper waypoints, especially for carpet/slab overlays.
+        double[] probes={RISER_BODY_LEAD+.02,RISER_BODY_LEAD+.10,RISER_LOOKAHEAD,RISER_LOOKAHEAD+.10};
+        double contact=Double.NaN;
+        for(double requested:probes) {
+            double ahead=Math.min(horizontal,requested);
+            if(ahead<=1e-7)continue;
+            double found=travel.terrain.supportHeight(current.getX()+ux*ahead,current.getY(),
+                    current.getZ()+uz*ahead,.51,UNANNOUNCED_SUPPORT_RADIUS);
+            if(Double.isFinite(found) && found>current.getY()+1e-4 && found-current.getY()<=.51+GROUND_EPSILON) {
+                contact=found; break;
+            }
+        }
+        if(!Double.isFinite(contact))return null;
+
+        double climb=Math.min(contact-current.getY(),Math.max(.01,allowance));
+        Location raised=current.clone().add(0,climb,0);
+        if(!walkable(travel,raised,tick))return null;
+        travel.riserWaypoint=next;
+        travel.riserHeight=contact;
+        return raised;
+    }
 
     private boolean supported(Travel travel,Location at) {
         return Double.isFinite(travel.terrain.supportHeight(at.getX(),at.getY(),at.getZ()));

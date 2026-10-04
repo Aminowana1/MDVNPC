@@ -144,3 +144,9 @@ Base: ZIP MDVNPC-1.1.0-source.zip entregado por el usuario. Se conservan comando
 - Entorno de pruebas con MockBukkit compatible con Paper 1.21.6. Pruebas de regresión de skins, pagos, sesiones, editor y persistencia.
 - Maven: versión 1.1.1. `build.yml` conservado byte por byte: el patrón `target/MDVNPC-*.jar` ya permite publicar versiones nuevas sin modificarlo.
 
+
+## 1.11.8-v4 - recuperación final de superficies parciales
+- Añade un fallback conservador cuando Paper omite un nodo intermedio de slab/carpet y el replay normal no puede producir un subpaso.
+- El fallback inspecciona una banda corta delante del cuerpo y solo asciende sobre colisiones parciales de hasta 0.51 bloques.
+- Evita convertir un slab/carpet válido en `WAITING -> replan -> giro` sin permitir trepar muros o bloques completos.
+- La validación CI de v3 quedó en 458 tests / 2 fallos / 0 errores; v4 queda pendiente de `mvn clean verify`.
