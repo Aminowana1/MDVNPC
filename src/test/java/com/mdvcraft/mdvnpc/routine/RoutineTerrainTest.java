@@ -167,4 +167,42 @@ class RoutineTerrainTest {
         assertEquals(new Node(0,-63,0),terrain.near(new org.bukkit.Location(world,.5,-63,.5)));
         verify(world,never()).getBlockAt(anyInt(),intThat(y->y < -64),anyInt());
     }
+
+    @Test void repeatedMovementProbesShareVoxelShapesOnlyWithinTheCurrentUpdate() {
+        Block floor=world.getBlockAt(0,63,0);clearInvocations(floor);
+        try(var scope=terrain.beginUpdate()) {
+            for(int i=0;i<12;i++) {
+                assertEquals(64,terrain.supportHeight(.5,64,.5),.000001);
+                assertTrue(terrain.fits(.5,64,.5,false));
+            }
+        }
+        verify(floor,times(1)).getCollisionShape();
+        put(0,63,0,Material.AIR,List.of());
+        try(var scope=terrain.beginUpdate()) {
+            assertTrue(Double.isNaN(terrain.supportHeight(.5,64,.5)),"removed floor must not survive into the next update");
+        }
+    }
+
+    @Test void changedBlockDataRefreshesTheShapeDuringAnUpdate() {
+        Block step=world.getBlockAt(0,64,0);
+        var low=mock(VoxelShape.class);when(low.getBoundingBoxes()).thenReturn(List.of(new BoundingBox(0,0,0,1,.5,1)));
+        var high=mock(VoxelShape.class);when(high.getBoundingBoxes()).thenReturn(List.of(new BoundingBox(0,0,0,1,1,1)));
+        when(step.getType()).thenReturn(Material.STONE_SLAB);when(step.isPassable()).thenReturn(false);
+        when(step.getBlockData()).thenReturn(mock(org.bukkit.block.data.type.Slab.class));
+        when(step.getCollisionShape()).thenReturn(low);
+        try(var scope=terrain.beginUpdate()) {
+            assertEquals(64.5,terrain.supportHeight(.5,64,.5),.000001);
+            when(step.getBlockData()).thenReturn(mock(org.bukkit.block.data.type.Slab.class));
+            when(step.getCollisionShape()).thenReturn(high);
+            assertEquals(65,terrain.supportHeight(.5,64,.5),.000001);
+        }
+    }
+
+    @Test void anOpenDoorStillBlocksItsActualSwingingLeaf() {
+        var data=mock(org.bukkit.block.data.type.Door.class);when(data.isOpen()).thenReturn(true);
+        Block door=block(0,64,0,Material.OAK_DOOR,List.of(new BoundingBox(0,0,0,.1875,1,1)));
+        when(door.getBlockData()).thenReturn(data);blocks.put(key(0,64,0),door);
+        assertFalse(terrain.fits(.35,64,.5,false),"open leaf can still occupy the shoulder");
+        assertTrue(terrain.fits(.5,64,.5,false),"the clear centre of the doorway remains passable");
+    }
 }

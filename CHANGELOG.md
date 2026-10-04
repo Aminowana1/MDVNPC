@@ -1,3 +1,22 @@
+# MDVNPC 1.11.7 — ejecución de rutas y recuperación
+
+- La subida conserva su altura durante la entrada al escalón; el asentamiento ya no la deshace.
+- El alcance comienza en 16 y permite 24/32/48/64 también para rodeos en el mismo piso.
+- Se detectan ciclos mediante un historial acotado de endpoints y el mejor progreso del viaje.
+- Reintentos: colisión local 4 ticks, chunk descargado 20 y búsqueda agotada 100.
+- Se valida el desplazamiento real tras un teleport; una respuesta exitosa sin movimiento cuenta como fallo.
+- La colisión incluye muros y vallas que sobresalen desde un bloque inferior y el panel real de una puerta abierta.
+- Caché de formas acotada a 512 entradas durante una sola actualización, con invalidación por estado y sin guardar puertas.
+- Progreso acumulado para velocidades pequeñas y recuperación de suelo al llegar o permanecer en WORK.
+- Recuperación de pérdida de suelo para NPC con NoAI, sin intervenir en poses, baile, reacción ni bebida.
+- Pruebas de viajes largos a cama/puesto en otra altura, terreno, ciclos, presupuesto y pérdida de suelo.
+
+# MDVNPC 1.11.6 — navegación entre plantas sin regresiones
+
+- Corrige las regresiones de 1.11.5 sobre stairs, mud/path, diagonales, hoyos y llegada a WORK.
+- Mantiene la búsqueda ampliada hasta 64 únicamente para destinos en otra planta o parciales en sombra vertical.
+- Mantiene gravedad activa en los aldeanos base.
+
 # MDVNPC 1.11.5 — Pisos múltiples y gravedad
 
 - Las rutas parciales que terminan debajo/encima de cama o trabajo ya no se siguen hacia la pared.

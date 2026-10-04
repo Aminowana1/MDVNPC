@@ -106,15 +106,14 @@ class RoutineNavigatorTest {
     @Test void failedNativeRouteWidensQuicklyBeforeUsingTheLongImpossibleRetry() {
         ActiveNpc npc = npc("blocked"); Pathfinder finder = pathfinders.get("blocked");
         when(finder.findPath(any(Location.class))).thenReturn(null);
-        assertEquals(RoutineNavigator.Result.WAITING,navigator.move(npc,destination(),2.4,0,2));
-        assertEquals(RoutineNavigator.Result.WAITING,navigator.move(npc,destination(),2.4,4,2));
-        assertEquals(RoutineNavigator.Result.WAITING,navigator.move(npc,destination(),2.4,8,2));
-        verify(finder,times(3)).findPath(any(Location.class));
+        for(int tick=0;tick<=16;tick+=4)
+            assertEquals(RoutineNavigator.Result.WAITING,navigator.move(npc,destination(),2.4,tick,2));
+        verify(finder,times(5)).findPath(any(Location.class));
         assertTrue(navigator.exhausted("blocked"));
         navigator.move(npc,destination(),2.4,100,2);
-        verify(finder,times(3)).findPath(any(Location.class));
-        navigator.move(npc,destination(),2.4,108,2);
-        verify(finder,times(4)).findPath(any(Location.class));
+        verify(finder,times(5)).findPath(any(Location.class));
+        navigator.move(npc,destination(),2.4,116,2);
+        verify(finder,times(6)).findPath(any(Location.class));
     }
 
     @Test void unloadedDestinationNeverRequestsPaperPathOrReadsItsBlocks() {
@@ -132,6 +131,67 @@ class RoutineNavigatorTest {
         verify(world, never()).getChunkAt(anyInt(), anyInt());
     }
 
+    private void doorway(org.bukkit.block.data.type.Door data) {
+        when(world.getBlockAt(anyInt(),anyInt(),anyInt())).thenAnswer(call->{
+            int x=call.getArgument(0),y=call.getArgument(1),z=call.getArgument(2);
+            Block block=mock(Block.class);boolean floor=y==63,door=x==1 && z==0 && (y==64 || y==65);
+            when(block.getType()).thenReturn(door?Material.OAK_DOOR:floor?Material.STONE:Material.AIR);
+            when(block.isPassable()).thenReturn(!floor && !door);
+            when(block.getBlockData()).thenReturn(door?data:null);
+            when(block.getBoundingBox()).thenAnswer(ignored->door
+                    ?new BoundingBox(x,y,z,x+1,y+1,z+(data.isOpen()?.1875:1))
+                    :floor?new BoundingBox(x,y,z,x+1,y+1,z+1):new BoundingBox(x,y,z,x,y,z));
+            return block;
+        });
+    }
+
+    @Test void aDeniedClosedDoorUsesABudgetedPaperDetourWithoutOpeningIt() {
+        ActiveNpc npc=npc("protected");var data=mock(org.bukkit.block.data.type.Door.class);
+        doorway(data);DoorController protectedDoors=mock(DoorController.class);
+        when(protectedDoors.openNear(any(),any(),anyLong())).thenReturn(true);
+        navigator=new RoutineNavigator(protectedDoors,(active,to)->{positions.put(active.definition().id(),to.clone());return true;});
+        Pathfinder finder=pathfinders.get("protected");var blocked=mock(Pathfinder.PathResult.class);
+        when(blocked.getPoints()).thenReturn(List.of(new Location(world,0,64,0),new Location(world,1,64,0),new Location(world,2,64,0)));
+        when(blocked.canReachFinalPoint()).thenReturn(true);
+        var detour=mock(Pathfinder.PathResult.class);
+        when(detour.getPoints()).thenReturn(List.of(new Location(world,0,64,0),new Location(world,0,64,1),
+                new Location(world,1,64,1),new Location(world,2,64,1),new Location(world,2,64,0)));
+        when(detour.canReachFinalPoint()).thenReturn(true);
+        boolean[] canOpen={true};
+        doAnswer(call->{canOpen[0]=call.getArgument(0);return null;}).when(finder).setCanOpenDoors(anyBoolean());
+        when(finder.findPath(any(Location.class))).thenAnswer(call->canOpen[0]?blocked:detour);
+        Location goal=new Location(world,2.5,64,.5);
+        navigator.beginTick(0,1,Long.MAX_VALUE);
+        assertEquals(RoutineNavigator.Result.WAITING,navigator.move(npc,goal,2.4,0,2));
+        navigator.move(npc,goal,2.4,0,2);
+        verify(finder,times(1)).findPath(any(Location.class));
+        RoutineNavigator.Result result=RoutineNavigator.Result.WAITING;
+        for(int tick=2;tick<120 && result!=RoutineNavigator.Result.ARRIVED;tick+=2)
+            result=navigator.move(npc,goal,2.4,tick,2);
+        assertEquals(RoutineNavigator.Result.ARRIVED,result);
+        assertTrue(positions.get("protected").distance(goal)<.159);
+        verify(finder,times(2)).findPath(any(Location.class));
+        verify(finder).setCanOpenDoors(false);verify(data,never()).setOpen(anyBoolean());
+        verify(npc.entity(),never()).setAI(anyBoolean());
+    }
+
+    @Test void anAuthorizedDoorKeepsTheOrdinaryNativeSearch() {
+        ActiveNpc npc=npc("allowed");var data=mock(org.bukkit.block.data.type.Door.class);
+        boolean[] open={false};when(data.isOpen()).thenAnswer(call->open[0]);doorway(data);
+        DoorController allowedDoors=mock(DoorController.class);when(allowedDoors.canOpen(any())).thenReturn(true);
+        when(allowedDoors.openNear(any(),any(),anyLong())).thenAnswer(call->{open[0]=true;return true;});
+        navigator=new RoutineNavigator(allowedDoors,(active,to)->{positions.put(active.definition().id(),to.clone());return true;});
+        Pathfinder finder=pathfinders.get("allowed");var path=mock(Pathfinder.PathResult.class);
+        when(path.getPoints()).thenReturn(List.of(new Location(world,0,64,0),new Location(world,1,64,0),new Location(world,2,64,0)));
+        when(path.canReachFinalPoint()).thenReturn(true);when(finder.findPath(any(Location.class))).thenReturn(path);
+        RoutineNavigator.Result result=RoutineNavigator.Result.MOVING;
+        for(int tick=0;tick<80 && result!=RoutineNavigator.Result.ARRIVED;tick+=2)
+            result=navigator.move(npc,new Location(world,2.5,64,.5),2.4,tick,2);
+        assertEquals(RoutineNavigator.Result.ARRIVED,result);
+        verify(finder,times(1)).findPath(any(Location.class));verify(finder,never()).setCanOpenDoors(false);
+        assertTrue(open[0]);
+    }
+
 
     @Test void differentFloorPartialPathIsWidenedInsteadOfWalkingUnderTheGoal() {
         ActiveNpc npc=npc("upstairs");
@@ -146,16 +206,25 @@ class RoutineNavigatorTest {
 
         assertEquals(RoutineNavigator.Result.WAITING,navigator.move(npc,upstairs,2.4,0,2));
         assertEquals(new Location(world,.5,64,.5),positions.get("upstairs"));
-        verify(range).setBaseValue(32.0);
+        verify(range).setBaseValue(16.0);
 
         assertEquals(RoutineNavigator.Result.WAITING,navigator.move(npc,upstairs,2.4,4,2));
-        assertEquals(new Location(world,.5,64,.5),positions.get("upstairs"));
-        verify(range,atLeastOnce()).setBaseValue(48.0);
-
+        verify(range).setBaseValue(24.0);
         assertEquals(RoutineNavigator.Result.WAITING,navigator.move(npc,upstairs,2.4,8,2));
-        assertEquals(new Location(world,.5,64,.5),positions.get("upstairs"));
+        verify(range).setBaseValue(32.0);
+        assertEquals(RoutineNavigator.Result.WAITING,navigator.move(npc,upstairs,2.4,12,2));
+        // 48 is also the restored prior value; distinguish query from restoration below.
+        verify(range,atLeastOnce()).setBaseValue(48.0);
+        assertEquals(RoutineNavigator.Result.WAITING,navigator.move(npc,upstairs,2.4,16,2));
         verify(range).setBaseValue(64.0);
+        assertEquals(new Location(world,.5,64,.5),positions.get("upstairs"));
         assertTrue(navigator.exhausted("upstairs"),"at max range the vertical dead-end must be rejected, not walked into");
+        var calls=inOrder(range,pathfinders.get("upstairs"));
+        for(double requested:new double[]{16,24,32,48,64}) {
+            calls.verify(range).setBaseValue(requested);
+            calls.verify(pathfinders.get("upstairs")).findPath(any(Location.class));
+            calls.verify(range).setBaseValue(48.0);
+        }
     }
 
     @Test void nativeSearchRangeIsBoundedAndRestoredAfterTheQuery() {

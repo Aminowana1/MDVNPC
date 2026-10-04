@@ -22,6 +22,7 @@ public final class RoutineService {
     private final DoorController doors;
     private final RoutineVisuals visuals;
     private final RoutineLook looks;
+    private final RoutineGravity gravity;
     private RoutineNavigator navigator;
     private DanceController dancers;
     private final RoutineChoices choices=new RoutineChoices();
@@ -38,6 +39,7 @@ public final class RoutineService {
     private UUID internalEntity;
     private boolean mounting;
     private final Map<String,State> states=new HashMap<>();
+    private final Map<String,StaticFloorState> staticFloors=new HashMap<>();
     private final Map<RoutineGoal.Point,String> occupied=new HashMap<>();
     private final Set<String> failed=new HashSet<>();
     private record DialogueKey(String npc,int goal,UUID player) {}
@@ -46,16 +48,26 @@ public final class RoutineService {
     private static final class UnavailableState { long due; int nextLine; }
     private final Map<DialogueKey,DialogueState> dialogueStates=new HashMap<>();
     private final Map<UnavailableKey,UnavailableState> unavailableStates=new HashMap<>();
+    private static final class StaticFloorState {
+        final ActiveNpc npc;
+        final RoutineGravity.State gravity=new RoutineGravity.State();
+        long nextPresence,nextUpdate;
+        boolean observed;
+        StaticFloorState(ActiveNpc npc){this.npc=npc;}
+    }
     private static final class State {
         ActiveNpc npc; RoutineSchedule.Window window,recoveryWindow; int chain,point; RoutineGoal goal;
         RoutineGoal.Point destination; Location approach; RoutineVisuals.Pose pose;
         boolean working,paused,dancing,returningFromDance,recoveryDone;
+        boolean recoveringFloor;
+        Location travelProgress;
         long nextPick, travelSince, nextPresence, nextDialogue, nextPoseCheck, nextDanceCheck, nextUpdate,nextReturnCheck,returnWaitingSince,nextRecoveryCheck;
         int returnDoorway,returnFailedDoorways;
         final Map<RoutineGoal.Point,Long> blockedDanceSeats=new HashMap<>();
         List<Location> approachOptions=List.of(); int approachIndex;
         int lastMinute=-1; String status="esperando";
         final RoutineLook.State look=new RoutineLook.State();
+        final RoutineGravity.State gravity=new RoutineGravity.State();
     }
     public RoutineService(MdvNpcPlugin plugin) throws Exception {
         this(plugin,null);
@@ -64,6 +76,7 @@ public final class RoutineService {
         this.plugin=plugin; repository=new RoutineRepository(plugin.getDataFolder().toPath());
         clocks=new WorldClockManager(plugin); doors=new DoorController(plugin);
         visuals=suppliedVisuals==null?new RoutineVisuals(plugin,this::teleport):suppliedVisuals;looks=new RoutineLook(plugin);
+        gravity=new RoutineGravity(doors,this::teleport);
     }
     public RoutineRepository repository() { return repository; }
     public void start() {
@@ -84,7 +97,7 @@ public final class RoutineService {
         for(String id:List.copyOf(states.keySet())) remove(id);
         if(navigator!=null) navigator.clear(); doors.close();
         if(dancers!=null)dancers.clear();choices.clear();windows.clear();
-        dialogueStates.clear(); unavailableStates.clear();
+        dialogueStates.clear(); unavailableStates.clear();staticFloors.clear();
     }
     public void close() { stop(); clocks.close(); }
     public void worldLoaded() { clocks.sync(); }
@@ -217,8 +230,10 @@ public final class RoutineService {
         if(s.destination!=null) occupied.remove(key(s.destination),s.npc.definition().id());
         s.destination=null;s.approach=null;s.approachOptions=List.of();s.approachIndex=0; navigator.cancel(s.npc.definition().id());
         s.returningFromDance=false;s.nextReturnCheck=0;s.returnWaitingSince=0;s.returnDoorway=0;s.returnFailedDoorways=0;
+        s.recoveringFloor=false;s.travelProgress=null;gravity.reset(s.gravity);
     }
     public void remove(String id) {
+        staticFloors.remove(id);
         State s=states.remove(id); if(s!=null) release(s,false);
         clearGoalDialogue(id);
         unavailableStates.keySet().removeIf(k->k.npc().equals(id));
@@ -229,7 +244,18 @@ public final class RoutineService {
         var manager=plugin.manager(); if(manager==null) return;
         navigator.beginTick(ticks,pathStarts,2_000_000);
         for(ActiveNpc npc:manager.activeNpcs()) {
-            String id=npc.definition().id(); if(!enabled(id) || failed.contains(id) || !npc.entity().isValid()) continue;
+            String id=npc.definition().id();
+            if(!npc.entity().isValid()){staticFloors.remove(id);continue;}
+            if(failed.contains(id))continue;
+            if(!enabled(id)) {
+                try{updateStaticFloor(npc);}
+                catch(RuntimeException ex) {
+                    failed.add(id);staticFloors.remove(id);
+                    plugin.getLogger().log(java.util.logging.Level.SEVERE,"Recuperación de suelo pausada por error: "+id+". Corrige y usa /mdvnpc reload",ex);
+                }
+                continue;
+            }
+            staticFloors.remove(id);
             State previous=states.get(id);
             int minute=RoutineSchedule.minute(npc.entity().getWorld().getFullTime());
             if(previous!=null && ticks<previous.nextUpdate && ticks<previous.nextPresence && previous.lastMinute==minute)continue;
@@ -249,6 +275,25 @@ public final class RoutineService {
             doors.tick(ticks,false); if(plugin.routineCommands()!=null)plugin.routineCommands().prune();
             long now=System.nanoTime(); dialogueStates.values().removeIf(v->now>=v.due && now-v.lastSeen>60_000_000_000L);
         }
+    }
+    /** Static NPCs share the floor helper without creating a routine, pose, or job state. */
+    private void updateStaticFloor(ActiveNpc npc) {
+        String id=npc.definition().id();StaticFloorState s=staticFloors.get(id);
+        if(s==null || s.npc!=npc){s=new StaticFloorState(npc);staticFloors.put(id,s);}
+        if(ticks<s.nextUpdate && ticks<s.nextPresence)return;
+        State held=states.get(id);
+        if(npc.entity().isInsideVehicle() || held!=null && held.npc==npc && (held.pose!=null || held.dancing)
+                || plugin.reactions()!=null && plugin.reactions().busy(id)
+                || plugin.traits()!=null && plugin.traits().busy(id)) {
+            gravity.reset(s.gravity);s.nextUpdate=ticks+20;s.nextPresence=Math.max(s.nextPresence,ticks+20);return;
+        }
+        if(ticks>=s.nextPresence) {
+            s.nextPresence=ticks+20;
+            s.observed=!npc.position().getWorld().getNearbyPlayers(npc.position(),activationRange,p->!p.isDead()).isEmpty();
+        }
+        if(!s.observed){gravity.reset(s.gravity);s.nextUpdate=ticks+20;return;}
+        RoutineGravity.Result result=gravity.tick(npc,s.gravity,ticks,cadence);
+        s.nextUpdate=result==RoutineGravity.Result.FALLING?ticks+cadence:Math.min(ticks+20,s.gravity.nextCheck);
     }
     private void update(ActiveNpc npc) {
         String id=npc.definition().id(); State s=states.computeIfAbsent(id,k -> {State n=new State(); n.npc=npc;return n;});
@@ -314,7 +359,10 @@ public final class RoutineService {
         position=npc.position();
         var w=window(id,position.getWorld());
         if(!same(s.window,w)) { release(s,true); s.window=w; s.chain=0; s.point=0; s.goal=null; s.nextPick=0; }
-        if(w==null || s.chain>=w.chain().size()) { s.status="fuera de horario / secuencia terminada"; return; }
+        if(w==null || s.chain>=w.chain().size()) {
+            if(recoverFloor(s))return;
+            s.status="fuera de horario / secuencia terminada";return;
+        }
         RoutineGoal goal=choices.select(id,w,w.chain().get(s.chain),ThreadLocalRandom.current());
         if(s.goal!=goal) {
             // Cada entrada a un goal comienza su propio intervalo/demora inicial. Sin esto,
@@ -322,16 +370,18 @@ public final class RoutineService {
             clearGoalDialogue(id);
             s.goal=goal; s.point=0; s.nextDialogue=0;s.blockedDanceSeats.clear();
         }
-        if(plugin.reactions()!=null && plugin.reactions().busy(id)){s.status="enfadado: mirando al jugador";s.travelSince=ticks;return;}
-        if(plugin.traits()!=null && plugin.traits().busy(id)) {s.status="bebiendo cerveza ofrecida";s.travelSince=ticks;return;}
+        if(plugin.reactions()!=null && plugin.reactions().busy(id)){gravity.reset(s.gravity);s.status="enfadado: mirando al jugador";s.travelSince=ticks;return;}
+        if(plugin.traits()!=null && plugin.traits().busy(id)) {gravity.reset(s.gravity);s.status="bebiendo cerveza ofrecida";s.travelSince=ticks;return;}
         if(ticks>=s.nextDialogue) { s.nextDialogue=ticks+20; updateDialogue(npc,goal,System.nanoTime()); }
         if(s.dancing) {
+            gravity.reset(s.gravity);
             var dance=dancers.tick(npc,ticks,cadence,goal.speed());
             if(dance!=DanceController.Result.FINISHED) {s.status=dance==DanceController.Result.DANCING?"bailando junto a músicos":"acercándose a los músicos";return;}
             endDance(s);s.nextPick=0;
             position=npc.position();
         }
         if(s.pose!=null) {
+            gravity.reset(s.gravity);
             if(!validFurniture(goal,s.destination,position.getWorld())) {
                 release(s,true);s.nextPick=ticks+100;return;
             }
@@ -357,6 +407,12 @@ public final class RoutineService {
             if(!s.pose.sleeping)looks.tick(npc,s.look,ticks,s.pose.bodyYaw,true,s.pose.reading,s.pose.mealUntil>ticks);
             return;
         }
+        // Native route replay owns lifted stair frames. Check ordinary walkers only after
+        // WAITING below; idle workers and an already falling NPC have no active stair step.
+        if(s.working || s.recoveringFloor || s.gravity.falling()) {
+            if(recoverFloor(s))return;
+            position=npc.position();
+        }
         if(s.working) {
             if(!npc.definition().mode().musician() || s.approach!=null && position.getWorld()==s.approach.getWorld()
                     && position.distanceSquared(s.approach)<.36) {s.status="trabajando";return;}
@@ -364,7 +420,7 @@ public final class RoutineService {
             // work goal and post, then use the same bounded route to rejoin on arrival.
             s.working=false;if(plugin.music()!=null)plugin.music().remove(id);
             looks.clear(npc,s.look);navigator.cancel(id);
-            s.travelSince=ticks;s.nextUpdate=ticks+cadence;
+            resetTravelProgress(s,position);s.nextUpdate=ticks+cadence;
         }
         if(s.returningFromDance && ticks>=s.nextReturnCheck) {
             s.nextReturnCheck=ticks+100;
@@ -397,7 +453,7 @@ public final class RoutineService {
             s.approachIndex=0;
             if(s.approachOptions.isEmpty()) {s.destination=null;s.status="destino descargado o sin acceso";return;}
             s.approach=s.approachOptions.getFirst();
-            s.travelSince=ticks;
+            resetTravelProgress(s,position);
             if(furniture) occupied.put(key(s.destination),id);
         }
         Location beforeMove=npc.position();
@@ -405,12 +461,12 @@ public final class RoutineService {
         // recovers a return that ends a few centimetres short without a visible long teleport.
         var result=s.returningFromDance && readyToSit(npc,s.approach)
                 ?RoutineNavigator.Result.ARRIVED:navigator.move(npc,s.approach,goal.speed(),ticks,cadence);
-        boolean progressed=npc.position().distanceSquared(beforeMove)>.0001;
-        if(progressed)s.travelSince=ticks; // timeout measures lack of progress, not total trip duration.
+        boolean progressed=travelProgress(s,beforeMove,npc.position(),result);
+        if(result==RoutineNavigator.Result.WAITING && recoverFloor(s))return;
         if(!s.returningFromDance && result==RoutineNavigator.Result.WAITING && navigator.exhausted(id)
                 && (goal.type()==RoutineGoal.Type.SIT || goal.type()==RoutineGoal.Type.SLEEP)) {
             if(++s.approachIndex<s.approachOptions.size()) {
-                s.approach=s.approachOptions.get(s.approachIndex);navigator.cancel(id);s.travelSince=ticks;
+                s.approach=s.approachOptions.get(s.approachIndex);navigator.cancel(id);resetTravelProgress(s,npc.position());
                 s.status="acceso sin ruta; probando otro lado";return;
             }
             release(s,true);s.nextPick=ticks+100;s.status="destino sin ningún acceso alcanzable";return;
@@ -477,6 +533,58 @@ public final class RoutineService {
             }
         }
     }
+    private void resetTravelProgress(State s,Location at) {
+        s.travelSince=ticks;s.travelProgress=at.clone();
+    }
+    private boolean travelProgress(State s,Location before,Location after,RoutineNavigator.Result result) {
+        if(s.travelProgress==null || s.travelProgress.getWorld()!=after.getWorld())s.travelProgress=before.clone();
+        // Aggregate small legal steps. No-op teleports and bounded sub-centimetre jitter
+        // cannot refresh the timeout; the navigator also bounds repeating partial routes.
+        if(result==RoutineNavigator.Result.WAITING || before.distanceSquared(after)<1e-12
+                || s.travelProgress.distanceSquared(after)<.0025)return false;
+        resetTravelProgress(s,after);return true;
+    }
+    /** Returns true while floor recovery owns this update; reservations remain unchanged. */
+    private boolean recoverFloor(State s) {
+        ActiveNpc npc=s.npc;String id=npc.definition().id();
+        if(s.pose!=null || s.dancing || npc.entity().isInsideVehicle()
+                || plugin.reactions()!=null && plugin.reactions().busy(id)
+                || plugin.traits()!=null && plugin.traits().busy(id)
+                || navigator.controlsVerticalStep(id)) {
+            gravity.reset(s.gravity);return false;
+        }
+        RoutineGravity.Result result=gravity.tick(npc,s.gravity,ticks,cadence);
+        if(result!=RoutineGravity.Result.STABLE) {
+            if(!s.recoveringFloor) {
+                s.recoveringFloor=true;navigator.cancel(id);looks.clear(npc,s.look);
+                if(s.working) {
+                    s.working=false;plugin.shops().invalidateNpc(id);
+                    if(plugin.music()!=null)plugin.music().remove(id);
+                }
+                resetTravelProgress(s,npc.position());
+            }
+            s.nextUpdate=ticks+(result==RoutineGravity.Result.FALLING?cadence:20);
+            s.status=result==RoutineGravity.Result.FALLING?"cayendo al perder el suelo":"esperando suelo seguro";
+            return true;
+        }
+        if(!s.recoveringFloor)return false;
+        s.recoveringFloor=false;Location position=npc.position();resetTravelProgress(s,position);
+        navigator.cancel(id);s.nextUpdate=ticks+cadence;
+        if(s.destination!=null && s.goal!=null) {
+            RoutineTerrain terrain=new RoutineTerrain(position.getWorld(),doors);
+            boolean furniture=s.goal.type()==RoutineGoal.Type.SIT || s.goal.type()==RoutineGoal.Type.SLEEP;
+            s.approachOptions=terrain.approaches(s.destination,furniture).stream().map(terrain::location)
+                    .sorted(java.util.Comparator.comparingDouble(position::distanceSquared)).map(location->{
+                        Location value=location.clone();value.setYaw(s.destination.yaw());return value;
+                    }).toList();
+            s.approachIndex=0;
+            if(s.approachOptions.isEmpty()) {
+                release(s,false);s.nextPick=ticks+100;s.status="destino sin suelo seguro";return true;
+            }
+            s.approach=s.approachOptions.getFirst();
+        }
+        return false;
+    }
     private boolean restoreSeat(State state,boolean force) {
         UUID previous=internalEntity;boolean priorMounting=mounting;
         internalEntity=state.npc.entity().getUniqueId();mounting=true;
@@ -489,7 +597,7 @@ public final class RoutineService {
         s.dancing=false;s.returningFromDance=s.goal!=null && s.goal.type()==RoutineGoal.Type.SIT
                 && s.destination!=null && s.approach!=null;
         s.nextDanceCheck=Long.MAX_VALUE;s.nextReturnCheck=0;s.returnWaitingSince=0;s.returnDoorway=0;s.returnFailedDoorways=0;
-        s.nextUpdate=0;s.travelSince=ticks;
+        s.nextUpdate=0;resetTravelProgress(s,s.npc.position());
     }
     private Location returnApproach(RoutineGoal.Point point,Location from,int attempt) {
         var terrain=new RoutineTerrain(from.getWorld(),doors);

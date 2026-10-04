@@ -1,4 +1,18 @@
-# MDVNPC 1.11.3
+# MDVNPC 1.11.7
+
+Corrige las subidas que quedaban oscilando antes de entrar en stairs, slabs,
+alfombras y bloques. El cálculo sigue a cargo de Paper, empieza con alcance 16
+y amplía hasta 64 cuando un rodeo o atasco lo necesita. La ejecución comprueba
+muros y vallas que sobresalen desde debajo de los pies y detecta ciclos de rutas
+parciales. Los viajes lentos mantienen el progreso; la llegada a WORK conserva
+las reglas existentes de atención y de regreso de los músicos a su puesto.
+
+Se incorpora recuperación controlada al desaparecer el suelo, conservando la IA
+desactivada y las poses de cama y silla. Los vóxeles se reutilizan únicamente
+durante una actualización, con estado fresco de bloques y puertas.
+Consulta [la guía de esta entrega](GUIA-1.11.7.md).
+
+## Actualización 1.11.3
 
 El pathfinding de rutinas ahora amplía la búsqueda de Paper sólo cuando hace falta
 (16 → 24 → 32), acepta rodeos que temporalmente se alejan del objetivo y detecta

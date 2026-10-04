@@ -6,6 +6,8 @@ import com.mdvcraft.mdvnpc.runtime.ActiveNpc;
 import org.bukkit.Location;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
+import org.bukkit.block.Block;
+import org.bukkit.block.data.type.Door;
 import org.bukkit.entity.Entity;
 import org.bukkit.util.Vector;
 import java.lang.reflect.Method;
@@ -18,26 +20,22 @@ import java.util.function.BiPredicate;
  */
 public final class RoutineNavigator {
     public enum Result { MOVING, ARRIVED, WAITING }
-    private enum SearchFailure { NONE, NO_ROUTE, CHUNK }
+    private enum SearchFailure { NONE, NO_ROUTE, CHUNK, DENIED_DOOR }
     private static final int[] PAPER_SEARCH_RANGES = {16, 24, 32, 48, 64};
     private static final int MAX_PATH_POINTS = 2048;
     private static final int LOCAL_RETRY_TICKS = 4, PARTIAL_RETRY_TICKS = 4,
             CHUNK_RETRY_TICKS = 20, IMPOSSIBLE_RETRY_TICKS = 100;
     private static final int STUCK_TICKS = 36;
+    private static final int PARTIAL_ENDPOINT_HISTORY = 12;
     private static final double PROGRESS_DISTANCE_SQUARED = .15 * .15;
-    /** Partial-height floors (dirt path, mud, carpet, snow layers) may differ from Paper's
-     * raw waypoint Y by a few centimetres. Never require exact 3D coincidence to advance. */
-    private static final double WAYPOINT_HORIZONTAL_SQUARED = .11 * .11;
-    private static final double WAYPOINT_VERTICAL_TOLERANCE = .20;
+    private static final double GOAL_PROGRESS_DISTANCE = .15;
+    private static final double MOVEMENT_EPSILON_SQUARED = 1e-12;
     private static final double GROUND_EPSILON = .015;
     private static final double MAX_STEP_HEIGHT = 1.01;
-    private static final double FORWARD_RISER_PROBE = .30;
     /** If a partial route finishes almost below/above the destination, following it only
      * makes the NPC hug the wall/floor. Widen first so Paper can discover stairs/ramps/doors. */
     private static final double VERTICAL_SHADOW_HORIZONTAL_SQUARED = 4.5 * 4.5;
     private static final double VERTICAL_SHADOW_MIN_Y = .75;
-    private static final double MULTI_FLOOR_START_HORIZONTAL_SQUARED = 8.0 * 8.0;
-    private static final double MULTI_FLOOR_START_MIN_Y = 1.25;
     private final DoorController doors;
     private final BiPredicate<ActiveNpc, Location> teleport;
     private final Map<String, Travel> travels = new LinkedHashMap<>();
@@ -59,23 +57,26 @@ public final class RoutineNavigator {
         boolean pathReachesFinal;
         int searchLevel;
         int minimumSearchLevel;
-        int maxSearchLevel = 2; // 32 blocks for ordinary same-floor movement.
+        final int maxSearchLevel = PAPER_SEARCH_RANGES.length - 1;
         int localFailures;
         boolean exhausted;
-        Location lastPartialEndpoint;
+        boolean avoidClosedDoors;
+        final Deque<Location> partialEndpoints = new ArrayDeque<>();
+        double bestGoalDistance;
+        double segmentStartBest;
+        int segmentsWithoutGoalProgress;
+        Location riserWaypoint;
+        double riserHeight = Double.NaN;
+        Location lastCommandPosition;
         Location lastProgressPosition;
         long lastProgressTick;
         Travel(ActiveNpc npc, Location destination, DoorController doors, Location start, long tick) {
             this.npc = npc; this.destination = destination.clone();
             terrain = new RoutineTerrain(destination.getWorld(), doors);
-            // A destination on another floor often requires walking away from its X/Z first
-            // to reach stairs or the only doorway. Start those searches wider and never shrink
-            // them back to the cheap 16-block radius during the same trip.
-            if (multiFloor(start, destination)) {
-                maxSearchLevel = PAPER_SEARCH_RANGES.length - 1;
-                searchLevel = Math.min(2, maxSearchLevel);
-                minimumSearchLevel = searchLevel;
-            }
+            // The only entrance or staircase can require a detour on any floor. Every trip
+            // starts cheaply at 16, widening only after an unsuccessful or stagnant segment.
+            bestGoalDistance = start.distance(destination);
+            lastCommandPosition = start.clone();
             lastProgressPosition = start.clone(); lastProgressTick = tick;
         }
     }
@@ -111,13 +112,28 @@ public final class RoutineNavigator {
                 || travel.destination.distanceSquared(destination) > .01) {
             cancel(id); travel = new Travel(npc, destination, doors, current, tick); travels.put(id, travel);
         }
-        observeProgress(travel,current,tick);
-        if (multiFloor(current, travel.destination)) {
-            travel.maxSearchLevel = PAPER_SEARCH_RANGES.length - 1;
-            int floorLevel = Math.min(2, travel.maxSearchLevel);
-            travel.minimumSearchLevel = Math.max(travel.minimumSearchLevel, floorLevel);
-            travel.searchLevel = Math.max(travel.searchLevel, travel.minimumSearchLevel);
+        try (RoutineTerrain.Update ignored = travel.terrain.beginUpdate()) {
+            return advance(travel, current, speed, tick, cadence);
         }
+    }
+
+    private Result advance(Travel travel, Location current, double speed, long tick, int cadence) {
+        ActiveNpc npc = travel.npc;
+        Location destination = travel.destination;
+        // An external teleport/push invalidates the route's starting assumptions. Re-query
+        // from the new feet position instead of walking back through old waypoints.
+        if (current.distanceSquared(travel.lastCommandPosition) > .25) {
+            travel.path = null; travel.pending = true; travel.retry = tick;
+            travel.partialEndpoints.clear(); travel.segmentsWithoutGoalProgress = 0;
+            travel.searchLevel = 0; travel.minimumSearchLevel = 0;
+            travel.avoidClosedDoors = false;
+            travel.riserWaypoint = null; travel.riserHeight = Double.NaN;
+            travel.bestGoalDistance = current.distance(destination);
+            travel.lastCommandPosition = current.clone();
+            travel.lastProgressPosition = current.clone(); travel.lastProgressTick = tick;
+            travel.localFailures = 0; travel.exhausted = false;
+        }
+        observeProgress(travel,current,tick);
         if (travel.path != null && tick-travel.lastProgressTick >= STUCK_TICKS) {
             localFailure(travel,tick); return Result.WAITING;
         }
@@ -134,11 +150,13 @@ public final class RoutineNavigator {
                 Location start = prepareStart(travel, current, tick, speed, cadence);
                 if (start == null) { localFailure(travel, tick); return Result.WAITING; }
                 // Settling onto a nearby verified floor follows the same speed limit as walking.
-                if (current.distanceSquared(start) > .0001) return Result.MOVING;
+                if (current.distanceSquared(start) > MOVEMENT_EPSILON_SQUARED) return Result.MOVING;
                 current = start;
                 SearchOutcome outcome = findPaperPath(travel, start);
                 if (outcome.plan() == null) {
                     if (outcome.failure() == SearchFailure.CHUNK) chunkFailure(travel,tick);
+                    else if (outcome.failure() == SearchFailure.DENIED_DOOR && !travel.avoidClosedDoors)
+                        avoidClosedDoors(travel,tick,cadence);
                     else noRouteFailure(travel,tick);
                     return Result.WAITING;
                 }
@@ -147,17 +165,21 @@ public final class RoutineNavigator {
                 if (!plan.reachesFinal() && endpointMovement < .04) {
                     noRouteFailure(travel,tick); return Result.WAITING;
                 }
+                if (!plan.reachesFinal() && repeatsStagnantEndpoint(travel, plan.endpoint())) {
+                    noRouteFailure(travel, tick);
+                    travel.minimumSearchLevel = Math.max(travel.minimumSearchLevel, travel.searchLevel);
+                    return Result.WAITING;
+                }
                 // Do not walk into the vertical "shadow" of a bed/workstation on another floor.
                 // A short-range partial path commonly ends against the wall directly below/above
                 // the goal. Re-run Paper with a wider FOLLOW_RANGE until it can see the actual
                 // stairs/ramp/door detour. At maximum range, reject the dead-end instead of
                 // oscillating a couple of blocks forever.
-                if (!plan.reachesFinal() && verticalShadow(plan.endpoint(), travel.destination)) {
-                    travel.maxSearchLevel = PAPER_SEARCH_RANGES.length - 1;
+                if (!plan.reachesFinal() && verticalShadow(plan.endpoint(), travel.destination)
+                        && !usefulFloorProgress(start,plan.endpoint(),travel.destination)) {
                     if (travel.searchLevel < travel.maxSearchLevel) {
                         travel.searchLevel++;
                         travel.minimumSearchLevel = Math.max(travel.minimumSearchLevel, travel.searchLevel);
-                        travel.lastPartialEndpoint = plan.endpoint().clone();
                         travel.path = null; travel.pending = true; travel.exhausted = false;
                         travel.retry = tick + LOCAL_RETRY_TICKS;
                     } else {
@@ -167,23 +189,30 @@ public final class RoutineNavigator {
                 }
                 travel.path = plan.points(); travel.pathReachesFinal=plan.reachesFinal();
                 travel.index = 0; travel.pending = false; travel.exhausted=false;
+                travel.segmentStartBest = travel.bestGoalDistance;
+                travel.lastProgressPosition = current.clone(); travel.lastProgressTick = tick;
+                travel.riserWaypoint = null; travel.riserHeight = Double.NaN;
                 tuneNextSearch(travel,start,plan);
             } finally {
                 spentNanos += System.nanoTime() - started;
             }
         }
         while (travel.index < travel.path.size()
-                && reachedWaypoint(current, travel.path.get(travel.index))) travel.index++;
+                && current.distanceSquared(travel.path.get(travel.index)) < .01) travel.index++;
         if (travel.index >= travel.path.size()) {
             // A partial path is a valid segment of a long trip. Re-query from its endpoint;
             // the search level may already have widened if that segment represented a detour.
+            if (!travel.pathReachesFinal) rememberPartialEndpoint(travel);
+            travel.riserWaypoint = null; travel.riserHeight = Double.NaN;
             travel.path = null; travel.pending = true; travel.retry = tick + PARTIAL_RETRY_TICKS;
             return Result.WAITING;
         }
         Location next = travel.path.get(travel.index);
         Node nextFloor = new Node(next.getBlockX(), (int)Math.ceil(next.getY() - .02), next.getBlockZ());
         if (!travel.terrain.stand(nextFloor) || Math.abs(travel.terrain.height(nextFloor) - next.getY()) > .08) {
-            localFailure(travel, tick); return Result.WAITING;
+            if (!travel.avoidClosedDoors && deniedClosedDoor(travel,next)) avoidClosedDoors(travel,tick,cadence);
+            else localFailure(travel, tick);
+            return Result.WAITING;
         }
         double distance = Math.max(.01, speed) * Math.max(1, cadence) / 20.0;
         Location step = walkingStep(travel,current,next,distance,tick);
@@ -191,11 +220,17 @@ public final class RoutineNavigator {
         Vector delta = step.toVector().subtract(current.toVector());
         if (Math.abs(delta.getX()) + Math.abs(delta.getZ()) > .001)
             step.setDirection(new Vector(delta.getX(), 0, delta.getZ()));
-        if (!teleport.test(npc, step)) { localFailure(travel, tick); return Result.WAITING; }
+        if (!applyStep(travel, current, step)) { localFailure(travel, tick); return Result.WAITING; }
         return Result.MOVING;
     }
 
     private void observeProgress(Travel travel,Location current,long tick) {
+        double goalDistance = current.distance(travel.destination);
+        if (goalDistance < travel.bestGoalDistance - GOAL_PROGRESS_DISTANCE) {
+            travel.bestGoalDistance = goalDistance;
+            travel.partialEndpoints.clear(); travel.segmentsWithoutGoalProgress = 0;
+            travel.minimumSearchLevel = 0;
+        }
         if(travel.lastProgressPosition==null) {
             travel.lastProgressPosition=current.clone();travel.lastProgressTick=tick;return;
         }
@@ -205,10 +240,38 @@ public final class RoutineNavigator {
         }
     }
 
+    private boolean repeatsStagnantEndpoint(Travel travel, Location endpoint) {
+        if (endpoint.distance(travel.destination) < travel.bestGoalDistance - GOAL_PROGRESS_DISTANCE) return false;
+        for (Location prior : travel.partialEndpoints) if (prior.distanceSquared(endpoint) < .25) return true;
+        return false;
+    }
+
+    private void rememberPartialEndpoint(Travel travel) {
+        Location endpoint = travel.path.getLast();
+        if (travel.bestGoalDistance < travel.segmentStartBest - GOAL_PROGRESS_DISTANCE)
+            travel.segmentsWithoutGoalProgress = 0;
+        else travel.segmentsWithoutGoalProgress++;
+        if (travel.partialEndpoints.size() >= PARTIAL_ENDPOINT_HISTORY) travel.partialEndpoints.removeFirst();
+        travel.partialEndpoints.addLast(endpoint.clone());
+    }
+
+    /** A successful teleport event can still leave the entity in place. Count actual motion. */
+    private boolean applyStep(Travel travel, Location before, Location step) {
+        if (before.distanceSquared(step) <= MOVEMENT_EPSILON_SQUARED || !teleport.test(travel.npc, step)) return false;
+        Location actual = travel.npc.entity().getLocation();
+        if (actual.getWorld() != before.getWorld()
+                || actual.distanceSquared(before) <= MOVEMENT_EPSILON_SQUARED) return false;
+        travel.lastCommandPosition = actual.clone();
+        return true;
+    }
+
     /** Approach a riser from the last clear position. Descents happen only after the body
      * clears the upper ledge. A diagonal corner that is too tight gets a short X/Z slide
      * before the whole Paper route is discarded. */
     private Location walkingStep(Travel travel,Location current,Location next,double allowance,long tick) {
+        if (travel.riserWaypoint != next) {
+            travel.riserWaypoint = next; travel.riserHeight = Double.NaN;
+        }
         Location at=current.clone();
         int limit=(int)Math.ceil(allowance/.08)+20;
         for(int i=0;i<limit && allowance>1e-7;i++) {
@@ -224,25 +287,40 @@ public final class RoutineNavigator {
                 double ux=dx/horizontal,uz=dz/horizontal;
                 double support=travel.terrain.supportHeight(at.getX(),at.getY(),at.getZ());
                 if(!Double.isFinite(support))return null;
+                if (Double.isFinite(travel.riserHeight) && support >= travel.riserHeight - GROUND_EPSILON
+                        && at.getY() >= travel.riserHeight - GROUND_EPSILON) travel.riserHeight = Double.NaN;
 
-                // Inspect the physical riser at the leading edge first. Paper's intermediate
-                // waypoint may still have the lower Y on dirt paths/mud even though the 0.60-wide
-                // body is already about to touch the next full block. A narrow directional probe
-                // keeps side walls from being mistaken for stairs.
-                double probe=FORWARD_RISER_PROBE;
-                double forward=travel.terrain.supportHeight(at.getX()+ux*probe,at.getY(),at.getZ()+uz*probe,
-                        MAX_STEP_HEIGHT,.065);
-                if(Double.isFinite(forward) && forward>at.getY()+GROUND_EPSILON
-                        && forward<=at.getY()+MAX_STEP_HEIGHT) {
-                    Location up=at.clone().add(0,Math.min(forward-at.getY(),Math.min(.08,allowance)),0);
-                    if(walkable(travel,up,tick))candidate=up;
+                // Follow Paper's vertical intent for real descents. Keep walking at the old
+                // height until the complete body clears the previous ledge; only then lower.
+                if(next.getY()<at.getY()-GROUND_EPSILON && support<at.getY()-GROUND_EPSILON) {
+                    Location down=at.clone().add(0,-Math.min(at.getY()-Math.max(support,next.getY()),Math.min(.08,allowance)),0);
+                    if(walkable(travel,down,tick))candidate=down;
                 }
 
-                // If there is no climb in progress, settle onto the real support below the feet
-                // once the complete body has cleared the previous ledge. This deliberately does
-                // not depend on next.getY(): Paper can already have advanced to a later waypoint
-                // while the NPC is still floating 1/16 or 1/8 block above a partial-height floor.
-                if(candidate==null && support<at.getY()-GROUND_EPSILON && at.getY()-support<=MAX_STEP_HEIGHT) {
+                if(candidate==null && next.getY()>at.getY()+GROUND_EPSILON) {
+                    // Probe only in the direction of travel. Side walls touching the 0.60-wide
+                    // body are obstacles, not floors that should make the NPC climb.
+                    double probe=Math.min(horizontal,.34);
+                    double contact=travel.terrain.supportHeight(at.getX()+ux*probe,at.getY(),at.getZ()+uz*probe,
+                            Math.min(MAX_STEP_HEIGHT,Math.max(.05,next.getY()-at.getY()+.05)),.065);
+                    if(Double.isFinite(contact) && contact>at.getY()+GROUND_EPSILON && contact<=next.getY()+.08) {
+                        Location up=at.clone().add(0,Math.min(contact-at.getY(),Math.min(.08,allowance)),0);
+                        if(walkable(travel,up,tick)) {
+                            candidate=up;
+                            travel.riserHeight = contact;
+                        }
+                    }
+                }
+
+                // A dirt path/mud/carpet can leave the feet a few centimetres above the real
+                // support after Paper advances to the next waypoint. Settle locally, but if the
+                // old ledge still intersects the body, keep walking and retry after it is clear.
+                // Once lifted for a verified riser, transfer horizontally onto it before
+                // settling. The old lower floor otherwise undoes every ascent in this loop.
+                boolean crossingRiser = Double.isFinite(travel.riserHeight)
+                        && support < travel.riserHeight - GROUND_EPSILON;
+                if(candidate==null && !crossingRiser && support<at.getY()-GROUND_EPSILON
+                        && at.getY()-support<=MAX_STEP_HEIGHT) {
                     Location down=at.clone().add(0,-Math.min(at.getY()-support,Math.min(.08,allowance)),0);
                     if(walkable(travel,down,tick))candidate=down;
                 }
@@ -279,12 +357,6 @@ public final class RoutineNavigator {
     }
 
 
-    private static boolean reachedWaypoint(Location current,Location waypoint) {
-        double dx=current.getX()-waypoint.getX(),dz=current.getZ()-waypoint.getZ();
-        return dx*dx+dz*dz<=WAYPOINT_HORIZONTAL_SQUARED
-                && Math.abs(current.getY()-waypoint.getY())<=WAYPOINT_VERTICAL_TOLERANCE;
-    }
-
     private boolean supported(Travel travel,Location at) {
         return Double.isFinite(travel.terrain.supportHeight(at.getX(),at.getY(),at.getZ()));
     }
@@ -313,12 +385,12 @@ public final class RoutineNavigator {
             double y=current.getY()+(step.getY()-current.getY())*i/samples;
             if(!travel.terrain.fits(current.getX(),y,current.getZ(),false))return null;
         }
-        return teleport.test(travel.npc,step)?step:null;
+        return applyStep(travel,current,step)?travel.npc.entity().getLocation():null;
     }
 
     private SearchOutcome findPaperPath(Travel travel, Location current) {
         Pathfinder pathfinder = travel.npc.entity().getPathfinder();
-        pathfinder.setCanOpenDoors(true);
+        pathfinder.setCanOpenDoors(!travel.avoidClosedDoors);
         pathfinder.setCanPassDoors(true);
         pathfinder.setCanFloat(false);
         AttributeInstance range = travel.npc.entity().getAttribute(Attribute.FOLLOW_RANGE);
@@ -345,7 +417,8 @@ public final class RoutineNavigator {
             if (!travel.terrain.loaded(raw.getBlockX(), raw.getBlockZ())) return new SearchOutcome(null,SearchFailure.CHUNK);
             Location centered = new Location(current.getWorld(), raw.getBlockX() + .5, raw.getY(), raw.getBlockZ() + .5);
             Node point = travel.terrain.near(centered);
-            if (point == null) return new SearchOutcome(null,SearchFailure.NO_ROUTE);
+            if (point == null) return new SearchOutcome(null,deniedClosedDoor(travel,centered)
+                    ? SearchFailure.DENIED_DOOR : SearchFailure.NO_ROUTE);
             Location waypoint = travel.terrain.location(point);
             if (path.isEmpty() || path.getLast().distanceSquared(waypoint) > .0001) path.add(waypoint);
         }
@@ -360,32 +433,42 @@ public final class RoutineNavigator {
         return new SearchOutcome(new PathPlan(List.copyOf(path),reachesFinal,last.clone()),SearchFailure.NONE);
     }
 
+    /** Only a denied closed panel changes Paper's door policy; other bad terrain does not. */
+    private boolean deniedClosedDoor(Travel travel, Location feet) {
+        boolean denied = false;
+        for (int x=(int)Math.floor(feet.getX()-.30);x<=(int)Math.floor(feet.getX()+.30);x++)
+            for (int z=(int)Math.floor(feet.getZ()-.30);z<=(int)Math.floor(feet.getZ()+.30);z++)
+                for (int y=(int)Math.floor(feet.getY()+.015);y<=(int)Math.floor(feet.getY()+1.95);y++) {
+                    Block block=travel.terrain.block(x,y,z);
+                    if(block==null)return false;
+                    if(block.getBlockData() instanceof Door door && !door.isOpen() && !doors.canOpen(block)) denied=true;
+                }
+        return denied;
+    }
+
+    private void avoidClosedDoors(Travel travel,long tick,int cadence) {
+        travel.path=null;travel.pending=true;travel.pathReachesFinal=false;
+        travel.avoidClosedDoors=true;travel.exhausted=false;
+        // The alternate policy gets its own shared-budget query on a later update.
+        travel.retry=tick+Math.max(1,cadence);
+    }
+
     private void tuneNextSearch(Travel travel,Location start,PathPlan plan) {
         if(plan.reachesFinal()) {
-            travel.lastPartialEndpoint=null;
+            travel.partialEndpoints.clear(); travel.segmentsWithoutGoalProgress = 0;
             return;
         }
         double before=start.distanceSquared(travel.destination);
         double after=plan.endpoint().distanceSquared(travel.destination);
-        boolean repeated=travel.lastPartialEndpoint!=null
-                && travel.lastPartialEndpoint.distanceSquared(plan.endpoint())<.25;
         boolean detour=after>=before-.25;
-        boolean floorMismatch=verticalShadow(plan.endpoint(),travel.destination);
-        if(floorMismatch)travel.maxSearchLevel=PAPER_SEARCH_RANGES.length-1;
-        if((repeated||detour||floorMismatch) && travel.searchLevel<travel.maxSearchLevel) {
+        boolean floorMismatch=verticalShadow(plan.endpoint(),travel.destination)
+                && !usefulFloorProgress(start,plan.endpoint(),travel.destination);
+        if((detour||floorMismatch||travel.segmentsWithoutGoalProgress>=2) && travel.searchLevel<travel.maxSearchLevel) {
             travel.searchLevel++;
             if(floorMismatch)travel.minimumSearchLevel=Math.max(travel.minimumSearchLevel,travel.searchLevel);
         } else if(!detour && !floorMismatch && before-after>16 && travel.searchLevel>travel.minimumSearchLevel) {
             travel.searchLevel--;
         }
-        travel.lastPartialEndpoint=plan.endpoint().clone();
-    }
-
-    private static boolean multiFloor(Location from,Location destination) {
-        if(from==null || destination==null || from.getWorld()!=destination.getWorld())return false;
-        double dx=from.getX()-destination.getX(),dz=from.getZ()-destination.getZ();
-        return dx*dx+dz*dz<=MULTI_FLOOR_START_HORIZONTAL_SQUARED
-                && Math.abs(from.getY()-destination.getY())>=MULTI_FLOOR_START_MIN_Y;
     }
 
     private static boolean verticalShadow(Location endpoint,Location destination) {
@@ -395,12 +478,21 @@ public final class RoutineNavigator {
                 && Math.abs(endpoint.getY()-destination.getY())>=VERTICAL_SHADOW_MIN_Y;
     }
 
+    /** A partial stair segment can lie directly below the goal while genuinely climbing
+     * toward it. Keep that inexpensive segment; only a stationary floor shadow widens. */
+    private static boolean usefulFloorProgress(Location start,Location endpoint,Location destination) {
+        return Math.abs(start.getY()-destination.getY())-Math.abs(endpoint.getY()-destination.getY())>GROUND_EPSILON
+                && start.distance(destination)-endpoint.distance(destination)>=GOAL_PROGRESS_DISTANCE;
+    }
+
     private void noRouteFailure(Travel travel,long tick) {
         travel.path=null;travel.pending=true;travel.pathReachesFinal=false;
         if(travel.searchLevel<travel.maxSearchLevel) {
             travel.searchLevel++;travel.retry=tick+LOCAL_RETRY_TICKS;travel.exhausted=false;
         } else {
             travel.exhausted=true;travel.retry=tick+IMPOSSIBLE_RETRY_TICKS;
+            travel.avoidClosedDoors=false;
+            travel.riserWaypoint=null;travel.riserHeight=Double.NaN;
         }
     }
     private void localFailure(Travel travel,long tick) {
@@ -409,8 +501,10 @@ public final class RoutineNavigator {
             travel.searchLevel++;travel.localFailures=0;
         } else if(travel.localFailures>=3 && travel.searchLevel>=travel.maxSearchLevel) {
             travel.exhausted=true;
+            travel.avoidClosedDoors=false;
+            travel.riserWaypoint=null;travel.riserHeight=Double.NaN;
         }
-        travel.retry=tick+(travel.exhausted?20:LOCAL_RETRY_TICKS);
+        travel.retry=tick+(travel.exhausted?IMPOSSIBLE_RETRY_TICKS:LOCAL_RETRY_TICKS);
     }
     private void chunkFailure(Travel travel,long tick) {
         travel.path=null;travel.pending=true;travel.pathReachesFinal=false;
@@ -419,6 +513,10 @@ public final class RoutineNavigator {
 
     public boolean exhausted(String npc) {
         Travel travel=travels.get(npc);return travel!=null && travel.exhausted;
+    }
+    /** A staged lift remains owned by route replay during its short local retry. */
+    public boolean controlsVerticalStep(String npc) {
+        Travel travel=travels.get(npc);return travel!=null && Double.isFinite(travel.riserHeight);
     }
     public void cancel(String npc) { travels.remove(npc); }
     public void clear() {
