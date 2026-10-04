@@ -25,3 +25,15 @@ Después del build, probar en Purpur/Paper 1.21.6 al menos:
 - stairs y esquinas/giros sobre pavimento mixto;
 - meta, ciclo, aleatorio, WORK y viaje a cama;
 - NPC ya existente al que se le añade carpet/bottom slab bajo los pies.
+
+## CI v2 y correcciones v3
+
+La segunda ejecución externa llegó a compilar las 63 clases principales y las 50 clases de tests,
+y ejecutó 458 pruebas. Terminó con 7 fallos y 2 errores. La revisión v3 corrige las causas observadas:
+
+- `walkingSurface` conserva la aceptación histórica de materiales sólidos y usa colisión para superficies finas;
+- el destino nativo de Paper cae de vuelta al destino original si no existe un nodo local resoluble;
+- la tolerancia vertical de waypoint se redujo para obligar a visitar la altura física real de path/mud/soul sand/carpet;
+- si una ruta de Paper omite el nodo intermedio de slab/carpet, el replay detecta el obstáculo al primer choque horizontal y sube desde el borde seguro en vez de descartar la ruta.
+
+Esta v3 queda pendiente de una nueva ejecución de `clean verify`; no se marca como verificada hasta obtener `BUILD SUCCESS`.

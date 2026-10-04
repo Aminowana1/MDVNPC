@@ -31,11 +31,11 @@ public final class RoutineNavigator {
     private static final double GOAL_PROGRESS_DISTANCE = .15;
     private static final double MOVEMENT_EPSILON_SQUARED = 1e-12;
     private static final double GROUND_EPSILON = .015;
-    /** Paper path nodes are integer cells, while real feet can be 1/16 or 1/8 lower/higher
-     * on carpet, dirt path, mud and soul sand. Do not make an NPC orbit a waypoint merely
-     * because the native point and the physical support disagree by a tiny amount. */
+    /** Waypoints are converted from Paper's integer cells to the real collision height.
+     * Horizontal tolerance prevents tiny orbiting near the centre, while the vertical
+     * tolerance stays tight so mud/soul-sand/path/carpet levels are actually visited. */
     private static final double WAYPOINT_HORIZONTAL_EPSILON = .15;
-    private static final double WAYPOINT_VERTICAL_EPSILON = .20;
+    private static final double WAYPOINT_VERTICAL_EPSILON = .02;
     private static final double MAX_STEP_HEIGHT = 1.01;
     /** Look slightly ahead of the 0.30-wide body so a low physical riser is raised onto
      * before collision, even when Paper compresses both route nodes to the same Y. */
@@ -46,6 +46,9 @@ public final class RoutineNavigator {
      * probe samples the route centreline and ignores a slab/block merely beside it. */
     private static final double MAX_UNANNOUNCED_RISER = .99;
     private static final double UNANNOUNCED_SUPPORT_RADIUS = .001;
+    /** Approximate villager/player half-width. When a horizontal substep first collides,
+     * sample just beyond the body's leading edge to discover the low surface causing it. */
+    private static final double RISER_BODY_LEAD = .305;
     /** If a partial route finishes almost below/above the destination, following it only
      * makes the NPC hug the wall/floor. Widen first so Paper can discover stairs/ramps/doors. */
     private static final double VERTICAL_SHADOW_HORIZONTAL_SQUARED = 4.5 * 4.5;
@@ -369,6 +372,24 @@ public final class RoutineNavigator {
                 if(candidate==null) {
                     double stride=Math.min(horizontal,Math.min(.08,allowance));
                     candidate=horizontalStep(travel,at,next,ux,uz,stride,tick);
+                    if(candidate==null) {
+                        // A compressed Paper route can omit the intermediate node for a
+                        // slab/carpet/other partial block. The first failed horizontal substep
+                        // tells us exactly where the body meets that riser. Probe just beyond
+                        // the leading edge, then raise while still beside the obstacle; once
+                        // the feet reach its top, ordinary horizontal replay continues.
+                        double lead=Math.min(horizontal,stride+RISER_BODY_LEAD);
+                        double contact=travel.terrain.supportHeight(at.getX()+ux*lead,at.getY(),
+                                at.getZ()+uz*lead,MAX_UNANNOUNCED_RISER,UNANNOUNCED_SUPPORT_RADIUS);
+                        if(Double.isFinite(contact) && contact>at.getY()+GROUND_EPSILON
+                                && contact-at.getY()<=MAX_UNANNOUNCED_RISER+GROUND_EPSILON) {
+                            Location up=at.clone().add(0,Math.min(contact-at.getY(),Math.min(.08,allowance)),0);
+                            if(walkable(travel,up,tick)) {
+                                candidate=up;
+                                travel.riserHeight=contact;
+                            }
+                        }
+                    }
                     if(candidate==null)return null;
                 }
             }
@@ -460,9 +481,12 @@ public final class RoutineNavigator {
             // the physical Y directly makes floor(Y) point at the slab/carpet/mud block itself.
             // Resolve the destination back to its walkable node before asking Paper for a path.
             Node destinationNode=travel.terrain.near(travel.destination);
-            if(destinationNode==null)return new SearchOutcome(null,SearchFailure.NO_ROUTE);
-            Location nativeDestination=new Location(travel.destination.getWorld(),destinationNode.x()+.5,
-                    destinationNode.y(),destinationNode.z()+.5,travel.destination.getYaw(),travel.destination.getPitch());
+            Location nativeDestination=travel.destination.clone();
+            if(destinationNode!=null) {
+                nativeDestination=new Location(travel.destination.getWorld(),destinationNode.x()+.5,
+                        destinationNode.y(),destinationNode.z()+.5,
+                        travel.destination.getYaw(),travel.destination.getPitch());
+            }
             try (GroundFlag ignored = NativeGroundFlag.open(travel.npc.entity())) {
                 result = pathfinder.findPath(nativeDestination);
             }

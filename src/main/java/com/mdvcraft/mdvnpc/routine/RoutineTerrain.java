@@ -61,6 +61,9 @@ public final class RoutineTerrain implements BoundedPathfinder.Grid {
      * Carpets, snow layers and other thin supports are intentionally accepted. */
     public static boolean walkingSurface(Block block) {
         if(block==null || hazard(block.getType()) || block.getType().isAir())return false;
+        // Preserve the old editor behaviour for ordinary floors. Some Bukkit/MockBukkit
+        // implementations do not expose a useful collision shape for full solid blocks.
+        if(block.getType().isSolid())return true;
         VoxelShape shape=block.getCollisionShape();
         if(shape!=null) {
             Collection<BoundingBox> boxes=shape.getBoundingBoxes();
