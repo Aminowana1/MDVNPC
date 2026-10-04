@@ -19,12 +19,25 @@ import java.util.function.BiPredicate;
 public final class RoutineNavigator {
     public enum Result { MOVING, ARRIVED, WAITING }
     private enum SearchFailure { NONE, NO_ROUTE, CHUNK }
-    private static final int[] PAPER_SEARCH_RANGES = {16, 24, 32};
+    private static final int[] PAPER_SEARCH_RANGES = {16, 24, 32, 48, 64};
     private static final int MAX_PATH_POINTS = 2048;
     private static final int LOCAL_RETRY_TICKS = 4, PARTIAL_RETRY_TICKS = 4,
             CHUNK_RETRY_TICKS = 20, IMPOSSIBLE_RETRY_TICKS = 100;
     private static final int STUCK_TICKS = 36;
     private static final double PROGRESS_DISTANCE_SQUARED = .15 * .15;
+    /** Partial-height floors (dirt path, mud, carpet, snow layers) may differ from Paper's
+     * raw waypoint Y by a few centimetres. Never require exact 3D coincidence to advance. */
+    private static final double WAYPOINT_HORIZONTAL_SQUARED = .11 * .11;
+    private static final double WAYPOINT_VERTICAL_TOLERANCE = .20;
+    private static final double GROUND_EPSILON = .015;
+    private static final double MAX_STEP_HEIGHT = 1.01;
+    private static final double FORWARD_RISER_PROBE = .30;
+    /** If a partial route finishes almost below/above the destination, following it only
+     * makes the NPC hug the wall/floor. Widen first so Paper can discover stairs/ramps/doors. */
+    private static final double VERTICAL_SHADOW_HORIZONTAL_SQUARED = 4.5 * 4.5;
+    private static final double VERTICAL_SHADOW_MIN_Y = .75;
+    private static final double MULTI_FLOOR_START_HORIZONTAL_SQUARED = 8.0 * 8.0;
+    private static final double MULTI_FLOOR_START_MIN_Y = 1.25;
     private final DoorController doors;
     private final BiPredicate<ActiveNpc, Location> teleport;
     private final Map<String, Travel> travels = new LinkedHashMap<>();
@@ -45,6 +58,8 @@ public final class RoutineNavigator {
         boolean pending = true;
         boolean pathReachesFinal;
         int searchLevel;
+        int minimumSearchLevel;
+        int maxSearchLevel = 2; // 32 blocks for ordinary same-floor movement.
         int localFailures;
         boolean exhausted;
         Location lastPartialEndpoint;
@@ -53,6 +68,14 @@ public final class RoutineNavigator {
         Travel(ActiveNpc npc, Location destination, DoorController doors, Location start, long tick) {
             this.npc = npc; this.destination = destination.clone();
             terrain = new RoutineTerrain(destination.getWorld(), doors);
+            // A destination on another floor often requires walking away from its X/Z first
+            // to reach stairs or the only doorway. Start those searches wider and never shrink
+            // them back to the cheap 16-block radius during the same trip.
+            if (multiFloor(start, destination)) {
+                maxSearchLevel = PAPER_SEARCH_RANGES.length - 1;
+                searchLevel = Math.min(2, maxSearchLevel);
+                minimumSearchLevel = searchLevel;
+            }
             lastProgressPosition = start.clone(); lastProgressTick = tick;
         }
     }
@@ -89,6 +112,12 @@ public final class RoutineNavigator {
             cancel(id); travel = new Travel(npc, destination, doors, current, tick); travels.put(id, travel);
         }
         observeProgress(travel,current,tick);
+        if (multiFloor(current, travel.destination)) {
+            travel.maxSearchLevel = PAPER_SEARCH_RANGES.length - 1;
+            int floorLevel = Math.min(2, travel.maxSearchLevel);
+            travel.minimumSearchLevel = Math.max(travel.minimumSearchLevel, floorLevel);
+            travel.searchLevel = Math.max(travel.searchLevel, travel.minimumSearchLevel);
+        }
         if (travel.path != null && tick-travel.lastProgressTick >= STUCK_TICKS) {
             localFailure(travel,tick); return Result.WAITING;
         }
@@ -118,6 +147,24 @@ public final class RoutineNavigator {
                 if (!plan.reachesFinal() && endpointMovement < .04) {
                     noRouteFailure(travel,tick); return Result.WAITING;
                 }
+                // Do not walk into the vertical "shadow" of a bed/workstation on another floor.
+                // A short-range partial path commonly ends against the wall directly below/above
+                // the goal. Re-run Paper with a wider FOLLOW_RANGE until it can see the actual
+                // stairs/ramp/door detour. At maximum range, reject the dead-end instead of
+                // oscillating a couple of blocks forever.
+                if (!plan.reachesFinal() && verticalShadow(plan.endpoint(), travel.destination)) {
+                    travel.maxSearchLevel = PAPER_SEARCH_RANGES.length - 1;
+                    if (travel.searchLevel < travel.maxSearchLevel) {
+                        travel.searchLevel++;
+                        travel.minimumSearchLevel = Math.max(travel.minimumSearchLevel, travel.searchLevel);
+                        travel.lastPartialEndpoint = plan.endpoint().clone();
+                        travel.path = null; travel.pending = true; travel.exhausted = false;
+                        travel.retry = tick + LOCAL_RETRY_TICKS;
+                    } else {
+                        noRouteFailure(travel, tick);
+                    }
+                    return Result.WAITING;
+                }
                 travel.path = plan.points(); travel.pathReachesFinal=plan.reachesFinal();
                 travel.index = 0; travel.pending = false; travel.exhausted=false;
                 tuneNextSearch(travel,start,plan);
@@ -126,7 +173,7 @@ public final class RoutineNavigator {
             }
         }
         while (travel.index < travel.path.size()
-                && current.distanceSquared(travel.path.get(travel.index)) < .01) travel.index++;
+                && reachedWaypoint(current, travel.path.get(travel.index))) travel.index++;
         if (travel.index >= travel.path.size()) {
             // A partial path is a valid segment of a long trip. Re-query from its endpoint;
             // the search level may already have widened if that segment represented a detour.
@@ -178,23 +225,26 @@ public final class RoutineNavigator {
                 double support=travel.terrain.supportHeight(at.getX(),at.getY(),at.getZ());
                 if(!Double.isFinite(support))return null;
 
-                // When stepping down, first keep walking at the old height until the complete
-                // body clears the ledge. Only then lower the feet toward the Paper waypoint.
-                if(next.getY()<at.getY()-.015 && support<at.getY()-.015) {
-                    Location down=at.clone().add(0,-Math.min(at.getY()-Math.max(support,next.getY()),Math.min(.08,allowance)),0);
-                    if(walkable(travel,down,tick))candidate=down;
+                // Inspect the physical riser at the leading edge first. Paper's intermediate
+                // waypoint may still have the lower Y on dirt paths/mud even though the 0.60-wide
+                // body is already about to touch the next full block. A narrow directional probe
+                // keeps side walls from being mistaken for stairs.
+                double probe=FORWARD_RISER_PROBE;
+                double forward=travel.terrain.supportHeight(at.getX()+ux*probe,at.getY(),at.getZ()+uz*probe,
+                        MAX_STEP_HEIGHT,.065);
+                if(Double.isFinite(forward) && forward>at.getY()+GROUND_EPSILON
+                        && forward<=at.getY()+MAX_STEP_HEIGHT) {
+                    Location up=at.clone().add(0,Math.min(forward-at.getY(),Math.min(.08,allowance)),0);
+                    if(walkable(travel,up,tick))candidate=up;
                 }
 
-                if(candidate==null && next.getY()>at.getY()+.015) {
-                    // Probe only in the direction of travel. The old full-body footprint saw a
-                    // wall at the side of an NPC as a higher floor and repeatedly tried to climb it.
-                    double probe=Math.min(horizontal,.34);
-                    double contact=travel.terrain.supportHeight(at.getX()+ux*probe,at.getY(),at.getZ()+uz*probe,
-                            Math.min(1.01,Math.max(.05,next.getY()-at.getY()+.05)),.065);
-                    if(Double.isFinite(contact) && contact>at.getY()+.015 && contact<=next.getY()+.08) {
-                        Location up=at.clone().add(0,Math.min(contact-at.getY(),Math.min(.08,allowance)),0);
-                        if(walkable(travel,up,tick))candidate=up;
-                    }
+                // If there is no climb in progress, settle onto the real support below the feet
+                // once the complete body has cleared the previous ledge. This deliberately does
+                // not depend on next.getY(): Paper can already have advanced to a later waypoint
+                // while the NPC is still floating 1/16 or 1/8 block above a partial-height floor.
+                if(candidate==null && support<at.getY()-GROUND_EPSILON && at.getY()-support<=MAX_STEP_HEIGHT) {
+                    Location down=at.clone().add(0,-Math.min(at.getY()-support,Math.min(.08,allowance)),0);
+                    if(walkable(travel,down,tick))candidate=down;
                 }
 
                 if(candidate==null) {
@@ -213,6 +263,7 @@ public final class RoutineNavigator {
     private Location horizontalStep(Travel travel,Location at,Location next,double ux,double uz,double stride,long tick) {
         Location direct=at.clone().add(ux*stride,0,uz*stride);
         if(walkable(travel,direct,tick) && supported(travel,direct))return direct;
+
         if(Math.abs(ux)<1e-6 || Math.abs(uz)<1e-6)return null;
 
         // Paper can legally return a diagonal around a block corner that our exact 0.60-wide
@@ -225,6 +276,13 @@ public final class RoutineNavigator {
         if(axes.isEmpty())return null;
         axes.sort(Comparator.comparingDouble(next::distanceSquared));
         return axes.getFirst();
+    }
+
+
+    private static boolean reachedWaypoint(Location current,Location waypoint) {
+        double dx=current.getX()-waypoint.getX(),dz=current.getZ()-waypoint.getZ();
+        return dx*dx+dz*dz<=WAYPOINT_HORIZONTAL_SQUARED
+                && Math.abs(current.getY()-waypoint.getY())<=WAYPOINT_VERTICAL_TOLERANCE;
     }
 
     private boolean supported(Travel travel,Location at) {
@@ -312,14 +370,34 @@ public final class RoutineNavigator {
         boolean repeated=travel.lastPartialEndpoint!=null
                 && travel.lastPartialEndpoint.distanceSquared(plan.endpoint())<.25;
         boolean detour=after>=before-.25;
-        if((repeated||detour) && travel.searchLevel<PAPER_SEARCH_RANGES.length-1)travel.searchLevel++;
-        else if(!detour && before-after>16 && travel.searchLevel>0)travel.searchLevel--;
+        boolean floorMismatch=verticalShadow(plan.endpoint(),travel.destination);
+        if(floorMismatch)travel.maxSearchLevel=PAPER_SEARCH_RANGES.length-1;
+        if((repeated||detour||floorMismatch) && travel.searchLevel<travel.maxSearchLevel) {
+            travel.searchLevel++;
+            if(floorMismatch)travel.minimumSearchLevel=Math.max(travel.minimumSearchLevel,travel.searchLevel);
+        } else if(!detour && !floorMismatch && before-after>16 && travel.searchLevel>travel.minimumSearchLevel) {
+            travel.searchLevel--;
+        }
         travel.lastPartialEndpoint=plan.endpoint().clone();
+    }
+
+    private static boolean multiFloor(Location from,Location destination) {
+        if(from==null || destination==null || from.getWorld()!=destination.getWorld())return false;
+        double dx=from.getX()-destination.getX(),dz=from.getZ()-destination.getZ();
+        return dx*dx+dz*dz<=MULTI_FLOOR_START_HORIZONTAL_SQUARED
+                && Math.abs(from.getY()-destination.getY())>=MULTI_FLOOR_START_MIN_Y;
+    }
+
+    private static boolean verticalShadow(Location endpoint,Location destination) {
+        if(endpoint==null || destination==null || endpoint.getWorld()!=destination.getWorld())return false;
+        double dx=endpoint.getX()-destination.getX(),dz=endpoint.getZ()-destination.getZ();
+        return dx*dx+dz*dz<=VERTICAL_SHADOW_HORIZONTAL_SQUARED
+                && Math.abs(endpoint.getY()-destination.getY())>=VERTICAL_SHADOW_MIN_Y;
     }
 
     private void noRouteFailure(Travel travel,long tick) {
         travel.path=null;travel.pending=true;travel.pathReachesFinal=false;
-        if(travel.searchLevel<PAPER_SEARCH_RANGES.length-1) {
+        if(travel.searchLevel<travel.maxSearchLevel) {
             travel.searchLevel++;travel.retry=tick+LOCAL_RETRY_TICKS;travel.exhausted=false;
         } else {
             travel.exhausted=true;travel.retry=tick+IMPOSSIBLE_RETRY_TICKS;
@@ -327,9 +405,9 @@ public final class RoutineNavigator {
     }
     private void localFailure(Travel travel,long tick) {
         travel.path=null;travel.pending=true;travel.pathReachesFinal=false;travel.localFailures++;
-        if(travel.localFailures>=2 && travel.searchLevel<PAPER_SEARCH_RANGES.length-1) {
+        if(travel.localFailures>=2 && travel.searchLevel<travel.maxSearchLevel) {
             travel.searchLevel++;travel.localFailures=0;
-        } else if(travel.localFailures>=3 && travel.searchLevel>=PAPER_SEARCH_RANGES.length-1) {
+        } else if(travel.localFailures>=3 && travel.searchLevel>=travel.maxSearchLevel) {
             travel.exhausted=true;
         }
         travel.retry=tick+(travel.exhausted?20:LOCAL_RETRY_TICKS);
@@ -349,7 +427,7 @@ public final class RoutineNavigator {
 
     /**
      * Paper 1.21.6 uses Mojang names at runtime: CraftEntity.getHandle and Entity.setOnGround.
-     * Reflection is resolved once per implementation class; it never enables AI, physics or goals.
+     * Reflection is resolved once per implementation class; it never enables AI or vanilla goals.
      */
     private static final class NativeGroundFlag {
         private static final ClassValue<Optional<Method>> HANDLES = methods("getHandle");

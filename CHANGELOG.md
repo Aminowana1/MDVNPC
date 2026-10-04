@@ -1,3 +1,21 @@
+# MDVNPC 1.11.5 — Pisos múltiples y gravedad
+
+- Las rutas parciales que terminan debajo/encima de cama o trabajo ya no se siguen hacia la pared.
+- Búsqueda adaptativa ampliada hasta 64 bloques sólo cuando hace falta.
+- Los viajes entre plantas conservan un mínimo de alcance durante el viaje para encontrar escaleras, rampas o puertas alejadas.
+- Los NPC base tienen gravedad física activa sin reactivar IA ni awareness.
+- Test de regresión para el callejón vertical bajo un destino de otra planta.
+
+# MDVNPC 1.11.4 — Suelos parciales y recuperación vertical
+
+- `RoutineNavigator` ahora se apoya en la altura física real del suelo aunque Paper ya haya avanzado al siguiente waypoint.
+- Corrige NPC que quedaban girando sobre `DIRT_PATH`, `MUD`, alfombras, slabs y otras superficies con altura parcial.
+- Al bajar, el NPC se asienta gradualmente sobre el soporte real una vez que su cuerpo despeja el borde anterior.
+- Si un avance horizontal choca con un escalón físico delante del cuerpo, puede subirlo aunque el waypoint intermedio todavía conserve una Y baja.
+- Los waypoints admiten una pequeña tolerancia vertical para evitar bucles por diferencias de 1/16–1/8 de bloque, sin saltarse slabs o bloques completos.
+- Añadidas pruebas de regresión para `STONE -> DIRT_PATH -> STONE` y `STONE -> MUD -> STONE`.
+- La corrección es central al navegador y por tanto aplica a meta, ciclo, aleatorio, cama y puesto de trabajo.
+
 # MDVNPC 1.11.3 — Pathfinding adaptativo y recuperación de atascos
 
 - `RoutineNavigator` amplía el `FOLLOW_RANGE` sólo al detectar falta de progreso: 16 → 24 → 32 bloques.

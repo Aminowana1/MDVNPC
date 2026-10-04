@@ -132,6 +132,32 @@ class RoutineNavigatorTest {
         verify(world, never()).getChunkAt(anyInt(), anyInt());
     }
 
+
+    @Test void differentFloorPartialPathIsWidenedInsteadOfWalkingUnderTheGoal() {
+        ActiveNpc npc=npc("upstairs");
+        var range=mock(org.bukkit.attribute.AttributeInstance.class);
+        when(npc.entity().getAttribute(org.bukkit.attribute.Attribute.FOLLOW_RANGE)).thenReturn(range);
+        when(range.getBaseValue()).thenReturn(48.0);
+        Pathfinder.PathResult partial=mock(Pathfinder.PathResult.class);
+        when(partial.getPoints()).thenReturn(List.of(new Location(world,0,64,0),new Location(world,1,64,0)));
+        when(partial.canReachFinalPoint()).thenReturn(false);
+        when(pathfinders.get("upstairs").findPath(any(Location.class))).thenReturn(partial);
+        Location upstairs=new Location(world,.5,68,.5);
+
+        assertEquals(RoutineNavigator.Result.WAITING,navigator.move(npc,upstairs,2.4,0,2));
+        assertEquals(new Location(world,.5,64,.5),positions.get("upstairs"));
+        verify(range).setBaseValue(32.0);
+
+        assertEquals(RoutineNavigator.Result.WAITING,navigator.move(npc,upstairs,2.4,4,2));
+        assertEquals(new Location(world,.5,64,.5),positions.get("upstairs"));
+        verify(range,atLeastOnce()).setBaseValue(48.0);
+
+        assertEquals(RoutineNavigator.Result.WAITING,navigator.move(npc,upstairs,2.4,8,2));
+        assertEquals(new Location(world,.5,64,.5),positions.get("upstairs"));
+        verify(range).setBaseValue(64.0);
+        assertTrue(navigator.exhausted("upstairs"),"at max range the vertical dead-end must be rejected, not walked into");
+    }
+
     @Test void nativeSearchRangeIsBoundedAndRestoredAfterTheQuery() {
         ActiveNpc npc = npc("range"); var range = mock(org.bukkit.attribute.AttributeInstance.class);
         when(npc.entity().getAttribute(org.bukkit.attribute.Attribute.FOLLOW_RANGE)).thenReturn(range);
@@ -308,6 +334,67 @@ class RoutineNavigatorTest {
         assertEquals(RoutineNavigator.Result.ARRIVED,result);
         assertTrue(axisSlide,"the replay should use an axis slide when the direct diagonal clips the wall");
         verify(pathfinders.get("corner"),times(1)).findPath(any(Location.class));
+    }
+
+
+    private void partialHeightTerrain(Material lowered,double top) {
+        when(world.getBlockAt(anyInt(),anyInt(),anyInt())).thenAnswer(call->{
+            int x=call.getArgument(0),y=call.getArgument(1),z=call.getArgument(2);
+            boolean floor=y==63;
+            Material material=floor?(x==1?lowered:Material.STONE):Material.AIR;
+            List<BoundingBox> boxes=floor?List.of(new BoundingBox(0,0,0,1,x==1?top:1,1)):List.of();
+            Block block=mock(Block.class);when(block.getType()).thenReturn(material);
+            when(block.isPassable()).thenReturn(boxes.isEmpty());
+            var shape=mock(org.bukkit.util.VoxelShape.class);when(shape.getBoundingBoxes()).thenReturn(boxes);
+            when(block.getCollisionShape()).thenReturn(shape);
+            when(block.getBoundingBox()).thenReturn(boxes.isEmpty()?new BoundingBox(x,y,z,x,y,z)
+                    :new BoundingBox(x,y,z,x+1,y+(x==1?top:1),z+1));
+            return block;
+        });
+    }
+
+    private void straightThreeBlockPath(ActiveNpc npc) {
+        var path=mock(Pathfinder.PathResult.class);
+        when(path.getPoints()).thenReturn(List.of(new Location(world,0,64,0),new Location(world,1,64,0),
+                new Location(world,2,64,0)));
+        when(path.canReachFinalPoint()).thenReturn(true);
+        when(pathfinders.get(npc.definition().id()).findPath(any(Location.class))).thenReturn(path);
+    }
+
+    @Test void dirtPathDipSettlesAndClimbsOutWithoutReplanningOrSpinning() {
+        ActiveNpc npc=npc("pathdip");partialHeightTerrain(Material.DIRT_PATH,.9375);straightThreeBlockPath(npc);
+        List<Location> visited=walkTo(npc,new Location(world,2.5,64,.5));
+        assertTrue(visited.stream().anyMatch(p->p.getY()<63.99),"the NPC must settle onto the path surface");
+        verify(pathfinders.get("pathdip"),times(1)).findPath(any(Location.class));
+    }
+
+    @Test void mudDipSettlesAndClimbsOutWithoutReplanningOrSpinning() {
+        ActiveNpc npc=npc("muddip");partialHeightTerrain(Material.MUD,.875);straightThreeBlockPath(npc);
+        List<Location> visited=walkTo(npc,new Location(world,2.5,64,.5));
+        assertTrue(visited.stream().anyMatch(p->p.getY()<63.95),"the NPC must settle onto the mud surface");
+        verify(pathfinders.get("muddip"),times(1)).findPath(any(Location.class));
+    }
+
+
+    private void oneBlockDipTerrain() {
+        when(world.getBlockAt(anyInt(),anyInt(),anyInt())).thenAnswer(call->{
+            int x=call.getArgument(0),y=call.getArgument(1),z=call.getArgument(2);
+            boolean solid=x==1?y==62:y==63;
+            Block block=mock(Block.class);when(block.getType()).thenReturn(solid?Material.STONE:Material.AIR);
+            when(block.isPassable()).thenReturn(!solid);
+            var shape=mock(org.bukkit.util.VoxelShape.class);
+            when(shape.getBoundingBoxes()).thenReturn(solid?List.of(new BoundingBox(0,0,0,1,1,1)):List.of());
+            when(block.getCollisionShape()).thenReturn(shape);
+            when(block.getBoundingBox()).thenReturn(solid?new BoundingBox(x,y,z,x+1,y+1,z+1):new BoundingBox(x,y,z,x,y,z));
+            return block;
+        });
+    }
+
+    @Test void oneBlockDipDescendsAndClimbsOutWithoutGettingStuck() {
+        ActiveNpc npc=npc("onedip");oneBlockDipTerrain();straightThreeBlockPath(npc);
+        List<Location> visited=walkTo(npc,new Location(world,2.5,64,.5));
+        assertTrue(visited.stream().anyMatch(p->p.getY()<63.2),"the NPC must descend into the one-block dip");
+        verify(pathfinders.get("onedip"),times(1)).findPath(any(Location.class));
     }
 
     @Test void stairsUseBothTreadsAndApproachTheRiserBeforeLifting() {

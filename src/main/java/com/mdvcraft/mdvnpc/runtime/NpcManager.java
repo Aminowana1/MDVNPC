@@ -129,7 +129,7 @@ public final class NpcManager {
                 villager.setAware(false);
                 villager.setAdult();
                 villager.setAgeLock(true);
-                villager.setGravity(false);
+                villager.setGravity(true);
                 villager.setInvulnerable(true);
                 villager.setSilent(true);
                 villager.setCollidable(false);
