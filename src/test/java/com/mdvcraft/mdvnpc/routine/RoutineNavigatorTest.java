@@ -571,7 +571,7 @@ class RoutineNavigatorTest {
                 new Location(world,0,64,0),new Location(world,1,64,0)));when(path.canReachFinalPoint()).thenReturn(true);
         when(pathfinders.get("nativepath").findPath(any(Location.class))).thenReturn(path);
         navigator.move(npc,new Location(world,1.5,63.9375,.5),2.4,0,2);
-        verify(pathfinders.get("nativepath")).findPath(argThat(target->Math.abs(target.getY()-64)<1e-9));
+        verify(pathfinders.get("nativepath")).findPath(argThat((Location target) -> Math.abs(target.getY() - 64) < 1e-9));
     }
 
     @Test void paperSearchTargetsTheNodeAboveCarpetInsteadOfTheCarpetBlock() {
@@ -580,7 +580,7 @@ class RoutineNavigatorTest {
                 new Location(world,0,64,0),new Location(world,4,65,0)));when(path.canReachFinalPoint()).thenReturn(true);
         when(pathfinders.get("nativecarpet").findPath(any(Location.class))).thenReturn(path);
         navigator.move(npc,new Location(world,4.5,64.0625,.5),2.4,0,2);
-        verify(pathfinders.get("nativecarpet")).findPath(argThat(target->Math.abs(target.getY()-65)<1e-9));
+        verify(pathfinders.get("nativecarpet")).findPath(argThat((Location target) -> Math.abs(target.getY() - 65) < 1e-9));
     }
 
     @Test void stairsUseBothTreadsAndApproachTheRiserBeforeLifting() {
