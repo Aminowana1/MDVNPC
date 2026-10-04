@@ -1,3 +1,18 @@
+# MDVNPC 1.11.3 — Pathfinding adaptativo y recuperación de atascos
+
+- `RoutineNavigator` amplía el `FOLLOW_RANGE` sólo al detectar falta de progreso: 16 → 24 → 32 bloques.
+- Se usa `PathResult.canReachFinalPoint()` y se aceptan rutas parciales/rodeos que no reduzcan inmediatamente la distancia al destino.
+- Se eliminó el rechazo global por un chunk vecino descargado; se siguen rechazando el inicio, destino o waypoints que realmente estén en chunks no cargados.
+- Reintentos separados: obstáculo local rápido, chunk descargado intermedio y ruta agotada lenta.
+- Detector de progreso/atasco para impedir que una ruta mala se repita indefinidamente mirando una pared.
+- `RoutineTerrain` separa soporte bajo los pies de colisión lateral; una esquina de pared ya no se interpreta como un escalón.
+- Soporte de superficies finas con colisión, incluida alfombra, conservando stairs, slabs, bloques completos y desniveles de hasta un bloque.
+- Reproducción de diagonales con deslizamiento corto por eje cuando la caja de 0,60 bloques roza una esquina.
+- Cama/asiento: se conservan todos los accesos localmente válidos y sólo se prueba otro lado después de agotar la búsqueda ampliada del lado actual.
+- El límite de viaje mide 60 s sin progreso, no 60 s desde la salida; una ruta larga o velocidad baja no se cancela mientras el NPC continúe avanzando.
+- Sin cambios a tiendas, diálogos, músicos, traits, puertas, sillas ni almacenamiento fuera de las integraciones necesarias de rutina.
+- Guía: `GUIA-1.11.3.md`.
+
 # MDVNPC 1.11.2 — Escaleras, puertas y sillas
 
 - Caminata con las cajas de colisión reales de escaleras y losas, incluida la altura del apoyo bajo el cuerpo del NPC.

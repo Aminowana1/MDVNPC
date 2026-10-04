@@ -53,6 +53,7 @@ public final class RoutineService {
         long nextPick, travelSince, nextPresence, nextDialogue, nextPoseCheck, nextDanceCheck, nextUpdate,nextReturnCheck,returnWaitingSince,nextRecoveryCheck;
         int returnDoorway,returnFailedDoorways;
         final Map<RoutineGoal.Point,Long> blockedDanceSeats=new HashMap<>();
+        List<Location> approachOptions=List.of(); int approachIndex;
         int lastMinute=-1; String status="esperando";
         final RoutineLook.State look=new RoutineLook.State();
     }
@@ -214,7 +215,7 @@ public final class RoutineService {
         if(plugin.music()!=null) plugin.music().remove(s.npc.definition().id());
         if(s.pose!=null) { visuals.leave(s.pose,reposition);s.pose=null; }
         if(s.destination!=null) occupied.remove(key(s.destination),s.npc.definition().id());
-        s.destination=null;s.approach=null; navigator.cancel(s.npc.definition().id());
+        s.destination=null;s.approach=null;s.approachOptions=List.of();s.approachIndex=0; navigator.cancel(s.npc.definition().id());
         s.returningFromDance=false;s.nextReturnCheck=0;s.returnWaitingSince=0;s.returnDoorway=0;s.returnFailedDoorways=0;
     }
     public void remove(String id) {
@@ -387,21 +388,37 @@ public final class RoutineService {
             s.destination=choose(goal,s,position);
             if(s.destination==null) {s.status="esperando destino disponible";return;}
             var terrain=new RoutineTerrain(position.getWorld(),doors);
-            var node=terrain.approach(s.destination,goal.type()==RoutineGoal.Type.SIT || goal.type()==RoutineGoal.Type.SLEEP);
-            if(node==null) {s.destination=null;s.status="destino descargado o sin acceso";return;}
-            s.approach=terrain.location(node);s.approach.setYaw(s.destination.yaw());
+            boolean furniture=goal.type()==RoutineGoal.Type.SIT || goal.type()==RoutineGoal.Type.SLEEP;
+            Location approachOrigin=position;
+            s.approachOptions=terrain.approaches(s.destination,furniture).stream().map(terrain::location)
+                    .sorted(Comparator.comparingDouble(approachOrigin::distanceSquared)).map(location->{
+                        Location value=location.clone();value.setYaw(s.destination.yaw());return value;
+                    }).toList();
+            s.approachIndex=0;
+            if(s.approachOptions.isEmpty()) {s.destination=null;s.status="destino descargado o sin acceso";return;}
+            s.approach=s.approachOptions.getFirst();
             s.travelSince=ticks;
-            if(goal.type()==RoutineGoal.Type.SIT || goal.type()==RoutineGoal.Type.SLEEP) occupied.put(key(s.destination),id);
+            if(furniture) occupied.put(key(s.destination),id);
         }
         Location beforeMove=npc.position();
         // Joining a seat from its checked doorway needs no exact native waypoint. This also
         // recovers a return that ends a few centimetres short without a visible long teleport.
         var result=s.returningFromDance && readyToSit(npc,s.approach)
                 ?RoutineNavigator.Result.ARRIVED:navigator.move(npc,s.approach,goal.speed(),ticks,cadence);
+        boolean progressed=npc.position().distanceSquared(beforeMove)>.0001;
+        if(progressed)s.travelSince=ticks; // timeout measures lack of progress, not total trip duration.
+        if(!s.returningFromDance && result==RoutineNavigator.Result.WAITING && navigator.exhausted(id)
+                && (goal.type()==RoutineGoal.Type.SIT || goal.type()==RoutineGoal.Type.SLEEP)) {
+            if(++s.approachIndex<s.approachOptions.size()) {
+                s.approach=s.approachOptions.get(s.approachIndex);navigator.cancel(id);s.travelSince=ticks;
+                s.status="acceso sin ruta; probando otro lado";return;
+            }
+            release(s,true);s.nextPick=ticks+100;s.status="destino sin ningún acceso alcanzable";return;
+        }
         if(s.returningFromDance) {
             if(result!=RoutineNavigator.Result.WAITING) {
                 s.returnWaitingSince=0;
-                if(npc.position().distanceSquared(beforeMove)>.0001)s.returnFailedDoorways=0;
+                if(progressed)s.returnFailedDoorways=0;
             }
             else if(s.returnWaitingSince==0)s.returnWaitingSince=ticks;
             else if(ticks-s.returnWaitingSince>=100) {

@@ -135,13 +135,28 @@ class RoutineTerrainTest {
         assertFalse(terrain.fits(.5,64,.5,false));
     }
 
-    @Test void footprintAtAnUnloadedChunkBoundaryNeverReadsItsBlocks() {
+    @Test void supportProbeDoesNotRequireAnUnrelatedNeighbourChunkButBodyClearanceStillDoes() {
         when(world.isChunkLoaded(eq(1),anyInt())).thenReturn(false);
-        assertTrue(Double.isNaN(terrain.supportHeight(15.85,64,.5)));
+        assertEquals(64,terrain.supportHeight(15.85,64,.5),.000001);
         assertFalse(terrain.fits(15.85,64,.5,false));
         assertNull(terrain.near(new org.bukkit.Location(world,16.5,64,.5)));
         verify(world,never()).getBlockAt(eq(16),anyInt(),anyInt());
         verify(world,never()).getChunkAt(anyInt(),anyInt());
+    }
+
+    @Test void sideWallTouchingTheBodyIsNotMistakenForAHigherFloor() {
+        put(1,64,0,Material.STONE,List.of(new BoundingBox(0,0,0,1,1,1)));
+        assertEquals(64,terrain.supportHeight(.72,64,.5),.000001);
+        assertFalse(terrain.fits(.72,64,.5,false),"the shoulder may collide even though the feet remain on the floor");
+    }
+
+    @Test void carpetCollisionShapeIsAValidThinWalkingSurface() {
+        put(0,64,0,Material.WHITE_CARPET,List.of(new BoundingBox(0,0,0,1,.0625,1)));
+        Node carpet=new Node(0,65,0);
+        assertEquals(64.0625,terrain.height(carpet),.000001);
+        assertEquals(64.0625,terrain.supportHeight(.5,64.0625,.5),.000001);
+        assertTrue(terrain.stand(carpet));
+        assertEquals(carpet,terrain.near(new org.bukkit.Location(world,.5,64.0625,.5)));
     }
 
     @Test void lowestWorldFloorStillSupportsWalkingWithoutInspectingBelowItsBoundary() {

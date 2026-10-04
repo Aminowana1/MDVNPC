@@ -1,12 +1,22 @@
-# MDVNPC 1.11.2
+# MDVNPC 1.11.3
+
+El pathfinding de rutinas ahora amplía la búsqueda de Paper sólo cuando hace falta
+(16 → 24 → 32), acepta rodeos que temporalmente se alejan del objetivo y detecta
+atascos reales antes de recalcular. La ejecución de waypoints distingue paredes
+laterales de escalones, desliza esquinas diagonales estrechas y conserva soporte
+correcto sobre stairs, slabs, alfombras y desniveles de hasta un bloque. Dormir y
+sentarse pueden probar otro lado del mueble únicamente después de agotar la ruta
+del acceso actual. Los viajes largos ya no vencen mientras el NPC siga avanzando.
+Consulta [la guía de esta entrega](GUIA-1.11.3.md).
+
+## Actualización 1.11.2
 
 La caminata usa la forma real de escaleras y losas y se acerca al escalón antes de
 elevar al NPC. Las rutinas normales pueden subir bloques; el baile mantiene su
 pista al mismo nivel. Las puertas de madera se cierran después del paso, aunque
 ya estuvieran abiertas, sin quedar retenidas por un NPC que está al lado.
 Las sillas comprueban y recuperan su pasajero y refrescan el montaje al volver
-los observadores. Consulta [la guía de esta entrega](GUIA-1.11.2.md) y los
-resultados y límites de validación en `dist/VERIFICACION.txt`.
+los observadores. Consulta [la guía de esa entrega](GUIA-1.11.2.md).
 
 ## Actualización 1.11.1
 

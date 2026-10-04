@@ -103,14 +103,18 @@ class RoutineNavigatorTest {
         assertEquals(4, calls);
     }
 
-    @Test void failedNativeRouteWaitsFiveSecondsBeforeRetry() {
+    @Test void failedNativeRouteWidensQuicklyBeforeUsingTheLongImpossibleRetry() {
         ActiveNpc npc = npc("blocked"); Pathfinder finder = pathfinders.get("blocked");
         when(finder.findPath(any(Location.class))).thenReturn(null);
-        for (int tick = 0; tick < 100; tick += 2)
-            assertEquals(RoutineNavigator.Result.WAITING, navigator.move(npc, destination(), 2.4, tick, 2));
-        verify(finder, times(1)).findPath(any(Location.class));
-        navigator.move(npc, destination(), 2.4, 100, 2);
-        verify(finder, times(2)).findPath(any(Location.class));
+        assertEquals(RoutineNavigator.Result.WAITING,navigator.move(npc,destination(),2.4,0,2));
+        assertEquals(RoutineNavigator.Result.WAITING,navigator.move(npc,destination(),2.4,4,2));
+        assertEquals(RoutineNavigator.Result.WAITING,navigator.move(npc,destination(),2.4,8,2));
+        verify(finder,times(3)).findPath(any(Location.class));
+        assertTrue(navigator.exhausted("blocked"));
+        navigator.move(npc,destination(),2.4,100,2);
+        verify(finder,times(3)).findPath(any(Location.class));
+        navigator.move(npc,destination(),2.4,108,2);
+        verify(finder,times(4)).findPath(any(Location.class));
     }
 
     @Test void unloadedDestinationNeverRequestsPaperPathOrReadsItsBlocks() {
@@ -121,10 +125,10 @@ class RoutineNavigatorTest {
         verify(world, never()).getChunkAt(anyInt(), anyInt());
     }
 
-    @Test void unloadedChunkInsideNativeSearchRegionPreventsTheQuery() {
+    @Test void unrelatedUnloadedNeighbourChunkDoesNotBlockTheNativeQuery() {
         ActiveNpc npc = npc("boundary"); when(world.isChunkLoaded(-2, -2)).thenReturn(false);
-        assertEquals(RoutineNavigator.Result.WAITING, navigator.move(npc, destination(), 2.4, 0, 2));
-        verify(pathfinders.get("boundary"), never()).findPath(any(Location.class));
+        assertEquals(RoutineNavigator.Result.MOVING, navigator.move(npc, destination(), 2.4, 0, 2));
+        verify(pathfinders.get("boundary"), times(1)).findPath(any(Location.class));
         verify(world, never()).getChunkAt(anyInt(), anyInt());
     }
 
@@ -137,6 +141,27 @@ class RoutineNavigatorTest {
         order.verify(range).setBaseValue(16.0);
         order.verify(pathfinders.get("range")).findPath(any(Location.class));
         order.verify(range).setBaseValue(48.0);
+    }
+
+    @Test void partialRouteThatDoesNotGetCloserWidensTheNextSearchInsteadOfBeingRejected() {
+        ActiveNpc npc=npc("detour");var range=mock(org.bukkit.attribute.AttributeInstance.class);
+        when(npc.entity().getAttribute(org.bukkit.attribute.Attribute.FOLLOW_RANGE)).thenReturn(range);
+        when(range.getBaseValue()).thenReturn(48.0);
+        Pathfinder.PathResult first=mock(Pathfinder.PathResult.class);
+        when(first.getPoints()).thenReturn(List.of(new Location(world,0,64,0),new Location(world,-1,64,0)));
+        when(first.canReachFinalPoint()).thenReturn(false);
+        Pathfinder.PathResult second=mock(Pathfinder.PathResult.class);
+        when(second.getPoints()).thenReturn(List.of(new Location(world,-1,64,0),new Location(world,2,64,2)));
+        when(second.canReachFinalPoint()).thenReturn(true);
+        when(pathfinders.get("detour").findPath(any(Location.class))).thenReturn(first,second);
+        Location goal=destination();
+        RoutineNavigator.Result result=RoutineNavigator.Result.MOVING;
+        for(int tick=0;tick<80 && mockingDetails(pathfinders.get("detour")).getInvocations().stream()
+                .filter(call->call.getMethod().getName().equals("findPath")).count()<2;tick+=2)
+            result=navigator.move(npc,goal,2.4,tick,2);
+        assertNotEquals(RoutineNavigator.Result.ARRIVED,result);
+        verify(range,atLeastOnce()).setBaseValue(16.0);
+        verify(range,atLeastOnce()).setBaseValue(24.0);
     }
 
     @Test void usefulPartialRouteDoesNotReportArrivalAtItsEndpoint() {
@@ -255,6 +280,36 @@ class RoutineNavigatorTest {
         }
         assertEquals(RoutineNavigator.Result.ARRIVED,result);return visited;
     }
+    @Test void diagonalPaperWaypointSlidesAlongAnAxisInsteadOfStickingOnACorner() {
+        ActiveNpc npc=npc("corner");
+        when(world.getBlockAt(anyInt(),anyInt(),anyInt())).thenAnswer(call->{
+            int x=call.getArgument(0),y=call.getArgument(1),z=call.getArgument(2);
+            boolean solid=y==63 || x==1 && y==64 && z==0;
+            Block block=mock(Block.class);when(block.getType()).thenReturn(solid?Material.STONE:Material.AIR);
+            when(block.isPassable()).thenReturn(!solid);
+            when(block.getBoundingBox()).thenReturn(solid?new BoundingBox(x,y,z,x+1,y+1,z+1):new BoundingBox(x,y,z,x,y,z));
+            return block;
+        });
+        Pathfinder.PathResult path=mock(Pathfinder.PathResult.class);
+        when(path.getPoints()).thenReturn(List.of(new Location(world,0,64,0),new Location(world,1,64,1),new Location(world,2,64,2)));
+        when(path.canReachFinalPoint()).thenReturn(true);
+        when(pathfinders.get("corner").findPath(any(Location.class))).thenReturn(path);
+        RoutineNavigator.Result result=RoutineNavigator.Result.MOVING;
+        boolean axisSlide=false;
+        Location previous=positions.get("corner").clone();
+        for(int tick=0;tick<120 && result!=RoutineNavigator.Result.ARRIVED;tick+=2) {
+            result=navigator.move(npc,destination(),2.4,tick,2);
+            assertNotEquals(RoutineNavigator.Result.WAITING,result,"a legal route must recover from a tight diagonal corner locally");
+            Location now=positions.get("corner");
+            double dx=Math.abs(now.getX()-previous.getX()),dz=Math.abs(now.getZ()-previous.getZ());
+            if(dx<.001 && dz>.001 || dz<.001 && dx>.001)axisSlide=true;
+            previous=now.clone();
+        }
+        assertEquals(RoutineNavigator.Result.ARRIVED,result);
+        assertTrue(axisSlide,"the replay should use an axis slide when the direct diagonal clips the wall");
+        verify(pathfinders.get("corner"),times(1)).findPath(any(Location.class));
+    }
+
     @Test void stairsUseBothTreadsAndApproachTheRiserBeforeLifting() {
         ActiveNpc npc=npc("stairs");steppedTerrain(true,false);staircasePath(npc,false);
         List<Location> visited=walkTo(npc,new Location(world,3.5,66,.5));
