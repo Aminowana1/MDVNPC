@@ -100,7 +100,13 @@ public final class RoutineTerrain implements BoundedPathfinder.Grid {
     /** Paper supplies block-local voxel boxes; never use the enclosing stair cube. */
     private static Collection<BoundingBox> collision(Block block,int x,int y,int z) {
         VoxelShape shape=block.getCollisionShape();
-        if(shape==null)return List.of(block.getBoundingBox()); // Test/integration adapters without voxel shapes.
+        if(shape==null) {
+            // Some test/integration adapters do not expose voxel shapes and may also
+            // return null for blocks such as AIR. Treat that as no collision instead
+            // of passing null to List.of(), which throws NullPointerException.
+            BoundingBox box=block.getBoundingBox();
+            return box==null?List.of():List.of(box);
+        }
         return shape.getBoundingBoxes().stream().map(box->box.clone().shift(x,y,z)).toList();
     }
 
