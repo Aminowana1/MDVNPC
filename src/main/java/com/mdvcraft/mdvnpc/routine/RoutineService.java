@@ -391,7 +391,7 @@ public final class RoutineService {
             boolean furniture=goal.type()==RoutineGoal.Type.SIT || goal.type()==RoutineGoal.Type.SLEEP;
             Location approachOrigin=position;
             s.approachOptions=terrain.approaches(s.destination,furniture).stream().map(terrain::location)
-                    .sorted(Comparator.comparingDouble(approachOrigin::distanceSquared)).map(location->{
+                    .sorted(java.util.Comparator.comparingDouble(approachOrigin::distanceSquared)).map(location->{
                         Location value=location.clone();value.setYaw(s.destination.yaw());return value;
                     }).toList();
             s.approachIndex=0;
