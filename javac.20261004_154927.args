@@ -1,0 +1,12 @@
+--release
+21
+-proc:none
+-Xmaxerrs
+10000
+-d
+/tmp/javac-check
+src/main/java/com/mdvcraft/mdvnpc/routine/RoutineNavigator.java
+src/main/java/com/mdvcraft/mdvnpc/routine/RoutineTerrain.java
+src/main/java/com/mdvcraft/mdvnpc/routine/RoutineCommands.java
+src/test/java/com/mdvcraft/mdvnpc/routine/RoutineNavigatorTest.java
+src/test/java/com/mdvcraft/mdvnpc/routine/RoutineTerrainTest.java

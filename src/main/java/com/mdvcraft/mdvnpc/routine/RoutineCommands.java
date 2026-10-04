@@ -188,7 +188,7 @@ public final class RoutineCommands implements Listener {
                 }
             } else if(s.type==RoutineGoal.Type.SIT) {
                 if(!(block.getBlockData() instanceof Stairs stairs) || stairs.getHalf()!=org.bukkit.block.data.Bisected.Half.BOTTOM)throw new IllegalArgumentException("Selecciona stairs normales, no invertidas");
-            } else if(!block.getType().isSolid() || RoutineTerrain.hazard(block.getType()))throw new IllegalArgumentException("Selecciona suelo sólido y seguro");
+            } else if(!RoutineTerrain.walkingSurface(block))throw new IllegalArgumentException("Selecciona una superficie transitable y segura");
             int y=block.getY()+((s.type==RoutineGoal.Type.WALK || s.type==RoutineGoal.Type.WORK)?1:0);
             var point=new RoutineGoal.Point(s.world,block.getX(),y,block.getZ(),player.getLocation().getYaw());
             if(!many)s.points.clear();

@@ -159,6 +159,23 @@ class RoutineTerrainTest {
         assertEquals(carpet,terrain.near(new org.bukkit.Location(world,.5,64.0625,.5)));
     }
 
+
+    @Test void editorAcceptsCollisionBasedThinWalkingSurfaces() {
+        Block carpet=block(0,64,0,Material.WHITE_CARPET,List.of(new BoundingBox(0,0,0,1,.0625,1)));
+        Block slab=block(1,64,0,Material.STONE_SLAB,List.of(new BoundingBox(0,0,0,1,.5,1)));
+        Block air=block(2,64,0,Material.AIR,List.of());
+        assertTrue(RoutineTerrain.walkingSurface(carpet));
+        assertTrue(RoutineTerrain.walkingSurface(slab));
+        assertFalse(RoutineTerrain.walkingSurface(air));
+    }
+
+    @Test void partialSupportRecoveryNeverClassifiesAFullCubeAsThinGround() {
+        put(0,63,0,Material.STONE,List.of(new BoundingBox(0,0,0,1,1,1)));
+        put(1,64,0,Material.WHITE_CARPET,List.of(new BoundingBox(0,0,0,1,.0625,1)));
+        assertFalse(terrain.partialSupport(new Node(0,64,0)));
+        assertTrue(terrain.partialSupport(new Node(1,65,0)));
+    }
+
     @Test void lowestWorldFloorStillSupportsWalkingWithoutInspectingBelowItsBoundary() {
         put(0,-64,0,Material.STONE,List.of(new BoundingBox(0,0,0,1,1,1)));
         assertEquals(-63,terrain.supportHeight(.5,-63,.5),.000001);

@@ -1,16 +1,20 @@
-# MDVNPC 1.11.7
+# MDVNPC 1.11.8
 
-Corrige las subidas que quedaban oscilando antes de entrar en stairs, slabs,
-alfombras y bloques. El cálculo sigue a cargo de Paper, empieza con alcance 16
-y amplía hasta 64 cuando un rodeo o atasco lo necesita. La ejecución comprueba
-muros y vallas que sobresalen desde debajo de los pies y detecta ciclos de rutas
-parciales. Los viajes lentos mantienen el progreso; la llegada a WORK conserva
-las reglas existentes de atención y de regreso de los músicos a su puesto.
+Corrige el atasco/giro en círculos del replay de rutas cuando el suelo mezcla alturas
+físicas parciales. La navegación ya no depende sólo de la Y que devuelven los nodos
+de Paper: sigue la colisión real del piso, anticipa el pequeño escalón antes del choque
+y tolera las diferencias entre la celda nativa y la altura real de los pies.
 
-Se incorpora recuperación controlada al desaparecer el suelo, conservando la IA
-desactivada y las poses de cama y silla. Los vóxeles se reutilizan únicamente
-durante una actualización, con estado fresco de bloques y puertas.
-Consulta [la guía de esta entrega](GUIA-1.11.7.md).
+La corrección cubre slabs, stairs, `DIRT_PATH`, `MUD`, `SOUL_SAND`, alfombras y
+otras capas finas con colisión, tanto al subir como al bajar. Los destinos se traducen
+a la celda transitable que Paper espera y el editor permite seleccionar superficies
+transitables por colisión aunque `Material#isSolid()` sea falso, como carpet. También
+hay recuperación acotada si un NPC antiguo queda ligeramente incrustado en una
+superficie parcial añadida bajo sus pies, sin atravesar bloques completos.
+
+Todo está centralizado en `RoutineNavigator`/`RoutineTerrain`, por lo que se aplica a
+WALK meta/ciclo/aleatorio, WORK, cama/asiento y retornos sin cambiar los datos de las
+rutinas. Consulta [la guía de esta entrega](GUIA-1.11.8.md).
 
 ## Actualización 1.11.3
 

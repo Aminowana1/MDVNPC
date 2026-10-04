@@ -30,17 +30,16 @@ La versión del proyecto se actualizó a 1.11.7.
 ## Verificación hasta este punto
 
 - Las fuentes principales y las pruebas compilan con Java 21.
-- Última ejecución completa terminada: 450 casos, 448 aprobados, dos fallos de
-  compatibilidad del comportamiento lateral de WORK para NORMAL/SHOP.
-- Se restauró esa regla original y se retiró la prueba nueva que la contradecía.
-  Las pruebas originales de esa compatibilidad se conservaron sin cambios.
-- En la ejecución completa pasaron las 77 comprobaciones de navegación
+- La verificación completa sobre el estado final terminó el 4 de octubre de
+  2026 a las 11:39, hora de Argentina: **449 casos, 449 aprobados, cero fallos,
+  cero errores y cero omitidos. BUILD SUCCESS.**
+- Comando ejecutado: `mvn --batch-mode --no-transfer-progress clean test`.
+  No se generó un JAR.
+- Pasaron las 77 comprobaciones de navegación
   (25 de navegador/puertas, 43 de terreno y 9 de búsqueda), las 11 de gravedad
   y los viajes de 160 bloques a cama/trabajo por encima y por debajo del inicio.
-- Se inició una nueva verificación completa sobre la restauración final, pero
-  se interrumpió para entregar rápidamente sólo el fuente, según lo solicitado.
-  **Queda pendiente terminar esa verificación completa; no se afirma que los
-  449 casos del estado final hayan pasado.**
+- También pasaron las pruebas originales de compatibilidad de WORK para NORMAL
+  y SHOP, conservadas sin cambios. El comportamiento lateral existente permanece.
 - No se ejecutó un servidor Paper real con clientes y LibsDisguises.
 
 ## Continuación
@@ -51,10 +50,10 @@ Ejecutar desde la raíz del proyecto, con Java 21 y Maven:
 mvn --batch-mode --no-transfer-progress clean verify
 ```
 
-Después, revisar especialmente `MusicWorkRecoveryTest`, `RoutineGravityTest`,
-`RoutineNavigatorTest` y las tres clases `Navigation*AuditTest`. Las pruebas
-usan respuestas controladas de Paper; comprobar también las rutas reales en
-servidor antes de dar por validadas todas las construcciones de la ciudad.
+La comprobación pendiente es dentro de Paper: las pruebas automáticas usan
+respuestas controladas de su calculador de rutas. Comprobar las rutas reales
+de cama y trabajo, accesos únicos, puertas protegidas y desniveles antes de dar
+por validadas todas las construcciones de la ciudad.
 
 La entrega conserva `pom.xml`, fuentes, recursos, pruebas y documentación;
 excluye JAR, clases compiladas, carpeta `target`, dependencias y logs de ejecución.

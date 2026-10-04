@@ -31,7 +31,21 @@ public final class RoutineNavigator {
     private static final double GOAL_PROGRESS_DISTANCE = .15;
     private static final double MOVEMENT_EPSILON_SQUARED = 1e-12;
     private static final double GROUND_EPSILON = .015;
+    /** Paper path nodes are integer cells, while real feet can be 1/16 or 1/8 lower/higher
+     * on carpet, dirt path, mud and soul sand. Do not make an NPC orbit a waypoint merely
+     * because the native point and the physical support disagree by a tiny amount. */
+    private static final double WAYPOINT_HORIZONTAL_EPSILON = .15;
+    private static final double WAYPOINT_VERTICAL_EPSILON = .20;
     private static final double MAX_STEP_HEIGHT = 1.01;
+    /** Look slightly ahead of the 0.30-wide body so a low physical riser is raised onto
+     * before collision, even when Paper compresses both route nodes to the same Y. */
+    private static final double RISER_LOOKAHEAD = .42;
+    private static final double RISER_SUPPORT_RADIUS = .065;
+    /** When Paper keeps both nodes at the same Y, follow any real sub-block rise, but
+     * never promote a complete one-block obstacle to a stair. The almost-point-sized
+     * probe samples the route centreline and ignores a slab/block merely beside it. */
+    private static final double MAX_UNANNOUNCED_RISER = .99;
+    private static final double UNANNOUNCED_SUPPORT_RADIUS = .001;
     /** If a partial route finishes almost below/above the destination, following it only
      * makes the NPC hug the wall/floor. Widen first so Paper can discover stairs/ramps/doors. */
     private static final double VERTICAL_SHADOW_HORIZONTAL_SQUARED = 4.5 * 4.5;
@@ -105,7 +119,7 @@ public final class RoutineNavigator {
         if (destination.getWorld() == null || current.getWorld() != destination.getWorld()) {
             cancel(id); return Result.WAITING;
         }
-        if (current.distanceSquared(destination) < .025) { cancel(id); return Result.ARRIVED; }
+        if (arrivedAt(current,destination)) { cancel(id); return Result.ARRIVED; }
         if (budgetTick != tick) beginTick(tick, maximumStarts, maximumNanos);
         Travel travel = travels.get(id);
         if (travel == null || travel.npc != npc || travel.destination.getWorld() != destination.getWorld()
@@ -198,7 +212,7 @@ public final class RoutineNavigator {
             }
         }
         while (travel.index < travel.path.size()
-                && current.distanceSquared(travel.path.get(travel.index)) < .01) travel.index++;
+                && reachedWaypoint(travel,current,travel.path.get(travel.index))) travel.index++;
         if (travel.index >= travel.path.size()) {
             // A partial path is a valid segment of a long trip. Re-query from its endpoint;
             // the search level may already have widened if that segment represented a detour.
@@ -265,6 +279,20 @@ public final class RoutineNavigator {
         return true;
     }
 
+    private static boolean arrivedAt(Location current,Location destination) {
+        if(current.getWorld()!=destination.getWorld())return false;
+        double dx=current.getX()-destination.getX(),dz=current.getZ()-destination.getZ();
+        return dx*dx+dz*dz<=WAYPOINT_HORIZONTAL_EPSILON*WAYPOINT_HORIZONTAL_EPSILON
+                && Math.abs(current.getY()-destination.getY())<=WAYPOINT_VERTICAL_EPSILON;
+    }
+
+    private static boolean reachedWaypoint(Travel travel,Location current,Location waypoint) {
+        if(current.getWorld()!=waypoint.getWorld())return false;
+        double dx=current.getX()-waypoint.getX(),dz=current.getZ()-waypoint.getZ();
+        return dx*dx+dz*dz<=WAYPOINT_HORIZONTAL_EPSILON*WAYPOINT_HORIZONTAL_EPSILON
+                && Math.abs(current.getY()-waypoint.getY())<=WAYPOINT_VERTICAL_EPSILON;
+    }
+
     /** Approach a riser from the last clear position. Descents happen only after the body
      * clears the upper ledge. A diagonal corner that is too tight gets a short X/Z slide
      * before the whole Paper route is discarded. */
@@ -278,8 +306,14 @@ public final class RoutineNavigator {
             double dx=next.getX()-at.getX(),dz=next.getZ()-at.getZ(),horizontal=Math.hypot(dx,dz);
             Location candidate=null;
             if(horizontal<.0001) {
-                double dy=next.getY()-at.getY();
-                if(Math.abs(dy)<.0001)break;
+                // Never chase Paper's integer Y through empty air. At the waypoint centre,
+                // follow the real collision support instead. This is what prevents 1/16-1/8
+                // height blocks from producing a vertical oscillation/spin.
+                double support=travel.terrain.supportHeight(at.getX(),at.getY(),at.getZ(),MAX_STEP_HEIGHT);
+                if(!Double.isFinite(support))return null;
+                double dy=support-at.getY();
+                if(Math.abs(dy)<=WAYPOINT_VERTICAL_EPSILON)break;
+                if(Math.abs(dy)>MAX_STEP_HEIGHT)return null;
                 Location vertical=at.clone().add(0,Math.copySign(Math.min(Math.abs(dy),Math.min(.08,allowance)),dy),0);
                 if(!walkable(travel,vertical,tick))return null;
                 candidate=vertical;
@@ -297,13 +331,20 @@ public final class RoutineNavigator {
                     if(walkable(travel,down,tick))candidate=down;
                 }
 
-                if(candidate==null && next.getY()>at.getY()+GROUND_EPSILON) {
-                    // Probe only in the direction of travel. Side walls touching the 0.60-wide
-                    // body are obstacles, not floors that should make the NPC climb.
-                    double probe=Math.min(horizontal,.34);
+                if(candidate==null) {
+                    // Detect the physical riser in front of the feet even when Paper keeps the
+                    // same integer Y for consecutive waypoints. Partial-height surfaces are
+                    // allowed without a higher native node; a complete block still requires
+                    // Paper's vertical intent so obstacles beside/inside a flat route are not
+                    // treated as stairs.
+                    boolean paperRiser=next.getY()>at.getY()+GROUND_EPSILON;
+                    double riseLimit=paperRiser?MAX_STEP_HEIGHT:MAX_UNANNOUNCED_RISER;
+                    double radius=paperRiser?RISER_SUPPORT_RADIUS:UNANNOUNCED_SUPPORT_RADIUS;
+                    double probe=Math.min(horizontal,RISER_LOOKAHEAD);
                     double contact=travel.terrain.supportHeight(at.getX()+ux*probe,at.getY(),at.getZ()+uz*probe,
-                            Math.min(MAX_STEP_HEIGHT,Math.max(.05,next.getY()-at.getY()+.05)),.065);
-                    if(Double.isFinite(contact) && contact>at.getY()+GROUND_EPSILON && contact<=next.getY()+.08) {
+                            riseLimit,radius);
+                    if(Double.isFinite(contact) && contact>at.getY()+GROUND_EPSILON
+                            && contact-at.getY()<=riseLimit+GROUND_EPSILON) {
                         Location up=at.clone().add(0,Math.min(contact-at.getY(),Math.min(.08,allowance)),0);
                         if(walkable(travel,up,tick)) {
                             candidate=up;
@@ -369,11 +410,24 @@ public final class RoutineNavigator {
         Node start = travel.terrain.near(current);
         if (start == null) return null;
         double contact=travel.terrain.supportHeight(current.getX(),current.getY(),current.getZ(),.02);
-        if(!Double.isFinite(contact))return null;
-        Location floor = current.clone(); floor.setY(contact);
-        if (!doors.openNear(travel.npc.entity(), floor, tick)
-                || !travel.terrain.fits(floor.getX(), floor.getY(), floor.getZ(), false)
-                || Math.abs(floor.getY() - current.getY()) > 1.01) {
+        Location floor = current.clone();
+        if(Double.isFinite(contact))floor.setY(contact);
+        boolean validContact=Double.isFinite(contact)
+                && Math.abs(contact-current.getY())<=1.01
+                && doors.openNear(travel.npc.entity(),floor,tick)
+                && travel.terrain.fits(floor.getX(),floor.getY(),floor.getZ(),false);
+        if(!validContact) {
+            // If a carpet/bottom slab/thin layer was placed under an existing NPC, the old
+            // feet Y can sit a few pixels inside its new collision. A normal vertical sweep
+            // cannot leave an already-overlapping shape. Recover only to a verified partial
+            // support and only by at most half a block; full cubes remain deliberately blocked.
+            double shallow=travel.terrain.height(start), lift=shallow-current.getY();
+            if(lift>GROUND_EPSILON && lift<=.51 && travel.terrain.partialSupport(start)) {
+                Location recovered=current.clone();recovered.setY(shallow);
+                if(doors.openNear(travel.npc.entity(),recovered,tick)
+                        && travel.terrain.fits(recovered.getX(),recovered.getY(),recovered.getZ(),false))
+                    return applyStep(travel,current,recovered)?travel.npc.entity().getLocation():null;
+            }
             return null;
         }
         double dy=floor.getY()-current.getY();
@@ -401,8 +455,16 @@ public final class RoutineNavigator {
             if (range != null) range.setBaseValue(requestedRange);
             // Paper's synchronous navigator works from currently available world data. Do not
             // reject the whole query merely because an unrelated neighboring chunk is unloaded.
+            // The replay destination uses the exact physical feet height (for example
+            // 63.875 on soul sand), but Paper pathfinding targets integer path cells. Feeding
+            // the physical Y directly makes floor(Y) point at the slab/carpet/mud block itself.
+            // Resolve the destination back to its walkable node before asking Paper for a path.
+            Node destinationNode=travel.terrain.near(travel.destination);
+            if(destinationNode==null)return new SearchOutcome(null,SearchFailure.NO_ROUTE);
+            Location nativeDestination=new Location(travel.destination.getWorld(),destinationNode.x()+.5,
+                    destinationNode.y(),destinationNode.z()+.5,travel.destination.getYaw(),travel.destination.getPitch());
             try (GroundFlag ignored = NativeGroundFlag.open(travel.npc.entity())) {
-                result = pathfinder.findPath(travel.destination);
+                result = pathfinder.findPath(nativeDestination);
             }
         } finally {
             if (range != null) range.setBaseValue(priorRange);

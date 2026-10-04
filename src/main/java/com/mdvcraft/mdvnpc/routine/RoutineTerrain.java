@@ -57,6 +57,20 @@ public final class RoutineTerrain implements BoundedPathfinder.Grid {
     public Block block(int x, int y, int z) { return y >= minimumHeight && y < maximumHeight && loaded(x,z) ? world.getBlockAt(x,y,z) : null; }
     public static boolean hazard(Material m) { return m == Material.LAVA || m == Material.WATER || m == Material.FIRE || m == Material.SOUL_FIRE || m == Material.CACTUS || m == Material.MAGMA_BLOCK || m == Material.CAMPFIRE || m == Material.SOUL_CAMPFIRE || m == Material.SWEET_BERRY_BUSH || m == Material.POWDER_SNOW || m == Material.POINTED_DRIPSTONE || m == Material.NETHER_PORTAL || m == Material.END_PORTAL; }
 
+    /** Editor/runtime helper: a walking surface is defined by collision, not Material#isSolid.
+     * Carpets, snow layers and other thin supports are intentionally accepted. */
+    public static boolean walkingSurface(Block block) {
+        if(block==null || hazard(block.getType()) || block.getType().isAir())return false;
+        VoxelShape shape=block.getCollisionShape();
+        if(shape!=null) {
+            Collection<BoundingBox> boxes=shape.getBoundingBoxes();
+            if(boxes!=null && !boxes.isEmpty())return true;
+        }
+        BoundingBox box=block.getBoundingBox();
+        return box!=null && box.getMaxX()-box.getMinX()>EPSILON
+                && box.getMaxY()-box.getMinY()>EPSILON && box.getMaxZ()-box.getMinZ()>EPSILON;
+    }
+
     public double height(Node n) {
         Block floor = block(n.x(), n.y()-1, n.z());
         if (floor == null) return n.y();
@@ -67,6 +81,16 @@ public final class RoutineTerrain implements BoundedPathfinder.Grid {
         return height;
     }
     public Location location(Node n) { return new Location(world, n.x()+.5, height(n), n.z()+.5); }
+
+    /** True when the support is a genuine sub-block collision surface rather than the
+     * top of a full-height cube. Used only to recover an NPC that was restored slightly
+     * inside carpet/slab/path-like collision; it must never pull entities through stone. */
+    boolean partialSupport(Node n) {
+        Block floor=block(n.x(),n.y()-1,n.z());
+        if(floor==null || floor.getType().isAir() || hazard(floor.getType()) || floor.getBlockData() instanceof Door)return false;
+        double top=height(n);
+        return top>n.y()-1+EPSILON && top<n.y()-EPSILON;
+    }
 
     @Override public boolean stand(Node n) {
         Block floor = block(n.x(), n.y()-1, n.z());

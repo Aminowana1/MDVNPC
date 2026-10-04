@@ -336,6 +336,15 @@ class RoutineNavigatorTest {
         assertEquals(original,positions.get("embedded"));verify(pathfinders.get("embedded"),never()).findPath(any(Location.class));
     }
 
+    @Test void floorPreparationRecoversAnNpcRestoredInsideNewCarpetWithoutCrossingAFullCube() {
+        ActiveNpc npc=npc("carpet-start");mixedPartialTerrain();
+        positions.put("carpet-start",new Location(world,4.5,64,.5));
+        assertEquals(RoutineNavigator.Result.MOVING,
+                navigator.move(npc,new Location(world,6.5,64,.5),2.4,0,2));
+        assertEquals(64.0625,positions.get("carpet-start").getY(),.000001);
+        verify(pathfinders.get("carpet-start"),never()).findPath(any(Location.class));
+    }
+
     private void steppedTerrain(boolean stairs,boolean lowCeiling) {
         when(world.getBlockAt(anyInt(),anyInt(),anyInt())).thenAnswer(call->{
             int x=call.getArgument(0),y=call.getArgument(1),z=call.getArgument(2);
@@ -459,11 +468,119 @@ class RoutineNavigatorTest {
         });
     }
 
+    private void raisedOverlayTerrain(Material overlay,double top) {
+        when(world.getBlockAt(anyInt(),anyInt(),anyInt())).thenAnswer(call->{
+            int x=call.getArgument(0),y=call.getArgument(1),z=call.getArgument(2);
+            boolean base=y==63;
+            boolean raised=x==1 && y==64 && z==0;
+            Material material=raised?overlay:base?Material.STONE:Material.AIR;
+            List<BoundingBox> boxes=raised?List.of(new BoundingBox(0,0,0,1,top,1))
+                    :base?List.of(new BoundingBox(0,0,0,1,1,1)):List.of();
+            Block block=mock(Block.class);when(block.getType()).thenReturn(material);
+            when(block.isPassable()).thenReturn(boxes.isEmpty());
+            var shape=mock(org.bukkit.util.VoxelShape.class);when(shape.getBoundingBoxes()).thenReturn(boxes);
+            when(block.getCollisionShape()).thenReturn(shape);
+            when(block.getBoundingBox()).thenReturn(boxes.isEmpty()?new BoundingBox(x,y,z,x,y,z)
+                    :new BoundingBox(x,y,z,x+1,y+(raised?top:1),z+1));
+            return block;
+        });
+    }
+
+    private void compressedSameHeightPath(ActiveNpc npc) {
+        var path=mock(Pathfinder.PathResult.class);
+        // Deliberately no node on x=1: replay must follow the physical floor between
+        // two same-height Paper nodes instead of requiring the route Y to announce the bump.
+        when(path.getPoints()).thenReturn(List.of(new Location(world,0,64,0),new Location(world,2,64,0)));
+        when(path.canReachFinalPoint()).thenReturn(true);
+        when(pathfinders.get(npc.definition().id()).findPath(any(Location.class))).thenReturn(path);
+    }
+
+    @Test void halfSlabBetweenSameHeightPaperNodesIsSteppedWithoutReplanningOrCircling() {
+        ActiveNpc npc=npc("hidden-slab");raisedOverlayTerrain(Material.STONE_SLAB,.5);compressedSameHeightPath(npc);
+        List<Location> visited=walkTo(npc,new Location(world,2.5,64,.5));
+        assertTrue(visited.stream().anyMatch(p->p.getY()>64.45),"the replay must climb the physical slab even when Paper keeps the node Y flat");
+        assertTrue(visited.getLast().getY()<64.01,"the replay must settle back to the full-block floor after the slab");
+        verify(pathfinders.get("hidden-slab"),times(1)).findPath(any(Location.class));
+    }
+
+    @Test void thinCarpetBetweenSameHeightPaperNodesDoesNotCreateAReplanLoop() {
+        ActiveNpc npc=npc("hidden-carpet");raisedOverlayTerrain(Material.WHITE_CARPET,.0625);compressedSameHeightPath(npc);
+        List<Location> visited=walkTo(npc,new Location(world,2.5,64,.5));
+        assertTrue(visited.stream().anyMatch(p->p.getY()>64.04),"thin collision surfaces must be followed physically");
+        verify(pathfinders.get("hidden-carpet"),times(1)).findPath(any(Location.class));
+    }
+
+    @Test void soulSandDipSettlesAndClimbsOutWithoutReplanningOrSpinning() {
+        ActiveNpc npc=npc("soulsand");partialHeightTerrain(Material.SOUL_SAND,.875);straightThreeBlockPath(npc);
+        List<Location> visited=walkTo(npc,new Location(world,2.5,64,.5));
+        assertTrue(visited.stream().anyMatch(p->p.getY()<63.95),"the NPC must settle onto soul sand and climb back out");
+        verify(pathfinders.get("soulsand"),times(1)).findPath(any(Location.class));
+    }
+
     @Test void oneBlockDipDescendsAndClimbsOutWithoutGettingStuck() {
         ActiveNpc npc=npc("onedip");oneBlockDipTerrain();straightThreeBlockPath(npc);
         List<Location> visited=walkTo(npc,new Location(world,2.5,64,.5));
         assertTrue(visited.stream().anyMatch(p->p.getY()<63.2),"the NPC must descend into the one-block dip");
         verify(pathfinders.get("onedip"),times(1)).findPath(any(Location.class));
+    }
+
+
+    private void mixedPartialTerrain() {
+        when(world.getBlockAt(anyInt(),anyInt(),anyInt())).thenAnswer(call->{
+            int x=call.getArgument(0),y=call.getArgument(1),z=call.getArgument(2);
+            Material material=Material.AIR;double top=0;
+            if(z==0 && y==63) {
+                material=switch(x) {
+                    case 1->Material.DIRT_PATH;
+                    case 2->Material.MUD;
+                    case 3->Material.SOUL_SAND;
+                    case 5->Material.STONE_SLAB;
+                    default->Material.STONE;
+                };
+                top=switch(x) {case 1->.9375;case 2,3->.875;case 5->.5;default->1;};
+            } else if(z==0 && x==4 && y==64) {material=Material.WHITE_CARPET;top=.0625;}
+            List<BoundingBox> boxes=top>0?List.of(new BoundingBox(0,0,0,1,top,1)):List.of();
+            Block block=mock(Block.class);when(block.getType()).thenReturn(material);
+            when(block.isPassable()).thenReturn(boxes.isEmpty());
+            var shape=mock(org.bukkit.util.VoxelShape.class);when(shape.getBoundingBoxes()).thenReturn(boxes);
+            when(block.getCollisionShape()).thenReturn(shape);
+            when(block.getBoundingBox()).thenReturn(boxes.isEmpty()?new BoundingBox(x,y,z,x,y,z)
+                    :new BoundingBox(x,y,z,x+1,y+top,z+1));
+            return block;
+        });
+    }
+
+    private void straightPath(ActiveNpc npc,int lastX) {
+        var path=mock(Pathfinder.PathResult.class);List<Location> points=new ArrayList<>();
+        for(int x=0;x<=lastX;x++)points.add(new Location(world,x,64,0));
+        when(path.getPoints()).thenReturn(points);when(path.canReachFinalPoint()).thenReturn(true);
+        when(pathfinders.get(npc.definition().id()).findPath(any(Location.class))).thenReturn(path);
+    }
+
+    @Test void mixedSlabCarpetPathMudAndSoulSandDoNotSpinOrReplan() {
+        ActiveNpc npc=npc("mixed");mixedPartialTerrain();straightPath(npc,6);
+        List<Location> visited=walkTo(npc,new Location(world,6.5,64,.5));
+        assertTrue(visited.stream().anyMatch(p->p.getY()<63.65),"the half slab must use its real height");
+        assertTrue(visited.stream().anyMatch(p->p.getY()>64.01),"the carpet-on-block rise must also be crossed");
+        verify(pathfinders.get("mixed"),times(1)).findPath(any(Location.class));
+    }
+
+    @Test void paperSearchUsesTheWalkableNodeAboveAPartialHeightDestination() {
+        ActiveNpc npc=npc("nativepath");partialHeightTerrain(Material.DIRT_PATH,.9375);
+        var path=mock(Pathfinder.PathResult.class);when(path.getPoints()).thenReturn(List.of(
+                new Location(world,0,64,0),new Location(world,1,64,0)));when(path.canReachFinalPoint()).thenReturn(true);
+        when(pathfinders.get("nativepath").findPath(any(Location.class))).thenReturn(path);
+        navigator.move(npc,new Location(world,1.5,63.9375,.5),2.4,0,2);
+        verify(pathfinders.get("nativepath")).findPath(argThat(target->Math.abs(target.getY()-64)<1e-9));
+    }
+
+    @Test void paperSearchTargetsTheNodeAboveCarpetInsteadOfTheCarpetBlock() {
+        ActiveNpc npc=npc("nativecarpet");mixedPartialTerrain();
+        var path=mock(Pathfinder.PathResult.class);when(path.getPoints()).thenReturn(List.of(
+                new Location(world,0,64,0),new Location(world,4,65,0)));when(path.canReachFinalPoint()).thenReturn(true);
+        when(pathfinders.get("nativecarpet").findPath(any(Location.class))).thenReturn(path);
+        navigator.move(npc,new Location(world,4.5,64.0625,.5),2.4,0,2);
+        verify(pathfinders.get("nativecarpet")).findPath(argThat(target->Math.abs(target.getY()-65)<1e-9));
     }
 
     @Test void stairsUseBothTreadsAndApproachTheRiserBeforeLifting() {

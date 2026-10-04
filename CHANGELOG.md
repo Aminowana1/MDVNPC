@@ -1,3 +1,15 @@
+# MDVNPC 1.11.8 — superficies parciales sin bucles
+
+- El replay sondea la altura de colisión real delante del NPC aunque Paper mantenga la misma Y entre waypoints; evita `choque -> replan -> choque` en slabs, carpets, stairs y pavimentos mixtos.
+- Subidas y bajadas siguen el soporte físico de `DIRT_PATH`, `MUD`, `SOUL_SAND`, losas, escaleras y capas finas, con el mismo límite seguro de un bloque y comprobación completa de colisiones.
+- Los waypoints aceptan una tolerancia vertical pequeña y, al coincidir X/Z, se valida el soporte físico para que una diferencia de 1/16–1/8 de bloque no genere órbitas.
+- El destino físico se convierte a la celda transitable entera antes de llamar a `Pathfinder.findPath(...)`; una alfombra/path/mud ya no puede hacer que Paper reciba como destino el propio bloque de soporte.
+- El editor valida superficies por forma de colisión en vez de `Material#isSolid()`, permitiendo WORK/WALK sobre alfombras, slabs y otras superficies transitables no clasificadas como sólidas.
+- Recuperación acotada de NPC restaurado unos píxeles dentro de carpet/bottom slab/capa parcial; los bloques completos no se atraviesan.
+- La corrección es común a WALK meta/ciclo/aleatorio, WORK, SLEEP/SIT y retornos porque todos usan el navegador central.
+- Se añadieron regresiones de fuente para slab y carpet ocultos entre nodos de igual Y, terreno mixto, `SOUL_SAND`, destinos parciales, selección de superficie y recuperación de carpet.
+- La suite nueva queda pendiente de ejecución local en esta entrega porque el entorno no dispone de Maven/dependencias; ver `VALIDACION-1.11.8.md`.
+
 # MDVNPC 1.11.7 — ejecución de rutas y recuperación
 
 - La subida conserva su altura durante la entrada al escalón; el asentamiento ya no la deshace.
