@@ -8,6 +8,7 @@ import com.github.retrooper.packetevents.util.Vector3i;
 import org.bukkit.*;
 import org.bukkit.block.data.type.*;
 import org.bukkit.entity.ArmorStand;
+import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.persistence.PersistentDataType;
 import java.util.*;
@@ -19,6 +20,7 @@ public final class RoutineVisuals {
         ActiveNpc npc; ArmorStand seat; Location exit; boolean sleeping;
         long nextMeal, mealUntil, nextEffect; ItemStack previous, meal; boolean drinking, reading;
         Location sleepingLocation, seatLocation; Vector3i bedPosition; float bodyYaw;
+        Set<UUID> seatViewers=Set.of();
     }
     private final MdvNpcPlugin plugin;
     private final MmoItemBridge mmo;
@@ -64,13 +66,45 @@ public final class RoutineVisuals {
             // Paper's persistent invisibility also protects the shared entity metadata flag.
             // Reapply after spawn listeners have run, before exposing a mounted passenger.
             p.seat.setInvisible(true);repairSeat(p);
-            if(!p.seat.addPassenger(npc.entity())) {removeSeat(p);return null;}
+            if(!p.seat.addPassenger(npc.entity()) || npc.entity().getVehicle()!=p.seat) {leave(p,true);return null;}
             p.bodyYaw=location.getYaw();npc.entity().setRotation(p.bodyYaw,0);repairSeat(p);
+            p.seatViewers=seatViewers(p);
             return p;
         }catch(RuntimeException | LinkageError ex) {
-            try{leave(p,false);}catch(RuntimeException | LinkageError cleanup){ex.addSuppressed(cleanup);}
+            try{leave(p,true);}catch(RuntimeException | LinkageError cleanup){ex.addSuppressed(cleanup);}
             throw ex;
         }
+    }
+    private static Set<UUID> seatViewers(Pose p) {
+        Set<UUID> viewers=new HashSet<>();
+        for(Player player:p.npc.entity().getTrackedBy())viewers.add(player.getUniqueId());
+        return viewers;
+    }
+    /** Restore only this chair's passenger, and resend the mount when a new observer joins. */
+    public boolean restoreSeat(Pose p,boolean force) {
+        if(p.sleeping)return true;
+        ArmorStand seat=p.seat;Location expected=p.seatLocation;
+        if(seat==null || !seat.isValid() || expected==null || expected.getWorld()==null
+                || !expected.getWorld().isChunkLoaded(expected.getBlockX()>>4,expected.getBlockZ()>>4))return false;
+        Location support=seat.getLocation(),current=p.npc.position();
+        // A moved support or passenger needs a new walking approach, not a warp to an old chair.
+        if(support==null || support.getWorld()!=expected.getWorld() || support.distanceSquared(expected)>.04
+                || !local(current,expected,1))return false;
+        var vehicle=p.npc.entity().getVehicle();
+        if(vehicle!=null && vehicle!=seat)return false;
+        if(vehicle==null && !local(current,p.exit,1))return false;
+        repairSeat(p);
+        Set<UUID> viewers=seatViewers(p);
+        boolean newViewer=!p.seatViewers.containsAll(viewers);
+        // New trackers can receive the disguise spawn after the original passenger packet.
+        // A bounded remount resends the sitting state without changing a stable pose every tick.
+        if(vehicle==null || force || newViewer) {
+            if(vehicle==seat && (!p.npc.entity().leaveVehicle() || p.npc.entity().getVehicle()!=null))return false;
+            if(!seat.addPassenger(p.npc.entity()) || p.npc.entity().getVehicle()!=seat)return false;
+            p.npc.entity().setRotation(p.bodyYaw,0);
+        }
+        p.seatViewers=viewers;
+        return true;
     }
     /** Existing pose cadence repairs external changes without scheduling another task or resending stable flags. */
     private void repairSeat(Pose p) {

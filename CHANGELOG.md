@@ -1,3 +1,14 @@
+# MDVNPC 1.11.2 — Escaleras, puertas y sillas
+
+- Caminata con las cajas de colisión reales de escaleras y losas, incluida la altura del apoyo bajo el cuerpo del NPC.
+- Aproximación al escalón antes de elevarse; desplazamiento horizontal y vertical comparten el límite de velocidad.
+- La navegación normal permite subir bloques y cambiar de nivel. El movimiento de baile conserva una pista nivelada.
+- Cierre de puertas de madera utilizadas por la ruta, incluidas las que ya estaban abiertas si `routines.close-preopened-doors` está activo.
+- La comprobación de ocupación usa el hueco de la puerta: un NPC sentado o quieto al lado ya no retiene su cierre. Se siguen comprobando ocupantes del paso, redstone, cambios de la puerta y protecciones.
+- Montaje de sillas verificado contra el soporte exacto; recuperación de desmontajes cercanos y actualización del montaje al aparecer observadores o reanudarse la rutina.
+- Limpieza y regreso local ante montajes fallidos; un soporte desaparecido, un vehículo ajeno o un desplazamiento grande obliga a abandonar la pose y reintentar por la ruta.
+- Guía: `GUIA-1.11.2.md`. Resultados de comprobaciones locales en `dist/VERIFICACION.txt`; la apariencia y el comportamiento con clientes reales requieren una comprobación en el servidor.
+
 # 1.5.0 — personalidad y prefijos
 
 - Prefijo por NPC desde el editor, con vista previa, eliminación y restauración del formato original.

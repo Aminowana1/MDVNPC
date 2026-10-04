@@ -18,6 +18,7 @@ import org.bukkit.block.data.type.Stairs;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
 import org.bukkit.entity.Villager;
 import org.bukkit.persistence.PersistentDataContainer;
@@ -59,6 +60,7 @@ class RoutineNameOffsetTest {
         when(watcher.isSleeping()).thenAnswer(i->sleeping.get());doAnswer(i->{sleeping.set(i.getArgument(0));return null;}).when(watcher).setSleeping(anyBoolean());
         when(watcher.getBedPosition()).thenAnswer(i->bedPosition.get());doAnswer(i->{bedPosition.set(i.getArgument(0));return null;}).when(watcher).setBedPosition(any(Vector3i.class));
         seat=mock(ArmorStand.class);when(seat.isValid()).thenAnswer(i->!seatRemoved.get());when(seat.getPersistentDataContainer()).thenReturn(mock(PersistentDataContainer.class));
+        when(seat.getLocation()).thenAnswer(i->seatPosition.get()==null?null:seatPosition.get().clone());
         when(entity.getVehicle()).thenAnswer(i->vehicle.get());when(seat.addPassenger(entity)).thenAnswer(i->{vehicle.set(seat);return true;});when(entity.leaveVehicle()).thenAnswer(i->{vehicle.set(null);return true;});
         doAnswer(i->{seatRemoved.set(true);if(vehicle.get()==seat)vehicle.set(null);return null;}).when(seat).remove();
         when(seat.isVisible()).thenAnswer(i->seatVisible.get());doAnswer(i->{seatVisible.set(i.getArgument(0));return null;}).when(seat).setVisible(anyBoolean());
@@ -139,6 +141,71 @@ class RoutineNameOffsetTest {
     }
     @Test void refusedMountRemovesOnlyTheUnusedSupport(){
         doReturn(false).when(seat).addPassenger(entity);assertNull(enterRaw(RoutineGoal.Type.SIT));assertTrue(seatRemoved.get());verify(entity,never()).leaveVehicle();
+    }
+    @Test void aSuccessfulMountReturnValueCannotHideAMissingPassenger(){
+        doReturn(true).when(seat).addPassenger(entity);
+        assertNull(enterRaw(RoutineGoal.Type.SIT));assertTrue(seatRemoved.get());assertNull(vehicle.get());
+    }
+    @Test void failedMountThatMovedTheNpcOntoTheChairReturnsItToItsCheckedExit(){
+        doAnswer(i->{position.set(seatPosition.get().clone());return false;}).when(seat).addPassenger(entity);
+        assertNull(enterRaw(RoutineGoal.Type.SIT));assertTrue(seatRemoved.get());
+        assertEquals(new Location(world,.5,64,1.5),position.get());assertEquals(1,teleports.size());
+    }
+    @Test void lostPassengerIsRemountedLocallyAndKeepsTheChairFacing(){
+        var pose=enter(RoutineGoal.Type.SIT);vehicle.set(null);position.set(seatPosition.get().clone().add(0,.5,0));
+        clearInvocations(seat,entity);
+        assertTrue(visuals.restoreSeat(pose,false));assertSame(seat,vehicle.get());
+        verify(seat).addPassenger(entity);verify(entity).setRotation(pose.bodyYaw,0);assertTrue(teleports.isEmpty());
+        visuals.leave(pose,true);assertEquals(pose.exit,position.get());
+    }
+    @Test void stableSeatChecksRepairFlagsWithoutResendingThePassengerOrBodyRotation(){
+        var pose=enter(RoutineGoal.Type.SIT);clearInvocations(seat,entity);
+        for(int check=0;check<8;check++)assertTrue(visuals.restoreSeat(pose,false));
+        verify(seat,never()).addPassenger(entity);verify(entity,never()).leaveVehicle();verify(entity,never()).setRotation(anyFloat(),anyFloat());
+        seatVisible.set(true);seatInvisible.set(false);assertTrue(visuals.restoreSeat(pose,false));
+        assertTrue(seatInvisible.get());assertFalse(seatVisible.get());verify(seat,never()).addPassenger(entity);
+    }
+    @Test void newlyTrackingObserversReceiveASinglePassengerRefresh(){
+        var pose=enter(RoutineGoal.Type.SIT);var observer=mock(Player.class);when(observer.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(entity.getTrackedBy()).thenReturn(Set.of(observer));clearInvocations(seat,entity);
+        assertTrue(visuals.restoreSeat(pose,false));assertSame(seat,vehicle.get());
+        assertTrue(visuals.restoreSeat(pose,false));assertTrue(visuals.restoreSeat(pose,false));
+        verify(entity).leaveVehicle();verify(seat).addPassenger(entity);verify(entity).setRotation(pose.bodyYaw,0);
+    }
+    @Test void activationCanRefreshAClientPoseEvenWhenTheServerMountIsStillIntact(){
+        var pose=enter(RoutineGoal.Type.SIT);clearInvocations(seat,entity);
+        assertTrue(visuals.restoreSeat(pose,true));assertSame(seat,vehicle.get());
+        verify(entity).leaveVehicle();verify(seat).addPassenger(entity);assertTrue(teleports.isEmpty());
+    }
+    @Test void failedRemountReturnsFalseAndAllowsThePoseToLeaveTheChair(){
+        var pose=enter(RoutineGoal.Type.SIT);position.set(seatPosition.get().clone().add(0,.5,0));vehicle.set(null);
+        doReturn(false).when(seat).addPassenger(entity);
+        assertFalse(visuals.restoreSeat(pose,false));visuals.leave(pose,true);
+        assertTrue(seatRemoved.get());assertNull(pose.seat);assertEquals(pose.exit,position.get());
+    }
+    @Test void aForeignVehicleCannotCountAsTheChairOrBeTakenOverBySeatRepair(){
+        var pose=enter(RoutineGoal.Type.SIT);Entity foreign=mock(Entity.class);vehicle.set(foreign);clearInvocations(seat,entity);
+        assertFalse(visuals.restoreSeat(pose,false));visuals.leave(pose,false);
+        assertSame(foreign,vehicle.get());verify(entity,never()).leaveVehicle();verify(seat,never()).addPassenger(entity);assertTrue(seatRemoved.get());
+    }
+    @Test void aRemovedOrUnloadedSupportIsNeverMountedAgain(){
+        var pose=enter(RoutineGoal.Type.SIT);seatRemoved.set(true);vehicle.set(null);clearInvocations(seat,entity);
+        assertFalse(visuals.restoreSeat(pose,true));verify(seat,never()).addPassenger(entity);
+        seatRemoved.set(false);when(world.isChunkLoaded(anyInt(),anyInt())).thenReturn(false);
+        assertFalse(visuals.restoreSeat(pose,true));verify(seat,never()).addPassenger(entity);
+    }
+    @ParameterizedTest @CsvSource({"20.5,64.5,.5",".5,68.5,.5"})
+    void aDisplacedPassengerCannotBeWarpedBackBySeatRepair(double x,double y,double z){
+        var pose=enter(RoutineGoal.Type.SIT);vehicle.set(null);Location displaced=new Location(world,x,y,z);position.set(displaced.clone());
+        clearInvocations(seat,entity);
+        assertFalse(visuals.restoreSeat(pose,false));assertFalse(visuals.restoreSeat(pose,true));visuals.leave(pose,true);
+        assertEquals(displaced,position.get());assertTrue(teleports.isEmpty());verify(seat,never()).addPassenger(entity);
+    }
+    @Test void aSupportMovedAwayFromItsChairRequiresANewWalkingApproach(){
+        var pose=enter(RoutineGoal.Type.SIT);seatPosition.set(seatPosition.get().clone().add(4,0,0));
+        position.set(seatPosition.get().clone());clearInvocations(seat,entity);
+        assertFalse(visuals.restoreSeat(pose,false));visuals.leave(pose,true);
+        assertTrue(seatRemoved.get());assertTrue(teleports.isEmpty());verify(seat,never()).addPassenger(entity);
     }
     @Test void failedMealRestorationStillRemovesTheSeatWithoutChangingNameVisibility(){
         var pose=enter(RoutineGoal.Type.SIT);pose.mealUntil=10;doThrow(new IllegalStateException("Item metadata")).when(watcher).setMainHandRaised(false);

@@ -42,6 +42,7 @@ class DanceCycleRecoveryTest {
     RoutineGoal.Point point;
     Location position;
     boolean mounted;
+    ArmorStand currentSeat;
     boolean firstSeatExists=true;
     boolean otherSeatExists;
     boolean controllerStarted;
@@ -78,15 +79,17 @@ class DanceCycleRecoveryTest {
         when(entity.getLocation()).thenAnswer(i->position.clone());
         when(entity.getEyeLocation()).thenAnswer(i->position.clone().add(0,1.6,0));
         when(entity.isInsideVehicle()).thenAnswer(i->mounted);
+        when(entity.getVehicle()).thenAnswer(i->mounted?currentSeat:null);
         npc=new ActiveNpc(NpcParser.parse(yaml).get("guest"),position.clone(),entity,null);
         var manager=mock(NpcManager.class);when(plugin.manager()).thenReturn(manager);when(manager.activeNpcs()).thenReturn(List.of(npc));
         visuals=mock(RoutineVisuals.class);
+        when(visuals.restoreSeat(any(),anyBoolean())).thenReturn(true);
         when(visuals.enter(any(),any(),any(),any(),anyLong())).thenAnswer(call->{
             var pose=new RoutineVisuals.Pose();pose.npc=npc;pose.exit=((Location)call.getArgument(3)).clone();
             pose.seat=mock(ArmorStand.class);when(pose.seat.isValid()).thenReturn(true);
-            mounted=true;seatedAt.add(call.getArgument(4));return pose;
+            currentSeat=pose.seat;mounted=true;seatedAt.add(call.getArgument(4));return pose;
         });
-        doAnswer(call->{mounted=false;position=((RoutineVisuals.Pose)call.getArgument(0)).exit.clone();return null;})
+        doAnswer(call->{mounted=false;currentSeat=null;position=((RoutineVisuals.Pose)call.getArgument(0)).exit.clone();return null;})
                 .when(visuals).leave(any(),anyBoolean());
         service=new RoutineService(plugin,visuals);when(plugin.routines()).thenReturn(service);
         point=new RoutineGoal.Point(world.getUID(),0,64,0,0);
@@ -145,6 +148,27 @@ class DanceCycleRecoveryTest {
         clearInvocations(navigator);server.getScheduler().performTicks(4);
         assertEquals(2,seatedAt.size());assertTrue(mounted);assertTrue(service.claimed(point));
         verify(navigator,never()).move(any(),any(),anyDouble(),anyLong(),anyInt());
+        verify(entity,never()).teleport(any(Location.class));
+    }
+
+    @Test void returnUsesNormalNavigationAcrossHeightChangesAndSeatsOnArrival() {
+        startDancing();finishDance();
+        List<Location> returnSteps=new ArrayList<>();
+        doAnswer(call->{
+            Location target=call.getArgument(1);
+            position=returnSteps.isEmpty()?new Location(world,4.5,65,1.5):target.clone();
+            returnSteps.add(position.clone());
+            return returnSteps.size()==1?RoutineNavigator.Result.MOVING:RoutineNavigator.Result.ARRIVED;
+        }).when(navigator).move(eq(npc),any(),anyDouble(),anyLong(),anyInt());
+        clearInvocations(navigator);
+
+        server.getScheduler().performTicks(2);
+        assertEquals(65d,position.getY());assertFalse(mounted);assertEquals(1,seatedAt.size());
+        assertTrue(service.claimed(point));assertTrue(service.status("guest").contains("volviendo"));
+        server.getScheduler().performTicks(2);
+        assertEquals(64d,position.getY());assertTrue(mounted);assertEquals(2,seatedAt.size());
+        assertTrue(service.claimed(point));assertTrue(service.status("guest").contains("sentado"));
+        verify(navigator,times(2)).move(eq(npc),any(),eq(2.4),anyLong(),eq(2));
         verify(entity,never()).teleport(any(Location.class));
     }
 

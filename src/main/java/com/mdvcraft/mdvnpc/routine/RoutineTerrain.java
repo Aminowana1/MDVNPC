@@ -4,6 +4,9 @@ import org.bukkit.*;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.type.Door;
 import org.bukkit.util.BoundingBox;
+import org.bukkit.util.VoxelShape;
+import java.util.Collection;
+import java.util.List;
 import com.mdvcraft.mdvnpc.routine.BoundedPathfinder.Node;
 
 /** Conservative pedestrian geometry. Never asks Bukkit for an unloaded block. */
@@ -16,7 +19,11 @@ public final class RoutineTerrain implements BoundedPathfinder.Grid {
     public static boolean hazard(Material m) { return m == Material.LAVA || m == Material.WATER || m == Material.FIRE || m == Material.SOUL_FIRE || m == Material.CACTUS || m == Material.MAGMA_BLOCK || m == Material.CAMPFIRE || m == Material.SOUL_CAMPFIRE || m == Material.SWEET_BERRY_BUSH || m == Material.POWDER_SNOW || m == Material.POINTED_DRIPSTONE || m == Material.NETHER_PORTAL || m == Material.END_PORTAL; }
     public double height(Node n) {
         Block floor = block(n.x(), n.y()-1, n.z());
-        return floor == null ? n.y() : floor.getBoundingBox().getMaxY();
+        if (floor == null) return n.y();
+        double height = n.y()-1;
+        for (BoundingBox box : collision(floor,n.x(),n.y()-1,n.z()))
+            if (overFootprint(box,n.x()+.5,n.z()+.5)) height=Math.max(height,box.getMaxY());
+        return height;
     }
     public Location location(Node n) { return new Location(world, n.x()+.5, height(n), n.z()+.5); }
     @Override public boolean stand(Node n) {
@@ -41,9 +48,43 @@ public final class RoutineTerrain implements BoundedPathfinder.Grid {
                         if (door.isOpen() || planned && doors.canOpen(block)) continue;
                         return false;
                     }
-                    if (block.getBoundingBox().overlaps(body) && !block.isPassable()) return false;
+                    if (!block.isPassable()) for (BoundingBox box : collision(block,bx,by,bz))
+                        if (box.overlaps(body)) return false;
                 }
         return true;
+    }
+    /** Highest contact under the actual body, including the two treads of a stair.
+     * The bounded vertical window excludes ceilings and prevents crossing unsupported gaps. */
+    public double supportHeight(double x,double y,double z) {
+        return supportHeight(x,y,z,1.01);
+    }
+    public double supportHeight(double x,double y,double z,double rise) {
+        double highest=Double.NEGATIVE_INFINITY;
+        for(int bx=(int)Math.floor(x-.30);bx<=(int)Math.floor(x+.30);bx++)
+            for(int bz=(int)Math.floor(z-.30);bz<=(int)Math.floor(z+.30);bz++)
+                for(int by=Math.max(world.getMinHeight(),(int)Math.floor(y-1.01)-1);
+                        by<=Math.min(world.getMaxHeight()-1,(int)Math.floor(y+rise));by++) {
+                    Block floor=block(bx,by,bz);
+                    if(floor==null)return Double.NaN;
+                    if(!floor.getType().isSolid() || floor.getBlockData() instanceof Door)continue;
+                    for(BoundingBox box:collision(floor,bx,by,bz)) {
+                        double top=box.getMaxY();
+                        if(!overFootprint(box,x,z) || top<y-1.01 || top>y+rise)continue;
+                        if(hazard(floor.getType()))return Double.NaN;
+                        highest=Math.max(highest,top);
+                    }
+                }
+        return Double.isFinite(highest)?highest:Double.NaN;
+    }
+    private static boolean overFootprint(BoundingBox box,double x,double z) {
+        return box.getMaxX()>x-.30+1e-7 && box.getMinX()<x+.30-1e-7
+                && box.getMaxZ()>z-.30+1e-7 && box.getMinZ()<z+.30-1e-7;
+    }
+    /** Paper supplies block-local voxel boxes; never use the enclosing stair cube. */
+    private static Collection<BoundingBox> collision(Block block,int x,int y,int z) {
+        VoxelShape shape=block.getCollisionShape();
+        if(shape==null)return List.of(block.getBoundingBox()); // Test/integration adapters without voxel shapes.
+        return shape.getBoundingBoxes().stream().map(box->box.clone().shift(x,y,z)).toList();
     }
     public Node near(Location l) {
         int y = (int)Math.ceil(l.getY()-.02);

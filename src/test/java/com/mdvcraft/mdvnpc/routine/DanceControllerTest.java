@@ -155,6 +155,33 @@ class DanceControllerTest {
         verifyNoInteractions(teleport);
     }
 
+    @Test void approachMayCrossARaisedBlockBeforeDancingStaysOnItsLevelFloor() {
+        obstacles.add("5,64,0");
+        List<Location> approach = new ArrayList<>();
+        doAnswer(call -> {
+            Location target = call.getArgument(1);
+            Location next = approach.isEmpty() ? new Location(world, 5.5, 65, .5) : target.clone();
+            approach.add(next.clone()); positions.put("seated", next);
+            return RoutineNavigator.Result.MOVING;
+        }).when(navigator).move(eq(seated), any(), anyDouble(), anyLong(), anyInt());
+
+        assertTrue(dances.start(seated, seated.position(), 0));
+        assertEquals(DanceController.Result.MOVING, dances.tick(seated, 0, 2, 2.4));
+        assertEquals(65d, seated.position().getY());
+        verifyNoInteractions(teleport);
+        assertEquals(DanceController.Result.DANCING, dances.tick(seated, 2, 2, 2.4));
+        assertEquals(64d, seated.position().getY());
+        verify(navigator, times(2)).move(eq(seated), any(), eq(2.4), anyLong(), eq(2));
+
+        clearInvocations(navigator, teleport);
+        for (int tick = 4; tick <= 80; tick += 2) {
+            assertEquals(DanceController.Result.DANCING, dances.tick(seated, tick, 2, 2.4));
+            assertEquals(64d, seated.position().getY());
+        }
+        verify(navigator, never()).move(any(), any(), anyDouble(), anyLong(), anyInt());
+        verify(teleport, atLeastOnce()).test(eq(seated), any(Location.class));
+    }
+
     @Test void failedApproachIsBoundedAndCannotKeepAnNpcAwayFromItsRoutineForever() {
         doReturn(RoutineNavigator.Result.WAITING).when(navigator).move(any(), any(), anyDouble(), anyLong(), anyInt());
         assertTrue(dances.start(seated, seated.position(), 0));

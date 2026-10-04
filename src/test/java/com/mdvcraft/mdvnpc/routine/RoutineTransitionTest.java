@@ -83,11 +83,11 @@ class RoutineTransitionTest {
             }
             Pathfinder.PathResult result=mock(Pathfinder.PathResult.class);when(result.getPoints()).thenReturn(path);return result;
         });
-        visuals=mock(RoutineVisuals.class);when(visuals.restoreSleep(any(),anyBoolean())).thenReturn(true);
+        visuals=mock(RoutineVisuals.class);when(visuals.restoreSleep(any(),anyBoolean())).thenReturn(true);when(visuals.restoreSeat(any(),anyBoolean())).thenReturn(true);
         when(visuals.enter(any(),any(),any(),any(),anyLong())).thenAnswer(call->{
             Location approach=call.getArgument(3);assertTrue(position.distanceSquared(approach)<.025,"pose begins only after walking to its doorway");
             RoutineVisuals.Pose pose=new RoutineVisuals.Pose();pose.npc=npc;pose.sleeping=((RoutineGoal)call.getArgument(1)).type()==RoutineGoal.Type.SLEEP;
-            if(!pose.sleeping){ArmorStand seat=mock(ArmorStand.class);when(seat.isValid()).thenReturn(true);pose.seat=seat;}
+            if(!pose.sleeping){ArmorStand seat=mock(ArmorStand.class);when(seat.isValid()).thenReturn(true);pose.seat=seat;when(entity.getVehicle()).thenReturn(seat);}
             return pose;
         });
         service=new RoutineService(plugin,visuals);when(plugin.routines()).thenReturn(service);

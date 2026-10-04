@@ -1,37 +1,39 @@
-MDVNPC 1.11.1: compilación limpia y Maven clean verify con Java 21.
-313 pruebas; 0 errores, 0 fallos, 0 omitidas.
-Base: MDVNPC-1.11.0-atencion-por-goal-corregido.zip del usuario.
-Nombres: DisguiseService idéntico al de 1.9; se elimina el TextDisplay propio.
-Los offsets de nombre antiguos se ignoran; se mantiene el offset de asiento 0.5.
-Limpieza de rótulos antiguos al arrancar y cargar entidades marcadas.
-Recuperación por horario solo sin observadores próximos en origen y destino.
-Transiciones observadas recorren la ruta antes de sentarse/trabajar/dormir.
-Las poses desplazadas no hacen teleport largo al salir/restaurar.
-Se conservan variantes, diálogo, atención por goal, tiendas, música y baile.
-Las ocho partituras se verificaron idénticas a la entrega anterior.
-Sin nuevas tareas por NPC ni escaneos globales por tick.
-Pruebas MockBukkit/Mockito; no se comprobó apariencia en cliente real ni TPS/CPU/RAM.
-Paper/Purpur 1.21.6, LibsDisguises 11.0.18, PacketEvents 2.14.0.
-Entrega solo ZIP de fuentes, sin JAR compilado.
+MDVNPC 1.11.2 — escaleras, puertas y sillas
+Base: MDVNPC-1.11.1-nombres-y-rutinas-corregidos.zip proporcionado por el usuario.
 
-Archivos cambiados o nuevos respecto a 1.11.0 corregido:
-GUIA-1.11.1.md
-README.md
-pom.xml
-src/main/java/com/mdvcraft/mdvnpc/config/Settings.java
-src/main/java/com/mdvcraft/mdvnpc/routine/RoutineNavigator.java
-src/main/java/com/mdvcraft/mdvnpc/routine/RoutineService.java
-src/main/java/com/mdvcraft/mdvnpc/routine/RoutineVisuals.java
-src/main/java/com/mdvcraft/mdvnpc/runtime/NpcManager.java
-src/main/java/com/mdvcraft/mdvnpc/skin/DisguiseService.java
-src/main/resources/config.yml
-src/test/java/com/mdvcraft/mdvnpc/RoutineSettingsTest.java
-src/test/java/com/mdvcraft/mdvnpc/routine/RoutineNameOffsetTest.java
-src/test/java/com/mdvcraft/mdvnpc/routine/RoutineNavigatorTest.java
-src/test/java/com/mdvcraft/mdvnpc/routine/RoutineTransitionTest.java
-src/test/java/com/mdvcraft/mdvnpc/runtime/NpcManagerLegacyNameCleanupTest.java
-src/test/java/com/mdvcraft/mdvnpc/skin/DisguiseNameRendererTest.java
+VERIFICACION REALIZADA
+Java 21; Maven clean verify: BUILD SUCCESS.
+359 pruebas; 0 fallos, 0 errores, 0 omitidas.
+Validación posterior de apertura: 14 pruebas de puertas, todas superadas.
+Incluye 2 nuevas integraciones: abrir puerta cerrada antes de entrar, cruzar y
+cerrar; y esperar fuera cuando un plugin cancela la apertura.
+El JAR no cambió: estas comprobaciones adicionales solo agregan pruebas.
+Se incluyen regresiones de escaleras en cuatro orientaciones, peldaños, esquinas,
+losas, subida y bajada, bloques normales, techo, peligros, chunks descargados
+límites del mundo, puertas preabiertas, varios viajeros, cancelación de eventos,
+redstone, reparación de montaje, observadores y regreso a sillas tras el baile.
 
-Archivos retirados:
-src/main/java/com/mdvcraft/mdvnpc/runtime/NpcNameService.java
-src/test/java/com/mdvcraft/mdvnpc/runtime/NpcNameServiceTest.java
+CORRECCIONES
+RoutineTerrain usa las cajas voxel reales, trasladadas a coordenadas del mundo.
+RoutineNavigator avanza hasta cada peldaño antes de elevarse; las piernas de
+movimiento vertical y horizontal comparten la velocidad total del goal.
+Las rutinas normales pueden subir bloques. DanceFloor conserva el piso nivelado
+solo durante el baile; aproximación y regreso usan la navegación normal.
+DoorController cierra puertas de madera preabiertas al quedar libre el paso;
+un NPC estacionado al lado ya no bloquea el cierre. Se respetan redstone,
+protección, eventos cancelados y cambios externos de estado.
+RoutineVisuals/RoutineService comprueban el vehículo exacto y reparan montajes
+cercanos. Se refresca el asiento al aparecer observadores o reanudar la rutina.
+Un montaje fallido libera el asiento y permite volver a intentarlo caminando.
+
+ENTREGA
+ZIP de fuentes y documentación, sin target ni caché de dependencias.
+JAR compilado MDVNPC-1.11.2.jar entregado por separado.
+GUIA-1.11.2.md incluye actualización y comprobaciones en el juego.
+
+LIMITES
+Pruebas automatizadas MockBukkit/Mockito. No se ejecutó un servidor Paper/Purpur
+real ni se verificó la apariencia en cliente, TPS, CPU o RAM de esta versión.
+El efecto visual de paquetes de pasajeros debe comprobarse en el servidor.
+Versiones objetivo conservadas: Paper/Purpur 1.21.6, LibsDisguises 11.0.18,
+PacketEvents 2.14.0 y Java 21.

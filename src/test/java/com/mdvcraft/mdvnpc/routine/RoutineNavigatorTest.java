@@ -215,4 +215,68 @@ class RoutineNavigatorTest {
         assertEquals(RoutineNavigator.Result.WAITING,navigator.move(npc,destination(),2.4,0,2));
         assertEquals(original,positions.get("embedded"));verify(pathfinders.get("embedded"),never()).findPath(any(Location.class));
     }
+
+    private void steppedTerrain(boolean stairs,boolean lowCeiling) {
+        when(world.getBlockAt(anyInt(),anyInt(),anyInt())).thenAnswer(call->{
+            int x=call.getArgument(0),y=call.getArgument(1),z=call.getArgument(2);
+            List<BoundingBox> boxes=List.of();Material material=Material.AIR;
+            if(y==63 || x>=3 && y<=65 && y>=64 || x==2 && y==64 || lowCeiling && y==66) {
+                material=Material.STONE;boxes=List.of(new BoundingBox(0,0,0,1,1,1));
+            } else if((x==1 && y==64 || x==2 && y==65) && z==0) {
+                material=stairs?Material.OAK_STAIRS:Material.STONE;
+                boxes=stairs?List.of(new BoundingBox(0,0,0,1,.5,1),new BoundingBox(.5,.5,0,1,1,1))
+                        :List.of(new BoundingBox(0,0,0,1,1,1));
+            }
+            Block block=mock(Block.class);when(block.getType()).thenReturn(material);
+            when(block.isPassable()).thenReturn(boxes.isEmpty());
+            var shape=mock(org.bukkit.util.VoxelShape.class);when(shape.getBoundingBoxes()).thenReturn(boxes);
+            when(block.getCollisionShape()).thenReturn(shape);
+            // Enclosing box deliberately loses the stair treads; production must use voxels.
+            when(block.getBoundingBox()).thenReturn(new BoundingBox(x,y,z,x+1,y+1,z+1));
+            return block;
+        });
+    }
+    private void staircasePath(ActiveNpc npc,boolean reversed) {
+        var path=mock(Pathfinder.PathResult.class);
+        List<Location> points=new ArrayList<>(List.of(new Location(world,0,64,0),new Location(world,1,65,0),
+                new Location(world,2,66,0),new Location(world,3,66,0)));
+        if(reversed)Collections.reverse(points);
+        when(path.getPoints()).thenReturn(points);when(pathfinders.get(npc.definition().id()).findPath(any(Location.class))).thenReturn(path);
+    }
+    private List<Location> walkTo(ActiveNpc npc,Location goal) {
+        List<Location> visited=new ArrayList<>();Location previous=npc.entity().getLocation();
+        RoutineNavigator.Result result=RoutineNavigator.Result.MOVING;
+        for(int tick=0;tick<240 && result!=RoutineNavigator.Result.ARRIVED;tick+=2) {
+            result=navigator.move(npc,goal,2.4,tick,2);Location next=npc.entity().getLocation();
+            assertNotEquals(RoutineNavigator.Result.WAITING,result,"valid steps must not discard the route");
+            assertTrue(previous.distance(next)<=.240001,"horizontal and vertical legs share the walking allowance");
+            assertTrue(new RoutineTerrain(world,mock(DoorController.class)).fits(next.getX(),next.getY(),next.getZ(),false));
+            visited.add(next.clone());previous=next;
+        }
+        assertEquals(RoutineNavigator.Result.ARRIVED,result);return visited;
+    }
+    @Test void stairsUseBothTreadsAndApproachTheRiserBeforeLifting() {
+        ActiveNpc npc=npc("stairs");steppedTerrain(true,false);staircasePath(npc,false);
+        List<Location> visited=walkTo(npc,new Location(world,3.5,66,.5));
+        assertTrue(visited.getFirst().getX()>.5,"do not lift a full stair at the center of the previous block");
+        assertTrue(visited.stream().anyMatch(p->p.getY()>64.4 && p.getY()<64.7),"must follow the lower tread");
+        verify(pathfinders.get("stairs"),times(1)).findPath(any(Location.class));
+    }
+    @Test void stairsDescendOnlyAfterTheBodyClearsEachUpperTread() {
+        ActiveNpc npc=npc("down");steppedTerrain(true,false);staircasePath(npc,true);
+        positions.put("down",new Location(world,3.5,66,.5));
+        List<Location> visited=walkTo(npc,new Location(world,.5,64,.5));
+        assertTrue(visited.stream().anyMatch(p->p.getY()>65.4 && p.getY()<65.7));
+        verify(pathfinders.get("down"),times(1)).findPath(any(Location.class));
+    }
+    @Test void ordinaryWalkingCanClimbFullBlocksOutsideDance() {
+        ActiveNpc npc=npc("blocks");steppedTerrain(false,false);staircasePath(npc,false);
+        walkTo(npc,new Location(world,3.5,66,.5));
+    }
+    @Test void aLowCeilingStillPreventsClimbingThroughSolidBlocks() {
+        ActiveNpc npc=npc("ceiling");steppedTerrain(true,true);staircasePath(npc,false);
+        Location before=npc.entity().getLocation();
+        assertEquals(RoutineNavigator.Result.WAITING,navigator.move(npc,new Location(world,3.5,66,.5),2.4,0,2));
+        assertEquals(before,npc.entity().getLocation());
+    }
 }

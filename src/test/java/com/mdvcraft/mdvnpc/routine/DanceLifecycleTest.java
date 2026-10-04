@@ -25,6 +25,7 @@ class DanceLifecycleTest {
     @TempDir Path folder;
     ServerMock server;World world;RoutineService service;RoutineVisuals visuals;RoutineVisuals.Pose pose;
     DanceController dancers;ActiveNpc npc;NpcManager manager;RoutineGoal.Point point;
+    boolean mounted;
     @BeforeEach void setup() throws Exception {
         server=MockBukkit.mock();world=mock(World.class);
         when(world.getUID()).thenReturn(UUID.randomUUID());when(world.getName()).thenReturn("world");
@@ -47,12 +48,14 @@ class DanceLifecycleTest {
         var yaml=new YamlConfiguration();yaml.set("npcs.guest.location.world","world");yaml.set("npcs.guest.trait.type","fiestero");
         var def=NpcParser.parse(yaml).get("guest");
         Villager entity=mock(Villager.class);when(entity.getUniqueId()).thenReturn(UUID.randomUUID());when(entity.isValid()).thenReturn(true);when(entity.getWorld()).thenReturn(world);
-        when(entity.isInsideVehicle()).thenReturn(true);when(entity.getLocation()).thenAnswer(i->new Location(world,.5,64,1.5));
+        when(entity.isInsideVehicle()).thenAnswer(i->mounted);when(entity.getLocation()).thenAnswer(i->new Location(world,.5,64,1.5));
         when(entity.getEyeLocation()).thenAnswer(i->new Location(world,.5,65.6,1.5));
         npc=new ActiveNpc(def,new Location(world,.5,64,1.5),entity,null);
         manager=mock(NpcManager.class);when(plugin.manager()).thenReturn(manager);when(manager.activeNpcs()).thenReturn(List.of(npc));
         visuals=mock(RoutineVisuals.class);pose=new RoutineVisuals.Pose();pose.npc=npc;pose.seat=mock(ArmorStand.class);when(pose.seat.isValid()).thenReturn(true);
-        when(visuals.enter(any(),any(),any(),any(),anyLong())).thenReturn(pose);
+        when(entity.getVehicle()).thenAnswer(i->mounted?pose.seat:null);when(visuals.restoreSeat(any(),anyBoolean())).thenReturn(true);
+        when(visuals.enter(any(),any(),any(),any(),anyLong())).thenAnswer(i->{mounted=true;return pose;});
+        doAnswer(i->{mounted=false;return null;}).when(visuals).leave(any(),anyBoolean());
         service=new RoutineService(plugin,visuals);when(plugin.routines()).thenReturn(service);
         point=new RoutineGoal.Point(world.getUID(),0,64,0,0);
         service.repository().put("guest",new RoutineGoal(1,RoutineGoal.Type.SIT,RoutineGoal.WalkMode.CYCLE,420,1080,2.4,20,List.of(point)));

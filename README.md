@@ -1,4 +1,14 @@
-# MDVNPC 1.11.1
+# MDVNPC 1.11.2
+
+La caminata usa la forma real de escaleras y losas y se acerca al escalón antes de
+elevar al NPC. Las rutinas normales pueden subir bloques; el baile mantiene su
+pista al mismo nivel. Las puertas de madera se cierran después del paso, aunque
+ya estuvieran abiertas, sin quedar retenidas por un NPC que está al lado.
+Las sillas comprueban y recuperan su pasajero y refrescan el montaje al volver
+los observadores. Consulta [la guía de esta entrega](GUIA-1.11.2.md) y los
+resultados y límites de validación en `dist/VERIFICACION.txt`.
+
+## Actualización 1.11.1
 
 Se restauran los nombres nativos de LibsDisguises de la versión 1.9: sin rótulos
 independientes que persigan al NPC ni offsets de nombre al sentarse o dormir.

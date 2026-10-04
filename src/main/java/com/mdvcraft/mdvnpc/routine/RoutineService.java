@@ -157,7 +157,7 @@ public final class RoutineService {
         if(!enabled(npc.definition().id()))return true;
         State s=states.get(npc.definition().id());
         if(s!=null && s.pose!=null && (s.pose.sleeping || !validFurniture(s.goal,s.destination,npc.entity().getWorld())
-                || s.pose.seat!=null && (!s.pose.seat.isValid() || !npc.entity().isInsideVehicle())))return false;
+                || s.pose.seat==null || !s.pose.seat.isValid() || npc.entity().getVehicle()!=s.pose.seat))return false;
         return s!=null && s.npc==npc && !s.paused && s.goal!=null && s.goal.type()!=RoutineGoal.Type.SLEEP
                 && same(s.window,window(npc.definition().id(),npc.entity().getWorld())) && !failed.contains(npc.definition().id());
     }
@@ -300,9 +300,11 @@ public final class RoutineService {
             s.recoveryWindow=null;s.recoveryDone=false;s.nextRecoveryCheck=0;
             if(s.paused) {
                 s.nextPick=0;s.nextDialogue=0;s.nextPoseCheck=0;
-                // Only restore an ongoing sleep, never yesterday's pose after a time jump.
-                if(s.pose!=null && s.pose.sleeping && same(s.window,window(id,position.getWorld()))) {
-                    if(!visuals.restoreSleep(s.pose,true))release(s,true);
+                // Restore an ongoing pose when observers return, never yesterday's pose.
+                if(s.pose!=null && same(s.window,window(id,position.getWorld()))) {
+                    boolean restored=s.pose.sleeping?visuals.restoreSleep(s.pose,true):restoreSeat(s,true);
+                    if(!restored)release(s,true);
+                    else s.nextPoseCheck=ticks+40;
                 }
             }
             s.paused=false;
@@ -329,12 +331,17 @@ public final class RoutineService {
             position=npc.position();
         }
         if(s.pose!=null) {
-            if(!validFurniture(goal,s.destination,position.getWorld()) || s.pose.seat!=null && (!s.pose.seat.isValid() || !npc.entity().isInsideVehicle())) {
+            if(!validFurniture(goal,s.destination,position.getWorld())) {
                 release(s,true);s.nextPick=ticks+100;return;
             }
             if(s.pose.sleeping && ticks>=s.nextPoseCheck) {
                 s.nextPoseCheck=ticks+40;
                 if(!visuals.restoreSleep(s.pose,false)) {release(s,true);s.nextPick=ticks+40;return;}
+            }
+            if(!s.pose.sleeping && (ticks>=s.nextPoseCheck || s.pose.seat==null
+                    || !s.pose.seat.isValid() || npc.entity().getVehicle()!=s.pose.seat)) {
+                s.nextPoseCheck=ticks+40;
+                if(!restoreSeat(s,false)) {release(s,true);s.nextPick=ticks+40;return;}
             }
             if(!s.pose.sleeping && npc.definition().traits().type()==Trait.PARTYGOER
                     && ticks>=s.nextDanceCheck && danceEnabled) {
@@ -447,10 +454,17 @@ public final class RoutineService {
                     // The seated part of the cycle starts after mounting, never while walking
                     // back from the band. Initial seating follows the same quiet interval.
                     s.nextDanceCheck=ticks+danceSeatedTicks;
+                    s.nextPoseCheck=ticks+40;
                     s.status=goal.type()==RoutineGoal.Type.SLEEP?"durmiendo":"sentado";
                 }
             }
         }
+    }
+    private boolean restoreSeat(State state,boolean force) {
+        UUID previous=internalEntity;boolean priorMounting=mounting;
+        internalEntity=state.npc.entity().getUniqueId();mounting=true;
+        try{return visuals.restoreSeat(state.pose,force);}
+        finally{internalEntity=previous;mounting=priorMounting;}
     }
     private void endDance(State s) {
         if(!s.dancing)return;

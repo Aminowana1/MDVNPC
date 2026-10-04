@@ -95,10 +95,10 @@ class RoutineJobInteractionTest {
         // thenReturn(...) would interrupt when(manager.interactions()).
         InteractionService interactions=new InteractionService(messages,logger);
         when(manager.interactions()).thenReturn(interactions);
-        visuals=mock(RoutineVisuals.class);when(visuals.restoreSleep(any(),anyBoolean())).thenReturn(true);
+        visuals=mock(RoutineVisuals.class);when(visuals.restoreSleep(any(),anyBoolean())).thenReturn(true);when(visuals.restoreSeat(any(),anyBoolean())).thenReturn(true);
         when(visuals.enter(any(),any(),any(),any(),anyLong())).thenAnswer(call->{
             RoutineVisuals.Pose pose=new RoutineVisuals.Pose();pose.npc=call.getArgument(0);pose.sleeping=((RoutineGoal)call.getArgument(1)).type()==RoutineGoal.Type.SLEEP;
-            if(!pose.sleeping){pose.seat=mock(ArmorStand.class);when(pose.seat.isValid()).thenReturn(true);}return pose;
+            if(!pose.sleeping){pose.seat=mock(ArmorStand.class);when(pose.seat.isValid()).thenReturn(true);when(entity.getVehicle()).thenReturn(pose.seat);}return pose;
         });
         routines=new RoutineService(plugin,visuals);when(plugin.routines()).thenReturn(routines);
         var field=MdvNpcPlugin.class.getDeclaredField("routines");field.setAccessible(true);field.set(plugin,routines);

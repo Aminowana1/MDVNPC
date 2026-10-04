@@ -107,32 +107,58 @@ public final class RoutineNavigator {
         if (!travel.terrain.stand(nextFloor) || Math.abs(travel.terrain.height(nextFloor) - next.getY()) > .05) {
             failed(travel, tick); return Result.WAITING;
         }
-        Location step = next.clone();
-        // Clear an upward edge before moving horizontally, then descend beyond the edge.
-        if (next.getY() > current.getY() + .015) { step.setX(current.getX()); step.setZ(current.getZ()); }
-        else if (Math.hypot(next.getX() - current.getX(), next.getZ() - current.getZ()) > .02) step.setY(current.getY());
+        double distance = Math.max(.01, speed) * Math.max(1, cadence) / 20.0;
+        Location step = walkingStep(travel,current,next,distance,tick);
+        if(step==null) {failed(travel,tick);return Result.WAITING;}
         Vector delta = step.toVector().subtract(current.toVector());
-        double length = delta.length(), distance = Math.max(.01, speed) * Math.max(1, cadence) / 20.0;
-        if (length > distance) delta.multiply(distance / length);
-        step = current.clone().add(delta);
         if (Math.abs(delta.getX()) + Math.abs(delta.getZ()) > .001)
             step.setDirection(new Vector(delta.getX(), 0, delta.getZ()));
-        int samples = Math.max(1, (int)Math.ceil(delta.length() / .16));
-        for (int i = 1; i <= samples; i++) {
-            Location check = current.clone().add(delta.clone().multiply((double)i / samples));
-            if (!doors.openNear(npc.entity(), check, tick)
-                    || !travel.terrain.fits(check.getX(), check.getY(), check.getZ(), false)) {
-                failed(travel, tick); return Result.WAITING;
-            }
-        }
         if (!teleport.test(npc, step)) { failed(travel, tick); return Result.WAITING; }
         return Result.MOVING;
+    }
+
+    /** Approach each tread before lifting, instead of levitating to the next block's top
+     * at the start of every stair segment. All legs share the same 3D speed allowance. */
+    private Location walkingStep(Travel travel,Location current,Location next,double allowance,long tick) {
+        Location at=current.clone();
+        int limit=(int)Math.ceil(allowance/.08)+16;
+        for(int i=0;i<limit && allowance>1e-7;i++) {
+            double dx=next.getX()-at.getX(),dz=next.getZ()-at.getZ(),horizontal=Math.hypot(dx,dz);
+            Location candidate=at.clone();
+            if(horizontal<.0001) {
+                double dy=next.getY()-at.getY();
+                if(Math.abs(dy)<.0001)break;
+                candidate.add(0,Math.copySign(Math.min(Math.abs(dy),Math.min(.08,allowance)),dy),0);
+            } else {
+                double support=travel.terrain.supportHeight(at.getX(),at.getY(),at.getZ());
+                if(!Double.isFinite(support))return null;
+                if(next.getY()<at.getY()-.015 && support<at.getY()-.015) {
+                    candidate.add(0,-Math.min(at.getY()-support,Math.min(.08,allowance)),0);
+                } else {
+                    double stride=Math.min(horizontal,Math.min(.08,allowance));
+                    candidate.add(dx/horizontal*stride,0,dz/horizontal*stride);
+                    double contact=travel.terrain.supportHeight(candidate.getX(),at.getY(),candidate.getZ());
+                    if(!Double.isFinite(contact))return null;
+                    if(contact>at.getY()+.015) {
+                        // Lift from the last clear position; moving into the riser at an
+                        // intermediate Y would put the feet inside its solid face.
+                        candidate=at.clone().add(0,Math.min(contact-at.getY(),Math.min(.08,allowance)),0);
+                    }
+                }
+            }
+            if(!doors.openNear(travel.npc.entity(),candidate,tick)
+                    || !travel.terrain.fits(candidate.getX(),candidate.getY(),candidate.getZ(),false))return null;
+            allowance-=at.distance(candidate);at=candidate;
+        }
+        return at;
     }
 
     private Location prepareStart(Travel travel, Location current, long tick, double speed, int cadence) {
         Node start = travel.terrain.near(current);
         if (start == null) return null;
-        Location floor = current.clone(); floor.setY(travel.terrain.height(start));
+        double contact=travel.terrain.supportHeight(current.getX(),current.getY(),current.getZ(),.02);
+        if(!Double.isFinite(contact))return null;
+        Location floor = current.clone(); floor.setY(contact);
         if (!doors.openNear(travel.npc.entity(), floor, tick)
                 || !travel.terrain.fits(floor.getX(), floor.getY(), floor.getZ(), false)
                 || Math.abs(floor.getY() - current.getY()) > 1.01) {
