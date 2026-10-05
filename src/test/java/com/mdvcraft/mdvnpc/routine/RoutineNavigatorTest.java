@@ -89,6 +89,25 @@ class RoutineNavigatorTest {
         assertEquals(0, navigator.activeRoutes()); assertEquals(0, navigator.searches());
     }
 
+    @Test void nativeSearchTemporarilyUsesConfiguredClimbAndDropEnvelope() {
+        ActiveNpc npc=npc("terrain-attributes");
+        var step=mock(org.bukkit.attribute.AttributeInstance.class);
+        var fall=mock(org.bukkit.attribute.AttributeInstance.class);
+        when(step.getBaseValue()).thenReturn(.6);
+        when(fall.getBaseValue()).thenReturn(3.0);
+        when(npc.entity().getAttribute(org.bukkit.attribute.Attribute.STEP_HEIGHT)).thenReturn(step);
+        when(npc.entity().getAttribute(org.bukkit.attribute.Attribute.SAFE_FALL_DISTANCE)).thenReturn(fall);
+
+        assertEquals(RoutineNavigator.Result.MOVING,navigator.move(npc,destination(),2.4,0,2));
+
+        var stepOrder=inOrder(step);
+        stepOrder.verify(step).setBaseValue(1.5);
+        stepOrder.verify(step).setBaseValue(.6);
+        var fallOrder=inOrder(fall);
+        fallOrder.verify(fall).setBaseValue(2.3);
+        fallOrder.verify(fall).setBaseValue(3.0);
+    }
+
     @Test void twentyFiveDeparturesShareTwoNativeSearchesPerUpdate() {
         List<ActiveNpc> npcs = new ArrayList<>();
         for (int i = 0; i < 25; i++) npcs.add(npc("npc" + i));
@@ -501,6 +520,132 @@ class RoutineNavigatorTest {
         assertTrue(visited.stream().anyMatch(p->p.getY()>64.45),"the replay must climb the physical slab even when Paper keeps the node Y flat");
         assertTrue(visited.getLast().getY()<64.01,"the replay must settle back to the full-block floor after the slab");
         verify(pathfinders.get("hidden-slab"),times(1)).findPath(any(Location.class));
+    }
+
+    @Test void aShallowlyEmbeddedTopSlabStartRecoversAndFinishesWithoutReplanning() {
+        ActiveNpc npc=npc("top-slab-start");
+        when(world.getBlockAt(anyInt(),anyInt(),anyInt())).thenAnswer(call->{
+            int x=call.getArgument(0),y=call.getArgument(1),z=call.getArgument(2);
+            List<BoundingBox> boxes=y==63?List.of(new BoundingBox(0,0,0,1,1,1))
+                    :y==64 && x>=0 && x<=2 && z==0?List.of(new BoundingBox(0,.5,0,1,1,1)):List.of();
+            Material material=y==63?Material.STONE:boxes.isEmpty()?Material.AIR:Material.STONE_SLAB;
+            Block block=mock(Block.class);when(block.getType()).thenReturn(material);
+            var shape=mock(org.bukkit.util.VoxelShape.class);when(shape.getBoundingBoxes()).thenReturn(boxes);
+            when(block.getCollisionShape()).thenReturn(shape);return block;
+        });
+        positions.put("top-slab-start",new Location(world,.5,64.95,.5));
+        var path=mock(Pathfinder.PathResult.class);
+        when(path.getPoints()).thenReturn(List.of(new Location(world,0,65,0),new Location(world,1,65,0),new Location(world,2,65,0)));
+        when(path.canReachFinalPoint()).thenReturn(true);
+        when(pathfinders.get("top-slab-start").findPath(any(Location.class))).thenReturn(path);
+        List<Location> visited=walkTo(npc,new Location(world,2.5,65,.5));
+        assertEquals(65,visited.getFirst().getY(),1e-6,"the shallow restored overlap must recover onto the slab");
+        verify(pathfinders.get("top-slab-start"),times(1)).findPath(any(Location.class));
+    }
+
+    @Test void aBlockedLaterSubstepKeepsTheEarlierSafeMotion() {
+        ActiveNpc npc=npc("partial-step");
+        // A two-high obstruction between compressed native nodes cannot be climbed.
+        when(world.getBlockAt(anyInt(),anyInt(),anyInt())).thenAnswer(call->{
+            int x=call.getArgument(0),y=call.getArgument(1),z=call.getArgument(2);
+            boolean solid=y==63 || x==1 && z==0 && (y==64 || y==65);
+            Block block=mock(Block.class);when(block.getType()).thenReturn(solid?Material.STONE:Material.AIR);
+            when(block.getBoundingBox()).thenReturn(solid?new BoundingBox(x,y,z,x+1,y+1,z+1):null);
+            return block;
+        });
+        compressedSameHeightPath(npc);
+        assertEquals(RoutineNavigator.Result.MOVING,navigator.move(npc,new Location(world,2.5,64,.5),2.4,0,2));
+        Location at=positions.get("partial-step");
+        assertTrue(at.getX()>.5 && at.getX()<=.700001,"keep clear horizontal substeps before the body touches the wall");
+        assertEquals(64,at.getY(),1e-6,"a flat route must not cause a speculative lift over a two-high wall");
+        assertEquals(1,navigator.activeRoutes(),"a partially consumed update retains its native route");
+    }
+
+    @Test void blockedRouteReplansDoNotRevisitTheOccupiedCellCentreForever() {
+        ActiveNpc npc=npc("blocked-replan");
+        when(world.getBlockAt(anyInt(),anyInt(),anyInt())).thenAnswer(call->{
+            int x=call.getArgument(0),y=call.getArgument(1),z=call.getArgument(2);
+            boolean solid=y==63 || x==1 && z==0 && (y==64 || y==65);
+            Block block=mock(Block.class);when(block.getType()).thenReturn(solid?Material.STONE:Material.AIR);
+            when(block.getBoundingBox()).thenReturn(solid?new BoundingBox(x,y,z,x+1,y+1,z+1):null);
+            return block;
+        });
+        compressedSameHeightPath(npc);
+        double previousX=.5;
+        for(int tick=0;tick<100 && !navigator.exhausted("blocked-replan");tick+=2) {
+            assertNotEquals(RoutineNavigator.Result.ARRIVED,
+                    navigator.move(npc,new Location(world,2.5,64,.5),2.4,tick,2));
+            Location at=positions.get("blocked-replan");
+            assertTrue(at.getX()>=previousX-1e-7,"a replan must not turn back toward the occupied starting cell centre");
+            assertTrue(at.getX()<.700001,"the body cannot enter the two-high wall");
+            assertEquals(64,at.getY(),1e-6);previousX=at.getX();
+        }
+        assertTrue(navigator.exhausted("blocked-replan"),"stationary local failures must widen and enter the bounded impossible retry");
+        verify(pathfinders.get("blocked-replan"),atMost(12)).findPath(any(Location.class));
+    }
+
+    @Test void anEmbeddedBottomSlabRecoverySharesTheWalkingAllowanceBeforeQueryingPaper() {
+        ActiveNpc npc=npc("bottom-slab-start");raisedOverlayTerrain(Material.STONE_SLAB,.5);
+        positions.put("bottom-slab-start",new Location(world,1.5,64.05,.5));
+        Location goal=new Location(world,2.5,64,.5);
+        var path=mock(Pathfinder.PathResult.class);
+        when(path.getPoints()).thenReturn(List.of(new Location(world,1,65,0),new Location(world,2,64,0)));
+        when(path.canReachFinalPoint()).thenReturn(true);
+        when(pathfinders.get("bottom-slab-start").findPath(any(Location.class))).thenReturn(path);
+        assertEquals(RoutineNavigator.Result.MOVING,navigator.move(npc,goal,2.4,0,2));
+        assertEquals(64.29,positions.get("bottom-slab-start").getY(),1e-6,"recover only the .24 movement allowance");
+        assertEquals(RoutineNavigator.Result.MOVING,navigator.move(npc,goal,2.4,2,2));
+        assertEquals(64.5,positions.get("bottom-slab-start").getY(),1e-6);
+        verify(pathfinders.get("bottom-slab-start"),never()).findPath(any(Location.class));
+        Location previous=positions.get("bottom-slab-start").clone();
+        RoutineNavigator.Result result=RoutineNavigator.Result.MOVING;
+        for(int tick=4;tick<120 && result!=RoutineNavigator.Result.ARRIVED;tick+=2) {
+            result=navigator.move(npc,goal,2.4,tick,2);
+            Location at=positions.get("bottom-slab-start");
+            assertNotEquals(RoutineNavigator.Result.WAITING,result);
+            assertTrue(previous.distance(at)<=.240001);
+            assertTrue(new RoutineTerrain(world,mock(DoorController.class)).fits(at.getX(),at.getY(),at.getZ(),false));
+            previous=at.clone();
+        }
+        assertEquals(RoutineNavigator.Result.ARRIVED,result);
+        verify(pathfinders.get("bottom-slab-start"),times(1)).findPath(any(Location.class));
+    }
+
+    @Test void anEmbeddedLowerStairTreadRecoversAtItsActualFeetPosition() {
+        ActiveNpc npc=npc("lower-tread-start");steppedTerrain(true,false);
+        positions.put("lower-tread-start",new Location(world,1.15,64.45,.5));
+        staircasePath(npc,false);
+        Location goal=new Location(world,3.5,66,.5);
+        assertEquals(RoutineNavigator.Result.MOVING,navigator.move(npc,goal,2.4,0,2));
+        assertEquals(64.5,positions.get("lower-tread-start").getY(),1e-6,
+                "the lower tread, not the centred upper tread, is the restored feet support");
+        verify(pathfinders.get("lower-tread-start"),never()).findPath(any(Location.class));
+        // Paper starts at the occupied stair cell after recovery, rather than a prior tile.
+        var path=mock(Pathfinder.PathResult.class);
+        when(path.getPoints()).thenReturn(List.of(new Location(world,1,65,0),new Location(world,2,66,0),new Location(world,3,66,0)));
+        when(path.canReachFinalPoint()).thenReturn(true);
+        when(pathfinders.get("lower-tread-start").findPath(any(Location.class))).thenReturn(path);
+        RoutineNavigator.Result result=RoutineNavigator.Result.MOVING;
+        Location previous=positions.get("lower-tread-start").clone();
+        for(int tick=2;tick<160 && result!=RoutineNavigator.Result.ARRIVED;tick+=2) {
+            result=navigator.move(npc,goal,2.4,tick,2);
+            Location at=positions.get("lower-tread-start");
+            assertNotEquals(RoutineNavigator.Result.WAITING,result);
+            assertTrue(previous.distance(at)<=.240001);
+            assertTrue(new RoutineTerrain(world,mock(DoorController.class)).fits(at.getX(),at.getY(),at.getZ(),false));
+            previous=at.clone();
+        }
+        assertEquals(RoutineNavigator.Result.ARRIVED,result);
+        verify(pathfinders.get("lower-tread-start"),times(1)).findPath(any(Location.class));
+    }
+
+    @Test void lowerTreadRecoveryDoesNotIgnoreAnUpperRiserOverlappingTheBody() {
+        ActiveNpc npc=npc("blocked-lower-tread");steppedTerrain(true,false);
+        positions.put("blocked-lower-tread",new Location(world,1.25,64.45,.5));
+        Location before=positions.get("blocked-lower-tread").clone();
+        assertEquals(RoutineNavigator.Result.WAITING,navigator.move(npc,new Location(world,3.5,66,.5),2.4,0,2));
+        assertEquals(before,positions.get("blocked-lower-tread"));
+        verify(pathfinders.get("blocked-lower-tread"),never()).findPath(any(Location.class));
     }
 
     @Test void thinCarpetBetweenSameHeightPaperNodesDoesNotCreateAReplanLoop() {

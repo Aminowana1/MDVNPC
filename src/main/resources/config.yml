@@ -15,12 +15,15 @@ worldguard-spawn-bypass: true
 shop-allow-cancelled-interaction: false
 # Rutinas opcionales: cada NPC se guarda en NPCs/<id>/routines.yml. No fuerzan chunks.
 routines:
-  default-speed: 2.4 # bloques/segundo; cada goal puede sustituirlo
+  default-speed: 2.5 # bloques/segundo; cada goal puede sustituirlo
   random-radius: 20
   activation-range: 48
   movement-interval-ticks: 2 # 1..4; seguimiento de rutas Paper, IA autónoma apagada
   passive-update-ticks: 8 # 2..20; NPC quietos actualizan menos, horario/presencia siguen vigilados
   path-starts-per-update: 2 # 1..8; máximo compartido de nuevas búsquedas Paper por actualización
+  max-climb-height: 1.3 # bloques que un NPC puede subir al caminar (0..4)
+  max-drop-height: 2.3 # bloques que un NPC puede bajar/caer al caminar (0..8)
+  max-unannounced-drop: 1.01 # bajada máxima sin nodo explícito en la ruta Paper (<= max-drop-height)
   dancing: true # solo NPC con rasgo Fiestero: dejan la silla, bailan junto a músicos y vuelven
   dance-duration-seconds: 60 # tiempo bailando; empieza al llegar a la pista (1..600)
   dance-seated-seconds: 30 # descanso completo desde que vuelve a sentarse (1..600)
