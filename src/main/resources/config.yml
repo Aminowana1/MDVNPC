@@ -28,8 +28,8 @@ routines:
   stuck-hop:
     enabled: true
     delay-seconds: 3 # 1..60; espera sin desplazamiento antes de intentar/reintentar
-    height: 0.6 # 0.05..4 bloques; altura del pequeño salto
-    distance: 1.0 # 0.05..4 bloques; avance en la dirección de la mirada
+    height: 0.6 # 0.05..4; altura del impulso, siempre se intenta aunque esté flotando
+    distance: 1.0 # 0.05..4; impulso hacia la mirada; bloques/vallas recortan el movimiento al chocar
   dancing: true # solo NPC con rasgo Fiestero: dejan la silla, bailan junto a músicos y vuelven
   dance-duration-seconds: 60 # tiempo bailando; empieza al llegar a la pista (1..600)
   dance-seated-seconds: 30 # descanso completo desde que vuelve a sentarse (1..600)

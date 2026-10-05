@@ -63,8 +63,10 @@ public final class RoutineService {
         RoutineGoal.Point destination; Location approach; RoutineVisuals.Pose pose;
         boolean working,paused,dancing,returningFromDance,recoveryDone;
         boolean recoveringFloor;
+        boolean recoveringHopFloor;
         Location travelProgress;
         Location stuckAnchor;
+        Location recoveryHopStart;
         long nextHopAttempt;
         long nextPick, travelSince, nextPresence, nextDialogue, nextPoseCheck, nextDanceCheck, nextUpdate,nextReturnCheck,returnWaitingSince,nextRecoveryCheck;
         int returnDoorway,returnFailedDoorways;
@@ -243,7 +245,7 @@ public final class RoutineService {
         if(s.destination!=null) occupied.remove(key(s.destination),s.npc.definition().id());
         s.destination=null;s.approach=null;s.approachOptions=List.of();s.approachIndex=0; navigator.cancel(s.npc.definition().id());
         s.returningFromDance=false;s.nextReturnCheck=0;s.returnWaitingSince=0;s.returnDoorway=0;s.returnFailedDoorways=0;
-        s.recoveringFloor=false;s.travelProgress=null;gravity.reset(s.gravity);
+        s.recoveringFloor=false;s.recoveringHopFloor=false;s.travelProgress=null;gravity.reset(s.gravity);
     }
     public void remove(String id) {
         staticFloors.remove(id);
@@ -426,6 +428,10 @@ public final class RoutineService {
             if(!s.pose.sleeping)looks.tick(npc,s.look,ticks,s.pose.bodyYaw,true,s.pose.reading,s.pose.mealUntil>ticks);
             return;
         }
+        // Floor recovery may keep returning BLOCKED, or report lift/fall frames without
+        // horizontal movement. Its early return must not hide a waiting walker's clock.
+        // A started hop owns subsequent frames before gravity; idle workers remain excluded.
+        if(!s.working && stuckHop(s))return;
         // Native route replay owns lifted stair frames. Check ordinary walkers only after
         // WAITING below; idle workers and an already falling NPC have no active stair step.
         if(s.working || s.recoveringFloor || s.gravity.falling()) {
@@ -471,19 +477,24 @@ public final class RoutineService {
                         Location value=location.clone();value.setYaw(s.destination.yaw());return value;
                     }).toList();
             s.approachIndex=0;
-            if(s.approachOptions.isEmpty()) {s.destination=null;s.status="destino descargado o sin acceso";return;}
+            if(s.approachOptions.isEmpty()) {
+                // The selected destination still represents walking intent even when its
+                // floor/clearance cannot produce a route doorway from the current world.
+                observeStuckMotion(s,position);
+                s.destination=null;s.status="destino descargado o sin acceso";return;
+            }
             s.approach=s.approachOptions.getFirst();
             resetTravelProgress(s,position);
             if(furniture) occupied.put(key(s.destination),id);
         }
         Location beforeMove=npc.position();
-        observeStuckMotion(s,beforeMove,false);
+        observeStuckMotion(s,beforeMove);
         // Joining a seat from its checked doorway needs no exact native waypoint. This also
         // recovers a return that ends a few centimetres short without a visible long teleport.
         var result=s.returningFromDance && readyToSit(npc,s.approach)
                 ?RoutineNavigator.Result.ARRIVED:navigator.move(npc,s.approach,goal.speed(),ticks,cadence);
         boolean progressed=travelProgress(s,beforeMove,npc.position(),result);
-        observeStuckMotion(s,npc.position(),false);
+        observeStuckMotion(s,npc.position());
         if(result==RoutineNavigator.Result.WAITING && recoverFloor(s))return;
         if(!s.returningFromDance && result==RoutineNavigator.Result.WAITING && navigator.exhausted(id)
                 && (goal.type()==RoutineGoal.Type.SIT || goal.type()==RoutineGoal.Type.SLEEP)) {
@@ -568,18 +579,17 @@ public final class RoutineService {
         resetTravelProgress(s,after);return true;
     }
     private void clearStuckHop(State s) {
-        s.stuckAnchor=null;s.nextHopAttempt=0;
+        s.stuckAnchor=null;s.recoveryHopStart=null;s.nextHopAttempt=0;
         if(navigator!=null)navigator.cancelHop(s.npc.definition().id());
     }
-    /** Native retries do not reset this clock. Only accumulated real displacement does. */
-    private void observeStuckMotion(State s,Location at,boolean horizontalOnly) {
+    /** Native retries and vertical floor corrections cannot disguise a stationary walker. */
+    private void observeStuckMotion(State s,Location at) {
         if(!stuckHopEnabled || s.npc.entity().isInsideVehicle())return;
         if(s.stuckAnchor==null || s.stuckAnchor.getWorld()!=at.getWorld()) {
             s.stuckAnchor=at.clone();s.nextHopAttempt=ticks+stuckHopDelayTicks;return;
         }
         double dx=at.getX()-s.stuckAnchor.getX(),dz=at.getZ()-s.stuckAnchor.getZ();
-        double dy=horizontalOnly?0:at.getY()-s.stuckAnchor.getY();
-        if(dx*dx+dy*dy+dz*dz>=.0025) {
+        if(dx*dx+dz*dz>=.0025) {
             s.stuckAnchor=at.clone();s.nextHopAttempt=ticks+stuckHopDelayTicks;
         }
     }
@@ -589,24 +599,35 @@ public final class RoutineService {
         if(!stuckHopEnabled || npc.entity().isInsideVehicle()) {clearStuckHop(s);return false;}
         boolean hopping=navigator.activeHop(id);
         if(s.stuckAnchor==null && s.destination==null && !hopping)return false;
-        observeStuckMotion(s,npc.position(),hopping);
         if(hopping) {
             Location before=npc.position();
+            if(s.recoveryHopStart==null)s.recoveryHopStart=before.clone();
             navigator.advanceHop(npc,ticks);
-            Location after=npc.position();observeStuckMotion(s,after,true);
+            Location after=npc.position();
             if(s.stuckAnchor!=null)s.stuckAnchor.setY(after.getY());
-            // Vertical animation cannot keep an inaccessible route alive indefinitely.
-            Location horizontalBefore=before.clone(),horizontalAfter=after.clone();
-            horizontalBefore.setY(after.getY());
-            if(s.travelProgress!=null)s.travelProgress.setY(after.getY());
-            travelProgress(s,horizontalBefore,horizontalAfter,RoutineNavigator.Result.MOVING);
             if(plugin.sounds()!=null)plugin.sounds().moved(npc,before,after,ticks);
-            if(!navigator.activeHop(id))s.nextHopAttempt=ticks+stuckHopDelayTicks;
+            if(!navigator.activeHop(id)) {
+                // Count the final displacement, not an outward frame followed by a return.
+                // Vertical animation and blocked attempts cannot prolong a stalled route.
+                Location start=s.recoveryHopStart;
+                if(start.getWorld()==after.getWorld()) {
+                    double dx=after.getX()-start.getX(),dz=after.getZ()-start.getZ();
+                    if(dx*dx+dz*dz>=.0025) {
+                        s.stuckAnchor=after.clone();resetTravelProgress(s,after);
+                    }
+                }
+                s.recoveryHopStart=null;s.nextHopAttempt=ticks+stuckHopDelayTicks;
+                // A forced hop can finish in mid-air: hand the following frame to gravity.
+                s.recoveringFloor=true;s.recoveringHopFloor=true;
+            }
             s.nextUpdate=ticks+cadence;s.status="salto corto para destrabarse";return true;
         }
+        s.recoveryHopStart=null;
+        observeStuckMotion(s,npc.position());
         if(ticks<s.nextHopAttempt)return false;
         s.nextHopAttempt=ticks+stuckHopDelayTicks;
-        if(!navigator.startHop(npc,stuckHopHeight,stuckHopDistance,ticks))return false;
+        if(!navigator.startRecoveryHop(npc,stuckHopHeight,stuckHopDistance,ticks))return false;
+        s.recoveryHopStart=npc.position();gravity.reset(s.gravity);
         s.nextUpdate=ticks+cadence;s.status="salto corto para destrabarse";return true;
     }
     /** Returns true while floor recovery owns this update; reservations remain unchanged. */
@@ -629,12 +650,16 @@ public final class RoutineService {
                 resetTravelProgress(s,npc.position());
             }
             s.nextUpdate=ticks+(result.moving()?cadence:20);
+            if(stuckHopEnabled && s.stuckAnchor!=null && s.nextHopAttempt>ticks)
+                s.nextUpdate=Math.min(s.nextUpdate,s.nextHopAttempt);
             s.status=result==RoutineGravity.Result.FALLING?"cayendo al perder el suelo"
                     :result==RoutineGravity.Result.LIFTING?"recuperando apoyo":"esperando suelo seguro";
             return true;
         }
         if(!s.recoveringFloor)return false;
-        s.recoveringFloor=false;Location position=npc.position();resetTravelProgress(s,position);
+        s.recoveringFloor=false;Location position=npc.position();
+        if(!s.recoveringHopFloor)resetTravelProgress(s,position);
+        s.recoveringHopFloor=false;
         navigator.cancel(id);s.nextUpdate=ticks+cadence;
         if(s.destination!=null && s.goal!=null) {
             RoutineTerrain terrain=new RoutineTerrain(position.getWorld(),doors);

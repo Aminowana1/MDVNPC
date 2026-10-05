@@ -248,6 +248,185 @@ class RoutineHopTest {
         assertFalse(navigator.activeHop("hop"));assertEquals(RoutineNavigator.Result.MOVING,result);
         assertEquals(1.5,position.getX(),1e-6);verify(finder,never()).findPath(any(Location.class));
     }
+    @Test void recoveryKeepsTheConfiguredArcWhenTheFullForwardSpaceIsClear() {
+        assertTrue(navigator.startRecoveryHop(npc,.6,1,0));
+        List<Location> frames=finishHop(0);
+        assertEquals(1.5,position.getX(),1e-6);
+        assertEquals(64.6,frames.stream().mapToDouble(Location::getY).max().orElseThrow(),1e-6);
+    }
+
+    @Test void aWalkerFacingAWallJumpsAndHitsItsActualCollision() {
+        put(1,64,0,Material.STONE,CUBE);put(1,65,0,Material.STONE,CUBE);
+        assertFalse(navigator.startHop(npc,.6,1,0),"the exact one-block arc is impossible");
+        assertTrue(navigator.startRecoveryHop(npc,.6,1,2));
+        List<Location> frames=finishHop(2);
+        assertEquals(.7,position.getX(),1e-6,"the wall clips motion at actual body contact");
+        assertEquals(64.6,frames.stream().mapToDouble(Location::getY).max().orElseThrow(),1e-6);
+    }
+
+    @Test void recoveryHopsVerticallyWhenEvenTheShortestForwardStepIsBlocked() {
+        position.setX(.695);put(1,64,0,Material.STONE,CUBE);put(1,65,0,Material.STONE,CUBE);
+        assertTrue(navigator.startRecoveryHop(npc,.6,1,0));
+        List<Location> frames=finishHop(0);
+        assertTrue(frames.stream().allMatch(at->at.getX()<=.700001));
+        assertEquals(.7,position.getX(),1e-6);
+        assertEquals(64.6,frames.stream().mapToDouble(Location::getY).max().orElseThrow(),1e-6);
+        assertTrue(navigator.startRecoveryHop(npc,.6,1,60),"stationary recovery remains repeatable");
+        finishHop(60);
+    }
+
+    @Test void aLowCeilingClipsTheImpulseWithoutDisablingEveryAttempt() {
+        put(0,66,0,Material.STONE,CUBE);
+        assertFalse(navigator.startHop(npc,.6,1,0));
+        assertTrue(navigator.startRecoveryHop(npc,.6,1,2));
+        List<Location> frames=finishHop(2);
+        double highest=frames.stream().mapToDouble(Location::getY).max().orElseThrow();
+        assertTrue(highest>64);assertTrue(highest<=64.050001,"respect the actual available headroom");
+        assertEquals(1.5,position.getX(),1e-6);
+    }
+
+    @Test void aLowerCoveredFenceCannotBecomeTheLandingOfAdaptiveRecovery() {
+        for(Material cap:List.of(Material.STONE_SLAB,Material.OAK_TRAPDOOR)) {
+            cells.clear();position=new Location(world,.5,64,.5,-90,0);
+            put(1,62,0,Material.OAK_FENCE,List.of(new BoundingBox(0,0,0,1,1.5,1)));
+            put(1,63,0,cap,List.of(new BoundingBox(0,.5,0,1,1,1)));
+            assertFalse(navigator.startHop(npc,.6,1,0));
+            assertTrue(navigator.startRecoveryHop(npc,.6,1,2));
+            finishHop(2);assertTrue(position.getX()<.98,"do not put the feet on the covered fence");
+        }
+    }
+
+    @Test void aOneBlockLowerFenceWithACapDoesNotTriggerANormalWalkingLift() {
+        for(Material cap:List.of(Material.STONE_SLAB,Material.OAK_TRAPDOOR)) {
+            navigator.clear();cells.clear();position=new Location(world,.5,64,.5,-90,0);
+            put(1,63,0,Material.OAK_FENCE,List.of(new BoundingBox(0,0,0,1,1.5,1)));
+            put(1,64,0,cap,List.of(new BoundingBox(0,.5,0,1,1,1)));
+            Pathfinder.PathResult path=mock(Pathfinder.PathResult.class);
+            when(path.getPoints()).thenReturn(List.of(new Location(world,0,64,0),new Location(world,1,65,0),new Location(world,2,64,0)));
+            when(path.canReachFinalPoint()).thenReturn(true);when(finder.findPath(any(Location.class))).thenReturn(path);
+            Location goal=new Location(world,2.5,64,.5);
+            for(long tick=0;tick<100;tick+=2) {
+                assertNotEquals(RoutineNavigator.Result.ARRIVED,navigator.move(npc,goal,2.4,tick,2));
+                assertEquals(64,position.getY(),1e-6,"decorations must not cause a speculative vertical lift");
+                assertTrue(position.getX()<.700001);assertBodyClear(position);
+            }
+        }
+    }
+
+    @Test void sameHeightDecorativeFenceSurfaceCannotBeCrossedAsOrdinaryGround() {
+        for(int x=0;x<=2;x++)put(x,63,0,Material.STONE_SLAB,List.of(new BoundingBox(0,.5,0,1,1,1)));
+        put(1,62,0,Material.OAK_FENCE,List.of(new BoundingBox(0,0,0,1,1.5,1)));
+        Pathfinder.PathResult path=mock(Pathfinder.PathResult.class);
+        when(path.getPoints()).thenReturn(List.of(new Location(world,0,64,0),new Location(world,1,64,0),new Location(world,2,64,0)));
+        when(path.canReachFinalPoint()).thenReturn(true);when(finder.findPath(any(Location.class))).thenReturn(path);
+        for(long tick=0;tick<100;tick+=2) {
+            assertNotEquals(RoutineNavigator.Result.ARRIVED,navigator.move(npc,new Location(world,2.5,64,.5),2.4,tick,2));
+            assertTrue(position.getX()<=.980001,"the narrow feet never enter the cap even on a flat route");
+            assertEquals(64,position.getY(),1e-6);assertBodyClear(position);
+        }
+    }
+
+    @Test void forcedRecoveryStartsInAirAndEvenWhenAlreadyOnAFenceCap() {
+        position.setY(64.2);assertTrue(navigator.startRecoveryHop(npc,.6,1,0));
+        assertTrue(reads.isEmpty(),"starting recovery must not preflight terrain or support");
+        List<Location> frames=finishHop(0);
+        assertEquals(64.8,frames.stream().mapToDouble(Location::getY).max().orElseThrow(),1e-6);
+        assertEquals(64.2,position.getY(),1e-6);
+        position=new Location(world,1.5,64,.5,-90,0);
+        put(1,62,0,Material.OAK_FENCE,List.of(new BoundingBox(0,0,0,1,1.5,1)));
+        put(1,63,0,Material.STONE_SLAB,List.of(new BoundingBox(0,.5,0,1,1,1)));
+        assertTrue(navigator.startRecoveryHop(npc,.6,1,2));
+        assertEquals(RoutineNavigator.Result.MOVING,navigator.advanceHop(npc,4));
+        assertTrue(position.getY()>64,"an existing fence cap cannot veto the upward impulse");
+    }
+
+    @Test void forcedRecoveryCompletesAboveAGapWithoutSearchingForAFloor() {
+        position.setY(80);assertTrue(navigator.startRecoveryHop(npc,.6,1,0));
+        List<Location> frames=finishHop(0);
+        assertEquals(80.6,frames.stream().mapToDouble(Location::getY).max().orElseThrow(),1e-6);
+        assertEquals(1.5,position.getX(),1e-6);assertEquals(80,position.getY(),1e-6);
+        assertTrue(reads.stream().noneMatch(key->key.y()<78),"no landing search below the hop");
+    }
+
+    @Test void forcedRecoveryDoesNotRejectAHazardousOrMissingLanding() {
+        put(1,63,0,Material.MAGMA_BLOCK,CUBE);
+        assertTrue(navigator.startRecoveryHop(npc,.6,1,0));finishHop(0);
+        assertEquals(1.5,position.getX(),1e-6);
+        position=new Location(world,.5,64,.5,-90,0);put(1,63,0,Material.AIR,List.of());
+        assertTrue(navigator.startRecoveryHop(npc,.6,1,60));finishHop(60);
+        assertEquals(1.5,position.getX(),1e-6);assertEquals(64,position.getY(),1e-6);
+    }
+
+    @Test void anEmbeddedStartCanEscapeUpwardWithoutBeingRejectedBeforeTheJump() {
+        position.setY(63.8);assertTrue(navigator.startRecoveryHop(npc,.6,1,0));
+        double lastY=position.getY();
+        for(long tick=2;tick<=12;tick+=2) {
+            assertNotEquals(RoutineNavigator.Result.WAITING,navigator.advanceHop(npc,tick));
+            assertTrue(position.getY()>=Math.min(64,lastY)-1e-7,"do not worsen the initial floor overlap");
+            lastY=position.getY();
+        }
+        assertFalse(navigator.activeHop("hop"));assertEquals(64,position.getY(),1e-6);
+    }
+
+    @Test void deniedDoorsClipForwardMotionWhileTheRecoveryStillJumps() {
+        door();allowDoor=false;allowOpening=false;
+        assertTrue(navigator.startRecoveryHop(npc,.6,2,0));
+        List<Location> frames=finishHop(0);
+        assertFalse(doorOpen);assertTrue(openingAttempts>0);
+        assertTrue(position.getX()<=.700001);
+        assertEquals(64.6,frames.stream().mapToDouble(Location::getY).max().orElseThrow(),1e-6);
+    }
+
+    @Test void anUnloadedChunkClipsAtItsBoundaryWithoutDisablingTheHop() {
+        position=new Location(world,15.5,64,.5,-90,0);when(world.isChunkLoaded(1,0)).thenReturn(false);
+        assertTrue(navigator.startRecoveryHop(npc,.6,1,0));
+        List<Location> frames=finishHop(0);
+        assertTrue(position.getX()<=15.700001);assertTrue(position.getX()>15.5);
+        assertEquals(64.6,frames.stream().mapToDouble(Location::getY).max().orElseThrow(),1e-6);
+        assertTrue(reads.stream().noneMatch(key->key.x()>=16));
+        verify(world,never()).loadChunk(anyInt(),anyInt());
+    }
+
+    @Test void aNoOpRecoveryStillConsumesItsImpulseAndCanBeRetried() {
+        teleportMode=1;assertTrue(navigator.startRecoveryHop(npc,.6,1,0));
+        for(long tick=2;tick<12;tick+=2) {
+            assertEquals(RoutineNavigator.Result.MOVING,navigator.advanceHop(npc,tick));
+            assertTrue(navigator.activeHop("hop"));
+        }
+        assertEquals(RoutineNavigator.Result.ARRIVED,navigator.advanceHop(npc,12));
+        assertEquals(RoutineNavigator.HopFailure.NONE,navigator.hopFailure("hop"));
+        assertTrue(navigator.startRecoveryHop(npc,.6,1,72));
+    }
+
+    @Test void completelyBlockedRecoveryRunsEveryFrameDespiteZeroAvailableMovement() {
+        position.setX(.7);put(1,64,0,Material.STONE,CUBE);put(1,65,0,Material.STONE,CUBE);
+        put(0,65,0,Material.STONE_SLAB,List.of(new BoundingBox(0,.95,0,1,1,1)));
+        Location original=position.clone();assertTrue(navigator.startRecoveryHop(npc,.6,1,0));
+        for(long tick=2;tick<12;tick+=2) {
+            assertEquals(RoutineNavigator.Result.MOVING,navigator.advanceHop(npc,tick));
+            assertEquals(original,position);assertTrue(navigator.activeHop("hop"));
+        }
+        assertEquals(RoutineNavigator.Result.ARRIVED,navigator.advanceHop(npc,12));
+        assertTrue(teleports.isEmpty(),"do not force a teleport through the surrounding blocks");
+        assertTrue(navigator.startRecoveryHop(npc,.6,1,72));
+    }
+
+    @Test void recoveryToleratesVerticalDriftAndDoesNotSnapBackToItsStartingLocation() {
+        assertTrue(navigator.startRecoveryHop(npc,.6,1,0));
+        assertEquals(RoutineNavigator.Result.MOVING,navigator.advanceHop(npc,2));
+        position.add(0,-.12,0);Location drifted=position.clone();
+        assertEquals(RoutineNavigator.Result.MOVING,navigator.advanceHop(npc,4));
+        assertTrue(position.getY()>drifted.getY());assertTrue(position.getX()>drifted.getX());
+        assertTrue(navigator.activeHop("hop"));
+    }
+
+    @Test void cancelledTeleportsStillReleaseRecoveryOwnership() {
+        teleportMode=2;assertTrue(navigator.startRecoveryHop(npc,.6,1,0));
+        assertEquals(RoutineNavigator.Result.WAITING,navigator.advanceHop(npc,2));
+        assertEquals(RoutineNavigator.HopFailure.TELEPORT_REJECTED,navigator.hopFailure("hop"));
+        assertFalse(navigator.activeHop("hop"));assertFalse(navigator.controlsVerticalStep("hop"));
+    }
+
     @Test void aConfiguredTwoBlockWalkingClimbUsesItsOriginalGroundToRejectAFence() {
         navigator.configureHeights(2,2.3,1.01);
         for(int x=1;x<=2;x++)put(x,65,0,Material.STONE,CUBE);

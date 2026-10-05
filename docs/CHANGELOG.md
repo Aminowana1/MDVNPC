@@ -1,3 +1,27 @@
+# MDVNPC 1.11.12 — impulso de recuperación sin requisitos de apoyo
+
+- El fallback comienza sin comprobar apoyo, aterrizaje seguro ni arco completo.
+  Puede iniciar flotando o con el cuerpo parcialmente incrustado.
+- Impulso hacia la mirada con altura/distancia configuradas, recortado por
+  colisiones reales por eje durante la ejecución. Una pared no cancela Y.
+- Las vallas cerradas y sus cubiertas permanecen como barreras horizontales,
+  incluso si están debajo o la trayectoria pasa sobre su altura física.
+- La animación termina aunque no haya movimiento posible y se reintenta tras
+  el intervalo configurado. Mantiene exclusiones de cama, silla y puesto ocupado.
+- Recuperación de suelo después del salto; progreso horizontal neto para evitar
+  que una oscilación mantenga una ruta atascada viva indefinidamente.
+
+# MDVNPC 1.11.11 — inmovilidad y recubrimientos sobre vallas
+
+- El contador del fallback precede los retornos de recuperación de suelo
+  y deja de reiniciarse por oscilaciones verticales sin avance.
+- El salto prueba avances menores, salto vertical y alturas menores si
+  no cabe la opción configurada; conserva colisiones y apoyo seguro.
+- Slabs, trampillas y bloques directamente sobre vallas cerradas no
+  cuentan como apoyos, escalones ni destinos transitables.
+- Se detectan vallas inferiores y alturas fraccionarias, manteniendo
+  puertas abiertas y puentes separados. Se añaden regresiones específicas.
+
 # MDVNPC 1.11.10 — vallas y recuperación al caminar
 
 - Se impide trepar o saltar vallas conservando la altura inicial de los pies

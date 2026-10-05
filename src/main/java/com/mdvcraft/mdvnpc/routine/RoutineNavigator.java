@@ -122,11 +122,16 @@ public final class RoutineNavigator {
         final Location start, landing;
         final double height, quadratic, linear, sweepRate;
         final int duration;
+        final boolean forced;
         Location lastCommand;
         long lastTick;
         int elapsed;
         RecoveryHop(ActiveNpc npc,RoutineTerrain terrain,Location start,Location landing,double height,long tick) {
+            this(npc,terrain,start,landing,height,tick,false);
+        }
+        RecoveryHop(ActiveNpc npc,RoutineTerrain terrain,Location start,Location landing,double height,long tick,boolean forced) {
             this.npc=npc;this.terrain=terrain;this.start=start.clone();this.landing=landing.clone();this.height=height;
+            this.forced=forced;
             double delta=landing.getY()-start.getY();
             // Solve the parabola through both floors with its apex at startY + height.
             quadratic=2*height-delta+2*Math.sqrt(Math.max(0,height*(height-delta)));
@@ -172,19 +177,44 @@ public final class RoutineNavigator {
 
     /** Preflight only: the routine decides when a grounded, idle walker needs recovery. */
     public boolean startHop(ActiveNpc npc,double height,double distance,long tick) {
+        return queueHop(npc,height,distance,tick);
+    }
+
+    /** Always queue the configured forward impulse, including airborne or embedded starts.
+     * Actual collisions clip individual motion axes while the animation keeps running. */
+    public boolean startRecoveryHop(ActiveNpc npc,double height,double distance,long tick) {
         String id=npc.definition().id();
         if(hops.containsKey(id))return false;
         Location start=npc.entity().getLocation();
-        if(!Double.isFinite(height) || !Double.isFinite(distance) || height<.05 || height>4
-                || distance<.05 || distance>4 || start.getWorld()==null
-                || !Float.isFinite(start.getYaw()) || !npc.entity().isValid() || npc.entity().isInsideVehicle()) {
+        if(!validHopStart(npc,start,height,distance)) {
+            recordHopFailure(id,HopFailure.INVALID_START);return false;
+        }
+        double yaw=Math.toRadians(start.getYaw());
+        Location target=start.clone().add(-Math.sin(yaw)*distance,0,Math.cos(yaw)*distance);
+        hops.put(id,new RecoveryHop(npc,new RoutineTerrain(start.getWorld(),doors),start,target,height,tick,true));
+        hopFailures.remove(id);return true;
+    }
+
+    private boolean validHopStart(ActiveNpc npc,Location start,double height,double distance) {
+        return Double.isFinite(height) && Double.isFinite(distance) && height>=.05 && height<=4
+                && distance>=.05 && distance<=4 && start.getWorld()!=null
+                && Double.isFinite(start.getX()) && Double.isFinite(start.getY()) && Double.isFinite(start.getZ())
+                && Float.isFinite(start.getYaw()) && npc.entity().isValid() && !npc.entity().isInsideVehicle();
+    }
+
+    private boolean queueHop(ActiveNpc npc,double height,double distance,long tick) {
+        String id=npc.definition().id();
+        if(hops.containsKey(id))return false;
+        Location start=npc.entity().getLocation();
+        if(!validHopStart(npc,start,height,distance)) {
             recordHopFailure(id,HopFailure.INVALID_START);return false;
         }
         RoutineTerrain terrain=new RoutineTerrain(start.getWorld(),doors);
         try(RoutineTerrain.Update ignored=terrain.beginUpdate()) {
             double support=terrain.supportHeight(start.getX(),start.getY(),start.getZ(),.02);
             if(!Double.isFinite(support) || Math.abs(support-start.getY())>.02
-                    || !terrain.recoveryHopFits(start.getX(),start.getY(),start.getZ(),start.getY(),false)) {
+                    || !terrain.recoveryHopFits(start.getX(),start.getY(),start.getZ(),start.getY(),false)
+                    || !terrain.fenceClearAtBase(start.getX(),start.getY(),start.getZ())) {
                 recordHopFailure(id,HopFailure.INVALID_START);return false;
             }
             double yaw=Math.toRadians(start.getYaw());
@@ -196,7 +226,9 @@ public final class RoutineNavigator {
             }
             landing.setY(floor);
             RecoveryHop hop=new RecoveryHop(npc,terrain,start,landing,height,tick);
-            if(!hopArcClear(hop,0,1,true)) {recordHopFailure(id,HopFailure.BLOCKED);return false;}
+            if(!hopArcClear(hop,0,1,true)) {
+                recordHopFailure(id,HopFailure.BLOCKED);return false;
+            }
             hops.put(id,hop);hopFailures.remove(id);return true;
         }
     }
@@ -207,13 +239,14 @@ public final class RoutineNavigator {
         if(hop==null)return Result.WAITING;
         Location current=npc.entity().getLocation();
         if(hop.npc!=npc || current.getWorld()!=hop.start.getWorld()
-                || current.distanceSquared(hop.lastCommand)>HOP_POSITION_TOLERANCE_SQUARED) {
+                || !hop.forced && current.distanceSquared(hop.lastCommand)>HOP_POSITION_TOLERANCE_SQUARED) {
             travels.remove(id);return abortHop(id,HopFailure.DISPLACED);
         }
         if(!npc.entity().isValid() || npc.entity().isInsideVehicle())return abortHop(id,HopFailure.INVALID_START);
         if(tick<=hop.lastTick)return Result.MOVING;
         int nextElapsed=Math.min(hop.duration,hop.elapsed+(int)Math.min(2,tick-hop.lastTick));
         double before=(double)hop.elapsed/hop.duration,phase=(double)nextElapsed/hop.duration;
+        if(hop.forced)return advanceForcedHop(hop,current,before,phase,nextElapsed,tick);
         Location next=hop.frame(phase);
         try(RoutineTerrain.Update ignored=hop.terrain.beginUpdate()) {
             double landing=hop.terrain.recoveryHopLanding(hop.landing.getX(),hop.start.getY(),hop.landing.getZ(),
@@ -237,6 +270,39 @@ public final class RoutineNavigator {
                         Math.min(hop.height,MAX_DROP_HEIGHT),hop.height);
                 if(!Double.isFinite(actualFloor) || Math.abs(actual.getY()-actualFloor)>WAYPOINT_VERTICAL_EPSILON)
                     return abortHop(id,HopFailure.DISPLACED);
+                hops.remove(id);hopFailures.remove(id);return Result.ARRIVED;
+            }
+            return Result.MOVING;
+        }
+    }
+
+    /** A blocked impulse still consumes its visible frames; another attempt is scheduled
+     * by the routine's quiet clock. No landing or complete-arc preflight vetoes this mode. */
+    private Result advanceForcedHop(RecoveryHop hop,Location current,double before,double phase,int nextElapsed,long tick) {
+        String id=hop.npc.definition().id();
+        Vector requested=hop.frame(phase).toVector().subtract(hop.frame(before).toVector());
+        int samples=Math.max(1,(int)Math.ceil(requested.length()/HOP_SWEEP_INTERVAL));
+        Vector piece=requested.multiply(1.0/samples);
+        Location next=current.clone();
+        try(RoutineTerrain.Update ignored=hop.terrain.beginUpdate()) {
+            for(int i=0;i<samples;i++) {
+                Vector impulse=piece.clone();
+                if(!doors.openNear(hop.npc.entity(),next.clone().add(impulse),tick)) {
+                    impulse.setX(0);impulse.setZ(0);
+                }
+                next.add(hop.terrain.clipRecoveryHop(next,impulse,hop.start.getY()));
+            }
+            if(next.distanceSquared(current)>MOVEMENT_EPSILON_SQUARED) {
+                boolean accepted=teleport.test(hop.npc,next);
+                Location actual=hop.npc.entity().getLocation();
+                if(actual.getWorld()!=current.getWorld() || actual.distanceSquared(current)>MOVEMENT_EPSILON_SQUARED)
+                    travels.remove(id);
+                if(!accepted)return abortHop(id,HopFailure.TELEPORT_REJECTED);
+                if(actual.getWorld()!=next.getWorld())return abortHop(id,HopFailure.DISPLACED);
+                hop.lastCommand=actual.clone();
+            } else hop.lastCommand=current.clone();
+            hop.elapsed=nextElapsed;hop.lastTick=tick;
+            if(nextElapsed>=hop.duration) {
                 hops.remove(id);hopFailures.remove(id);return Result.ARRIVED;
             }
             return Result.MOVING;

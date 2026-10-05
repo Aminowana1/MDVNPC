@@ -1,5 +1,7 @@
 package com.mdvcraft.mdvnpc.routine;
 
+import static org.mockito.AdditionalMatchers.lt;
+
 import com.mdvcraft.mdvnpc.routine.BoundedPathfinder.Node;
 import org.bukkit.Material;
 import org.bukkit.World;
@@ -15,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.Arguments;
 import org.mockbukkit.mockbukkit.MockBukkit;
 
 import java.util.HashMap;
@@ -49,6 +52,8 @@ class RoutineTerrainTest {
     private static String key(int x,int y,int z) {return x+","+y+","+z;}
     private Block block(int x,int y,int z,Material type,List<BoundingBox> localBoxes) {
         Block block=mock(Block.class);when(block.getType()).thenReturn(type);
+        when(block.getWorld()).thenReturn(world);when(block.getX()).thenReturn(x);
+        when(block.getY()).thenReturn(y);when(block.getZ()).thenReturn(z);
         when(block.isPassable()).thenReturn(localBoxes.isEmpty());
         VoxelShape shape=mock(VoxelShape.class);when(shape.getBoundingBoxes()).thenReturn(localBoxes);
         when(block.getCollisionShape()).thenReturn(shape);
@@ -73,6 +78,17 @@ class RoutineTerrainTest {
 
     private static Stream<Material> gateMaterials() {
         return Arrays.stream(Material.values()).filter(material->!material.isLegacy() && material.name().endsWith("_FENCE_GATE"));
+    }
+
+    private static Stream<Arguments> fenceCaps() {
+        return Stream.of(
+                Arguments.of(Material.STONE_SLAB,new BoundingBox(0,0,0,1,.5,1),64.5),
+                Arguments.of(Material.STONE_SLAB,new BoundingBox(0,.5,0,1,1,1),65.0),
+                Arguments.of(Material.STONE_SLAB,new BoundingBox(0,0,0,1,1,1),65.0),
+                Arguments.of(Material.OAK_TRAPDOOR,new BoundingBox(0,0,0,1,.1875,1),64.1875),
+                Arguments.of(Material.OAK_TRAPDOOR,new BoundingBox(0,.8125,0,1,1,1),65.0),
+                Arguments.of(Material.OAK_TRAPDOOR,new BoundingBox(0,0,0,1,1,.1875),65.0),
+                Arguments.of(Material.STONE,new BoundingBox(0,0,0,1,1,1),65.0));
     }
 
     @ParameterizedTest
@@ -218,6 +234,91 @@ class RoutineTerrainTest {
         assertFalse(terrain.recoveryHopFits(.5,67,.5,64,false),"an airborne climb from below must retain its original grounded height");
     }
 
+    @ParameterizedTest
+    @MethodSource("fenceMaterials")
+    void everyFenceRejectsTheSlabAboveItEvenWhenTheFenceSourceIsTwoRowsBelowTheFeet(Material material) {
+        put(0,63,0,material,List.of(new BoundingBox(0,0,.375,1,1.5,.625)));
+        put(0,64,0,Material.STONE_SLAB,List.of(new BoundingBox(0,.5,0,1,1,1)));
+        assertTrue(terrain.fits(.5,65,.5,false),"the body is physically clear above the decorated fence");
+        assertFalse(terrain.stand(new Node(0,65,0)));
+        assertFalse(terrain.partialSupport(new Node(0,65,0)));
+        assertFalse(RoutineTerrain.walkingSurface(world.getBlockAt(0,64,0)));
+        assertTrue(Double.isNaN(terrain.supportHeight(.5,65,.5,.02)));
+        assertTrue(Double.isNaN(terrain.climbSupportHeight(.5,64,.5,1.3,.1)));
+        assertFalse(terrain.fallColumn(.5,65,.5,2.3).safe());
+        assertTrue(Double.isNaN(terrain.recoveryHopLanding(.5,64,.5,.6,4)));
+        assertFalse(terrain.fenceClearAtBase(.5,65,.5));
+        assertFalse(terrain.recoveryHopFits(.5,69,.5,65,false),"a lower fence cannot be hidden by the first lift");
+    }
+
+    @ParameterizedTest
+    @MethodSource("fenceCaps")
+    void slabsTrapdoorsAndFullBlocksImmediatelyAboveAFenceRemainForbiddenFloors(Material material,BoundingBox box,double top) {
+        put(0,63,0,Material.OAK_FENCE,List.of(new BoundingBox(0,0,.375,1,1.5,.625)));
+        put(0,64,0,material,List.of(box));
+        assertFalse(terrain.stand(new Node(0,65,0)));
+        assertFalse(terrain.partialSupport(new Node(0,65,0)));
+        assertFalse(RoutineTerrain.walkingSurface(world.getBlockAt(0,64,0)));
+        assertTrue(Double.isNaN(terrain.supportHeight(.5,top,.5,.02)));
+        assertTrue(Double.isNaN(terrain.climbSupportHeight(.5,64,.5,1.3,.1)));
+        assertTrue(Double.isNaN(terrain.safeSupportBelow(.5,66,.5,2.3)));
+        assertTrue(Double.isNaN(terrain.recoveryHopLanding(.5,64,.5,.6,4)));
+        assertFalse(terrain.recoveryHopFits(.5,66,.5,64.5,false),"equal fence and grounded foot Y remains blocked");
+    }
+
+    @Test void aSeparateSlabBridgeWithAnInterveningRowRemainsUsable() {
+        put(0,63,0,Material.OAK_FENCE,List.of(new BoundingBox(0,0,.375,1,1.5,.625)));
+        put(0,64,0,Material.AIR,List.of());
+        put(0,65,0,Material.STONE_SLAB,List.of(new BoundingBox(0,0,0,1,.5,1)));
+        assertTrue(terrain.stand(new Node(0,66,0)));
+        assertTrue(terrain.partialSupport(new Node(0,66,0)));
+        assertTrue(RoutineTerrain.walkingSurface(world.getBlockAt(0,65,0)));
+        assertEquals(65.5,terrain.supportHeight(.5,65.5,.5,.02),1e-8);
+        assertEquals(65.5,terrain.safeSupportBelow(.5,65.5,.5,2.3),1e-8);
+        assertEquals(65.5,terrain.recoveryHopLanding(.5,65.5,.5,.6,4),1e-8);
+        assertTrue(terrain.fenceClearAtBase(.5,65.5,.5));
+        assertTrue(terrain.recoveryHopFits(.5,67,.5,65.5,false));
+    }
+
+    @Test void lowerFenceProjectionUsesFractionalFootHeightAndActualPanelWidth() {
+        put(0,63,0,Material.NETHER_BRICK_FENCE,List.of(new BoundingBox(.4375,0,0,.5625,1.5,1)));
+        for(double base:new double[]{64.5,64.9375,65}) {
+            assertTrue(terrain.fits(.5,67,.5,false));
+            assertFalse(terrain.fenceClearAtBase(.5,base,.5));
+            assertFalse(terrain.recoveryHopFits(.5,67,.5,base,false));
+            assertTrue(terrain.fenceClearAtBase(.9,base,.5),"a nearby fence does not block the clear side");
+            assertTrue(terrain.recoveryHopFits(.9,67,.5,base,false));
+        }
+    }
+
+    @Test void aSlabOnAClosedGateIsForbiddenButTheSameOpenGateDoesNotMaskItsFloor() {
+        Block gate=block(0,63,0,Material.OAK_FENCE_GATE,List.of(new BoundingBox(0,0,.375,1,1.5,.625)));
+        var data=mock(org.bukkit.block.data.type.Gate.class);when(data.isOpen()).thenReturn(false);
+        when(gate.getBlockData()).thenReturn(data);blocks.put(key(0,63,0),gate);
+        put(0,64,0,Material.STONE_SLAB,List.of(new BoundingBox(0,.5,0,1,1,1)));
+        assertFalse(terrain.stand(new Node(0,65,0)));
+        assertFalse(terrain.fenceClearAtBase(.5,65,.5));
+        when(data.isOpen()).thenReturn(true);when(gate.getCollisionShape().getBoundingBoxes()).thenReturn(List.of());
+        assertTrue(terrain.stand(new Node(0,65,0)));
+        assertTrue(terrain.partialSupport(new Node(0,65,0)));
+        assertEquals(65,terrain.supportHeight(.5,65,.5,.02),1e-8);
+        assertTrue(terrain.fenceClearAtBase(.5,65,.5));
+    }
+
+    @Test void fenceCapsAndProjectionAtMinimumWorldHeightNeverReadBelowTheWorld() {
+        put(0,-64,0,Material.OAK_FENCE,List.of(new BoundingBox(0,0,.375,1,1.5,.625)));
+        put(0,-63,0,Material.STONE_SLAB,List.of(new BoundingBox(0,.5,0,1,1,1)));
+        assertFalse(terrain.stand(new Node(0,-62,0)));
+        assertTrue(Double.isNaN(terrain.supportHeight(.5,-62,.5,.02)));
+        assertFalse(terrain.fenceClearAtBase(.5,-62,.5));
+        assertFalse(terrain.recoveryHopFits(.5,-60,.5,-62,false));
+        put(1,-64,0,Material.STONE,List.of(new BoundingBox(0,0,0,1,1,1)));
+        assertTrue(terrain.stand(new Node(1,-63,0)));
+        assertTrue(RoutineTerrain.walkingSurface(world.getBlockAt(1,-64,0)));
+        assertTrue(terrain.fenceClearAtBase(1.5,-63,.5));
+        verify(world,never()).getBlockAt(anyInt(),lt(-64),anyInt());
+    }
+
     @Test void hopProjectionUsesRealFenceVoxelsAndAllowsTheClearSide() {
         put(0,64,0,Material.OAK_FENCE,List.of(new BoundingBox(.4375,0,0,.5625,1.5,1)));
         assertFalse(terrain.recoveryHopFits(.5,67,.5,64,false));
@@ -312,6 +413,15 @@ class RoutineTerrainTest {
         assertTrue(RoutineTerrain.walkingSurface(carpet));
         assertTrue(RoutineTerrain.walkingSurface(slab));
         assertFalse(RoutineTerrain.walkingSurface(air));
+    }
+
+    @Test void editorRetainsAnAlreadySuppliedFloorWhenTheChunkBelowCannotBeInspected() {
+        Block floor=block(0,64,0,Material.STONE,List.of(new BoundingBox(0,0,0,1,1,1)));
+        when(world.isChunkLoaded(anyInt(),anyInt())).thenReturn(false);
+        clearInvocations(world);
+        assertTrue(RoutineTerrain.walkingSurface(floor),"an unavailable lower row cannot invent a fence beneath a clicked floor");
+        assertFalse(terrain.stand(new Node(0,65,0)),"runtime movement still requires loaded terrain");
+        verify(world,never()).getBlockAt(anyInt(),anyInt(),anyInt());
     }
 
     @Test void partialSupportRecoveryNeverClassifiesAFullCubeAsThinGround() {

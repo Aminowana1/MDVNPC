@@ -13,6 +13,7 @@ import org.mockbukkit.mockbukkit.*;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.logging.Logger;
+import org.mockito.ArgumentCaptor;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
@@ -78,11 +79,21 @@ class RoutineRuntimeTest {
         routines.repository().put("shop",goal(2,RoutineGoal.Type.WORK,RoutineGoal.WalkMode.CYCLE,"0","0",0));
         routines.start();advance(2);assertFalse(routines.canInteract(npc));advance(2);assertTrue(routines.canInteract(npc));
     }
-    @Test void unloadedDestinationNeverRequestsItsBlocksOrTeleports() throws Exception {
+    @Test void unloadedDestinationAllowsLocalRecoveryWithoutReadingOrEnteringItsChunk() throws Exception {
         routines.repository().put("shop",goal(1,RoutineGoal.Type.WORK,RoutineGoal.WalkMode.CYCLE,"0","0",80));
         when(world.isChunkLoaded(eq(5),anyInt())).thenReturn(false);
         routines.start();advance(120);
-        verify(world,never()).getBlockAt(eq(80),anyInt(),anyInt());verify(entity,never()).teleport(any(Location.class));
+        verify(world,never()).getBlockAt(eq(80),anyInt(),anyInt());
+        ArgumentCaptor<Location> recovery=ArgumentCaptor.forClass(Location.class);
+        verify(entity,atLeastOnce()).teleport(recovery.capture());
+        assertTrue(recovery.getAllValues().stream().anyMatch(at->at.getY()>64.5),"the waiting walker still tries its hop");
+        for(Location frame:recovery.getAllValues()) {
+            assertSame(world,frame.getWorld());assertEquals(.5,frame.getX(),1e-6);
+            assertTrue(frame.getZ()>=.5 && frame.getZ()<=1.500001,"recovery stays local and follows the facing");
+            assertTrue(frame.getY()>=64 && frame.getY()<=64.600001);
+            assertTrue(world.isChunkLoaded(frame.getBlockX()>>4,frame.getBlockZ()>>4));
+        }
+        verify(entity.getPathfinder(),never()).findPath(any(Location.class));
         assertFalse(routines.canInteract(npc));
     }
     @Test void staticNpcKeepsOriginalInteractionBehaviorAndInternalScopeClears() {

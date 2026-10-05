@@ -1,4 +1,23 @@
-# MDVNPC 1.11.10
+# MDVNPC 1.11.12
+
+El fallback siempre inicia el impulso de salto tras el intervalo de inmovilidad,
+incluso flotando, incrustado o sin un aterrizaje seguro. Usa la altura y distancia
+configuradas hacia la mirada actual. Los bloques recortan el movimiento durante
+el choque: una pared puede detener el avance mientras continúa la subida.
+Las vallas y sus cubiertas siguen bloqueando el paso. Al terminar, vuelve la
+recuperación habitual del suelo y se repite el intento si sigue sin avanzar.
+Consulta [la guía](GUIA-1.11.12.md) y [la validación](VALIDACION-1.11.12.md).
+
+## Actualización 1.11.11
+
+Corrige la recuperación de NPC quietos que quedaba oculta tras una
+recuperación de suelo bloqueada. El salto puede acortar el avance, hacerse
+en el sitio o reducir su altura cuando falta espacio. También impide usar
+slabs, trampillas o bloques directamente sobre una valla como suelo o
+escalón, incluso si la valla está a un nivel inferior.
+Consulta [la guía](GUIA-1.11.11.md) y [la validación](VALIDACION-1.11.11.md).
+
+## Actualización 1.11.10
 
 Las vallas ya no se pueden usar como escalón ni cruzar durante una subida
 o un salto de recuperación. Durante la caminata de los goals, 3 segundos

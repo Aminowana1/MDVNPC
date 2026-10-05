@@ -7,6 +7,7 @@ import org.bukkit.block.data.type.Door;
 import org.bukkit.block.data.type.Gate;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.VoxelShape;
+import org.bukkit.util.Vector;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -62,7 +63,7 @@ public final class RoutineTerrain implements BoundedPathfinder.Grid {
      * Carpets, snow layers and other thin supports are intentionally accepted. */
     public static boolean walkingSurface(Block block) {
         if(block==null || hazard(block.getType()) || block.getType().isAir()
-                || fenceMaterial(block.getType()) || gateMaterial(block.getType()))return false;
+                || fenceMaterial(block.getType()) || gateMaterial(block.getType()) || fenceSupportedBlock(block))return false;
         // Preserve the old editor behaviour for ordinary floors. Some Bukkit/MockBukkit
         // implementations do not expose a useful collision shape for full solid blocks.
         if(block.getType().isSolid())return true;
@@ -74,6 +75,27 @@ public final class RoutineTerrain implements BoundedPathfinder.Grid {
         BoundingBox box=block.getBoundingBox();
         return box!=null && box.getMaxX()-box.getMinX()>EPSILON
                 && box.getMaxY()-box.getMinY()>EPSILON && box.getMaxZ()-box.getMinZ()>EPSILON;
+    }
+
+    /** A slab, trapdoor or complete block directly above a fence remains part of that
+     * barrier. A separate bridge floor with an intervening row is ordinary terrain. */
+    private static boolean fenceSupportedBlock(Block floor) {
+        World owner=floor.getWorld();
+        if(owner==null)return false; // Some editor/test adapters expose geometry only.
+        int below=floor.getY()-1;
+        if(below<owner.getMinHeight())return false;
+        // An editor can already hold the clicked Block without exposing a loaded chunk.
+        // Unknown blocks below it are not evidence of a fence. Runtime landing/stand
+        // checks separately require their entire queried area to be loaded.
+        if(!owner.isChunkLoaded(floor.getX()>>4,floor.getZ()>>4))return false;
+        Block lower=owner.getBlockAt(floor.getX(),below,floor.getZ());
+        return lower!=null && closedFence(lower.getType(),lower.getBlockData());
+    }
+
+    private boolean fenceSupportedFloor(int x,int y,int z) {
+        if(y<=minimumHeight)return false;
+        Block lower=block(x,y-1,z);
+        return lower==null || closedFence(lower.getType(),lower.getBlockData());
     }
 
     public double height(Node n) {
@@ -103,7 +125,8 @@ public final class RoutineTerrain implements BoundedPathfinder.Grid {
     boolean partialSupport(Node n,double x,double z) {
         Block floor=block(n.x(),n.y()-1,n.z());
         if(floor==null || floor.getType().isAir() || hazard(floor.getType())
-                || fenceMaterial(floor.getType()) || gateMaterial(floor.getType()) || floor.getBlockData() instanceof Door)return false;
+                || fenceMaterial(floor.getType()) || gateMaterial(floor.getType()) || floor.getBlockData() instanceof Door
+                || fenceSupportedFloor(n.x(),n.y()-1,n.z()))return false;
         double base=n.y()-1, top=base, bottom=Double.POSITIVE_INFINITY;
         for(BoundingBox box:collision(floor,n.x(),n.y()-1,n.z())) {
             if(!overFootprint(box,x,z,SUPPORT_RADIUS))continue;
@@ -135,7 +158,8 @@ public final class RoutineTerrain implements BoundedPathfinder.Grid {
     @Override public boolean stand(Node n) {
         Block floor = block(n.x(), n.y()-1, n.z());
         if (floor == null || hazard(floor.getType()) || fenceMaterial(floor.getType())
-                || gateMaterial(floor.getType()) || floor.getBlockData() instanceof Door) return false;
+                || gateMaterial(floor.getType()) || floor.getBlockData() instanceof Door
+                || fenceSupportedFloor(n.x(),n.y()-1,n.z())) return false;
         // Carpet, snow layers and other thin collision shapes are valid supports even though
         // Bukkit does not classify them as full solid blocks.
         double y = height(n);
@@ -167,7 +191,114 @@ public final class RoutineTerrain implements BoundedPathfinder.Grid {
         // Ordinary level/downward replay cannot hide a barrier below an elevated body.
         // The normal collision check is sufficient and avoids repeating its block scan.
         if(y<=baseY+EPSILON)return true;
-        int firstY=Math.max(minimumHeight,(int)Math.floor(baseY)-1);
+        return projectedBarriersClear(x,y,z,baseY);
+    }
+
+    /** Check before the first vertical lift, while its original grounded height is still
+     * known. The extra lower row catches fences capped at integer or fractional foot Y. */
+    public boolean fenceClearAtBase(double x,double baseY,double z) {
+        return coordinates(x,baseY,z) && baseY>=minimumHeight && baseY<=maximumHeight
+                && projectedBarriersClear(x,baseY,z,baseY);
+    }
+
+    /** Execute an attempted recovery impulse against live physical voxels. Unlike a
+     * planned hop, it needs neither support nor a safe landing and may start embedded.
+     * Each axis is clipped independently, so a wall can stop forward travel without
+     * cancelling the upward impulse. Existing penetration may only be reduced toward
+     * its nearest exit. Fences and their direct caps additionally block horizontal
+     * crossing at the original height; this projection never stops an in-place lift. */
+    public Vector clipRecoveryHop(Location from,Vector requested,double baseY) {
+        if(from==null || requested==null || from.getWorld()!=world
+                || !coordinates(from.getX(),from.getY(),from.getZ()) || !Double.isFinite(baseY)
+                || from.getY()<minimumHeight-8 || from.getY()>maximumHeight+8
+                || Math.abs(from.getY()-baseY)>8
+                || !Double.isFinite(requested.getX()) || !Double.isFinite(requested.getY())
+                || !Double.isFinite(requested.getZ()))return new Vector();
+        double dx=Math.max(-4,Math.min(4,requested.getX()));
+        double dy=Math.max(-4,Math.min(4,requested.getY()));
+        double dz=Math.max(-4,Math.min(4,requested.getZ()));
+        if(!coordinates(from.getX()+dx,from.getY()+dy,from.getZ()+dz))return new Vector();
+        // The physical feet start at Y itself so a descending impulse cannot sink
+        // through the .015 tolerance used by normal terrain-fit queries.
+        BoundingBox body=new BoundingBox(from.getX()-BODY_RADIUS,from.getY(),from.getZ()-BODY_RADIUS,
+                from.getX()+BODY_RADIUS,from.getY()+1.95,from.getZ()+BODY_RADIUS);
+        // A world boundary is physical too. If restored outside it, permit returning
+        // toward the world without moving any farther out.
+        dy=body.getMinY()<minimumHeight ? Math.max(0,dy)
+                :body.getMaxY()>maximumHeight ? Math.min(0,dy)
+                :Math.max(minimumHeight-body.getMinY(),Math.min(maximumHeight-body.getMaxY(),dy));
+        for(int x=(int)Math.floor(body.getMinX());x<=(int)Math.floor(body.getMaxX()-EPSILON);x++)
+            for(int z=(int)Math.floor(body.getMinZ());z<=(int)Math.floor(body.getMaxZ()-EPSILON);z++)
+                if(!loaded(x,z))return new Vector();
+        double minX=Math.min(body.getMinX(),body.getMinX()+dx),maxX=Math.max(body.getMaxX(),body.getMaxX()+dx);
+        double minY=Math.min(body.getMinY(),body.getMinY()+dy),maxY=Math.max(body.getMaxY(),body.getMaxY()+dy);
+        double minZ=Math.min(body.getMinZ(),body.getMinZ()+dz),maxZ=Math.max(body.getMaxZ(),body.getMaxZ()+dz);
+        List<BoundingBox> physical=new ArrayList<>(),horizontal=new ArrayList<>();
+        int firstY=Math.max(minimumHeight,Math.min((int)Math.floor(minY)-1,(int)Math.floor(baseY)-2));
+        int lastY=Math.min(maximumHeight-1,(int)Math.floor(maxY));
+        try(Update ignored=beginUpdate()) {
+            for(int x=(int)Math.floor(minX);x<=(int)Math.floor(maxX);x++)
+                for(int z=(int)Math.floor(minZ);z<=(int)Math.floor(maxZ);z++) {
+                    if(!loaded(x,z)) {
+                        physical.add(new BoundingBox(x,minY-1,z,x+1,maxY+1,z+1));
+                        continue; // Never obtain a Bukkit Block from an unknown chunk.
+                    }
+                    for(int y=firstY;y<=lastY;y++) {
+                        Block obstacle=block(x,y,z);
+                        if(obstacle==null || obstacle.getType().isAir())continue;
+                        BlockData data=obstacle.getBlockData();
+                        Collection<BoundingBox> boxes=collision(obstacle,x,y,z,data);
+                        physical.addAll(boxes);
+                        boolean fence=closedFence(obstacle.getType(),data);
+                        boolean cap=false;
+                        if(!fence && y>minimumHeight) {
+                            Block lower=block(x,y-1,z);
+                            if(lower!=null && closedFence(lower.getType(),lower.getBlockData()))
+                                for(BoundingBox lowerBox:collision(lower,x,y-1,z))
+                                    if(lowerBox.getMaxY()>=baseY-.5-EPSILON) {cap=true;break;}
+                        }
+                        for(BoundingBox box:boxes)
+                            if(cap || fence && box.getMaxY()>=baseY-.5-EPSILON)
+                                horizontal.add(new BoundingBox(box.getMinX(),minY-1,box.getMinZ(),
+                                        box.getMaxX(),maxY+1,box.getMaxZ()));
+                    }
+                }
+        }
+        dy=clipAxis(body,dy,physical,1);body.shift(0,dy,0);
+        horizontal.addAll(physical);
+        dx=clipAxis(body,dx,horizontal,0);body.shift(dx,0,0);
+        dz=clipAxis(body,dz,horizontal,2);
+        return new Vector(dx,dy,dz);
+    }
+
+    private static double clipAxis(BoundingBox body,double movement,List<BoundingBox> obstacles,int axis) {
+        if(Math.abs(movement)<=EPSILON)return 0;
+        double low=axis==0?body.getMinX():axis==1?body.getMinY():body.getMinZ();
+        double high=axis==0?body.getMaxX():axis==1?body.getMaxY():body.getMaxZ();
+        for(BoundingBox obstacle:obstacles) {
+            if(axis!=0 && (body.getMaxX()<=obstacle.getMinX()+EPSILON || body.getMinX()>=obstacle.getMaxX()-EPSILON)
+                    || axis!=1 && (body.getMaxY()<=obstacle.getMinY()+EPSILON || body.getMinY()>=obstacle.getMaxY()-EPSILON)
+                    || axis!=2 && (body.getMaxZ()<=obstacle.getMinZ()+EPSILON || body.getMinZ()>=obstacle.getMaxZ()-EPSILON))continue;
+            double obstacleLow=axis==0?obstacle.getMinX():axis==1?obstacle.getMinY():obstacle.getMinZ();
+            double obstacleHigh=axis==0?obstacle.getMaxX():axis==1?obstacle.getMaxY():obstacle.getMaxZ();
+            if(high<=obstacleLow+EPSILON) {
+                if(movement>0)movement=Math.min(movement,Math.max(0,obstacleLow-high));
+            } else if(low>=obstacleHigh-EPSILON) {
+                if(movement<0)movement=Math.max(movement,Math.min(0,obstacleHigh-low));
+            } else {
+                // Escape an initial overlap via the nearer face, never push farther
+                // through its centre. Equidistant embedded bodies may exit either way.
+                double negativeExit=high-obstacleLow,positiveExit=obstacleHigh-low;
+                if(movement>0 && positiveExit>negativeExit+EPSILON
+                        || movement<0 && negativeExit>positiveExit+EPSILON)movement=0;
+            }
+            if(Math.abs(movement)<=EPSILON)return 0;
+        }
+        return movement;
+    }
+
+    private boolean projectedBarriersClear(double x,double y,double z,double baseY) {
+        int firstY=Math.max(minimumHeight,(int)Math.floor(baseY)-2);
         int lastY=Math.min(maximumHeight-1,(int)Math.floor(Math.max(baseY,y)+1.95));
         for(int bx=(int)Math.floor(x-BODY_RADIUS);bx<=(int)Math.floor(x+BODY_RADIUS);bx++)
             for(int bz=(int)Math.floor(z-BODY_RADIUS);bz<=(int)Math.floor(z+BODY_RADIUS);bz++)
@@ -178,7 +309,9 @@ public final class RoutineTerrain implements BoundedPathfinder.Grid {
                     BlockData data=obstacle.getBlockData();
                     if(!projectedBarrier(obstacle.getType(),data))continue;
                     for(BoundingBox box:collision(obstacle,bx,by,bz,data))
-                        if(box.getMaxY()>baseY+EPSILON && overFootprint(box,x,z,BODY_RADIUS))return false;
+                        if((closedFence(obstacle.getType(),data)
+                                ? box.getMaxY()>=baseY-.5-EPSILON : box.getMaxY()>baseY+EPSILON)
+                                && overFootprint(box,x,z,BODY_RADIUS))return false;
                 }
         return true;
     }
@@ -201,11 +334,12 @@ public final class RoutineTerrain implements BoundedPathfinder.Grid {
                     if(material.isAir())continue;
                     BlockData data=floor.getBlockData();
                     if(data instanceof Door)continue;
+                    boolean fenceCap=fenceSupportedFloor(bx,by,bz);
                     for(BoundingBox box:collision(floor,bx,by,bz,data)) {
                         double surface=box.getMaxY();
                         if(surface<low-EPSILON || surface>high+EPSILON || !overFootprint(box,x,z,SUPPORT_RADIUS))continue;
                         top=Math.max(top,surface);
-                        if(hazard(material) || landingBarrier(material,data))unsafeTop=Math.max(unsafeTop,surface);
+                        if(hazard(material) || landingBarrier(material,data) || fenceCap)unsafeTop=Math.max(unsafeTop,surface);
                     }
                 }
         if(!Double.isFinite(top) || unsafeTop>=top-EPSILON || !fits(x,top,z,false))return Double.NaN;
@@ -320,11 +454,12 @@ public final class RoutineTerrain implements BoundedPathfinder.Grid {
                     if(climb && thinClimbBarrier(floor.getType()))continue;
                     BlockData data=floor.getBlockData();
                     if(data instanceof Door)continue;
+                    boolean fenceCap=fenceSupportedFloor(bx,by,bz);
                     for(BoundingBox box:collision(floor,bx,by,bz,data)) {
                         double top=box.getMaxY();
                         if(climb && top>by+1+EPSILON)continue;
                         if(!overFootprint(box,x,z,radius) || top<y-1.01 || top>y+rise)continue;
-                        if(hazard(floor.getType()) || closedFence(floor.getType(),data))unsafeHighest=Math.max(unsafeHighest,top);
+                        if(hazard(floor.getType()) || closedFence(floor.getType(),data) || fenceCap)unsafeHighest=Math.max(unsafeHighest,top);
                         highest=Math.max(highest,top);
                     }
                 }
@@ -359,6 +494,7 @@ public final class RoutineTerrain implements BoundedPathfinder.Grid {
                     if(floor.getType().isAir())continue;
                     BlockData data=floor.getBlockData();
                     if(data instanceof Door)continue;
+                    boolean fenceCap=fenceSupportedFloor(bx,by,bz);
                     if(hazard(floor.getType()) && by+1>=bottom-EPSILON && by<=y+.02
                             && bx+1>x-BODY_RADIUS+EPSILON && bx<x+BODY_RADIUS-EPSILON
                             && bz+1>z-BODY_RADIUS+EPSILON && bz<z+BODY_RADIUS-EPSILON)
@@ -367,7 +503,7 @@ public final class RoutineTerrain implements BoundedPathfinder.Grid {
                         double top=box.getMaxY();
                         if(top<bottom-EPSILON || top>y+.02 || !overFootprint(box,x,z,BODY_RADIUS))continue;
                         highest=Math.max(highest,top);
-                        if(hazard(floor.getType()) || closedFence(floor.getType(),data))unsafeTop=Math.max(unsafeTop,top);
+                        if(hazard(floor.getType()) || closedFence(floor.getType(),data) || fenceCap)unsafeTop=Math.max(unsafeTop,top);
                     }
                 }
             if(Double.isFinite(highest) && highest>=by+.5-EPSILON)break;
