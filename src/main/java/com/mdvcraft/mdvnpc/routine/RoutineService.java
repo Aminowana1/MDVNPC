@@ -88,6 +88,8 @@ public final class RoutineService {
         danceEnabled=plugin.settings().messages().getBoolean("routines.dancing",true);
         danceSeatedTicks=Math.max(1,Math.min(600,plugin.settings().messages().getInt("routines.dance-seated-seconds",30)))*20L;
         navigator=new RoutineNavigator(doors,this::teleport); failed.clear();
+        var cfg=plugin.settings().messages();
+        navigator.configureHeights(cfg.getDouble("routines.max-climb-height",1.30),cfg.getDouble("routines.max-drop-height",2.30),cfg.getDouble("routines.max-unannounced-drop",1.01));
         dancers=new DanceController(plugin,navigator,this::teleport);
         clocks.configure(repository.snapshot().clocks());
         task=Bukkit.getScheduler().runTaskTimer(plugin,this::tick,cadence,cadence);
@@ -293,7 +295,7 @@ public final class RoutineService {
         }
         if(!s.observed){gravity.reset(s.gravity);s.nextUpdate=ticks+20;return;}
         RoutineGravity.Result result=gravity.tick(npc,s.gravity,ticks,cadence);
-        s.nextUpdate=result==RoutineGravity.Result.FALLING?ticks+cadence:Math.min(ticks+20,s.gravity.nextCheck);
+        s.nextUpdate=result.moving()?ticks+cadence:Math.min(ticks+20,s.gravity.nextCheck);
     }
     private void update(ActiveNpc npc) {
         String id=npc.definition().id(); State s=states.computeIfAbsent(id,k -> {State n=new State(); n.npc=npc;return n;});
@@ -553,7 +555,7 @@ public final class RoutineService {
                 || navigator.controlsVerticalStep(id)) {
             gravity.reset(s.gravity);return false;
         }
-        RoutineGravity.Result result=gravity.tick(npc,s.gravity,ticks,cadence);
+        RoutineGravity.Result result=gravity.tick(npc,s.gravity,ticks,cadence,s.goal==null?2.4:s.goal.speed());
         if(result!=RoutineGravity.Result.STABLE) {
             if(!s.recoveringFloor) {
                 s.recoveringFloor=true;navigator.cancel(id);looks.clear(npc,s.look);
@@ -563,8 +565,9 @@ public final class RoutineService {
                 }
                 resetTravelProgress(s,npc.position());
             }
-            s.nextUpdate=ticks+(result==RoutineGravity.Result.FALLING?cadence:20);
-            s.status=result==RoutineGravity.Result.FALLING?"cayendo al perder el suelo":"esperando suelo seguro";
+            s.nextUpdate=ticks+(result.moving()?cadence:20);
+            s.status=result==RoutineGravity.Result.FALLING?"cayendo al perder el suelo"
+                    :result==RoutineGravity.Result.LIFTING?"recuperando apoyo":"esperando suelo seguro";
             return true;
         }
         if(!s.recoveringFloor)return false;
