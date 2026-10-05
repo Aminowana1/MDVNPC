@@ -1,3 +1,16 @@
+# MDVNPC 1.11.10 — vallas y recuperación al caminar
+
+- Se impide trepar o saltar vallas conservando la altura inicial de los pies
+  durante la subida y durante el arco del salto. Las vallas no son apoyos válidos.
+- Recuperación configurable tras 3 segundos de inmovilidad: altura 0.6 y
+  avance 1 bloque en la dirección de la mirada, con repetición si sigue quieto.
+- Se aplica al caminar hacia meta/ciclo/aleatorio, cama, trabajo y silla;
+  se excluyen poses, trabajo en el puesto y otras fases estacionarias.
+- El salto valida arco, apoyo, puertas, chunks y movimiento real; no activa AI
+  ni atraviesa obstáculos. Los reintentos del mismo goal conservan el contador.
+- Se preserva la configuración de subida/bajada de la base 1.11.9. Consultar
+  `VALIDACION-1.11.10.md` para los resultados y límites de las pruebas.
+
 # MDVNPC 1.11.8 — superficies parciales sin bucles
 
 - El replay sondea la altura de colisión real delante del NPC aunque Paper mantenga la misma Y entre waypoints; evita `choque -> replan -> choque` en slabs, carpets, stairs y pavimentos mixtos.

@@ -276,7 +276,49 @@ class NavigationTerrainAuditTest {
         assertTrue(visited.stream().allMatch(at -> at.getY()>=63 && at.getY()<=64));
     }
 
-    @Test void unsupportedTwoBlockHoleCannotBeCrossedBySkippingAWaypoint() {
+
+    @Test void oneAndHalfBlockRiseIncludingSlabIsTraversedWithoutReplanning() {
+        navigator.configureHeights(1.5,2.3,1.01);
+        // 64.0 -> full block at y=64 + bottom slab at y=65 = 65.5 (exactly +1.5).
+        for(int x=1;x<=2;x++) {
+            put(x,64,0,Material.STONE,CUBE);
+            put(x,65,0,Material.STONE_SLAB,List.of(new BoundingBox(0,0,0,1,.5,1)));
+        }
+        path(raw(0,64,0),raw(1,66,0),raw(2,66,0));
+        List<Location> visited=walk(new Location(world,2.5,65.5,.5));
+        assertTrue(visited.stream().anyMatch(at -> Math.abs(at.getY()-65.5)<1e-6));
+        verify(finder,times(1)).findPath(any(Location.class));
+    }
+
+    @Test void oneBlockRiseWithCarpetOnTopUsesTheCarpetPhysicalHeight() {
+        for(int x=1;x<=2;x++) {
+            put(x,64,0,Material.STONE,CUBE);
+            put(x,65,0,Material.WHITE_CARPET,List.of(new BoundingBox(0,0,0,1,.0625,1)));
+        }
+        path(raw(0,64,0),raw(1,66,0),raw(2,66,0));
+        List<Location> visited=walk(new Location(world,2.5,65.0625,.5));
+        assertTrue(visited.stream().anyMatch(at -> Math.abs(at.getY()-65.0625)<1e-6));
+        verify(finder,times(1)).findPath(any(Location.class));
+    }
+
+    @Test void twoAndQuarterBlockDropFollowsLowerPaperWaypointAndKeepsTheRoute() {
+        // Start on a 65.5 platform, land at 63.25: a safe 2.25-block descent.
+        for(int x=-1;x<=0;x++) {
+            put(x,64,0,Material.STONE,CUBE);
+            put(x,65,0,Material.STONE_SLAB,List.of(new BoundingBox(0,0,0,1,.5,1)));
+        }
+        for(int x=1;x<=3;x++) {
+            put(x,63,0,Material.STONE_SLAB,List.of(new BoundingBox(0,0,0,1,.25,1)));
+        }
+        position=new Location(world,.5,65.5,.5);
+        path(raw(0,66,0),raw(1,64,0),raw(2,64,0),raw(3,64,0));
+        List<Location> visited=walk(new Location(world,3.5,63.25,.5));
+        assertTrue(visited.stream().anyMatch(at -> at.getY()<64.0));
+        assertEquals(63.25,position.getY(),1e-6);
+        verify(finder,times(1)).findPath(any(Location.class));
+    }
+
+    @Test void twoBlockPitIsNotEnteredWhenPaperDidNotAnnounceADescent() {
         put(1,63,0,Material.AIR,List.of());
         put(1,62,0,Material.AIR,List.of());
         put(1,61,0,Material.STONE,CUBE);
@@ -317,5 +359,120 @@ class NavigationTerrainAuditTest {
         put(1,63,0,Material.COBBLESTONE_WALL,WALL_NORTH_SOUTH);
         path(raw(0,64,0),raw(1,64,1),raw(2,64,1));
         walk(new Location(world,2.5,64,1.5));
+    }
+
+    static Stream<Arguments> mixedSurfaceCases() {
+        return Stream.of(BlockFace.EAST,BlockFace.SOUTH,BlockFace.WEST,BlockFace.NORTH)
+                .flatMap(direction -> Stream.of(false,true).map(reverse -> Arguments.of(direction,reverse)));
+    }
+
+    static Stream<Arguments> surroundedStairCases() {
+        return Stream.of(BlockFace.EAST,BlockFace.SOUTH,BlockFace.WEST,BlockFace.NORTH)
+                .flatMap(direction -> Stream.of(false,true).flatMap(reverse ->
+                        Stream.of("straight","inner-right","outer-right")
+                                .map(shape -> Arguments.of(direction,reverse,shape))));
+    }
+
+    /** An actual replay, including collision checks independent of RoutineTerrain, through
+     * fractional floors in a one-block lane. The stair has slabs on both sides. */
+    @ParameterizedTest @MethodSource("surroundedStairCases")
+    void mixedStairsSurroundedBySlabsAndCarpetsFinishInBothDirections(BlockFace direction,boolean reverse,String shape) {
+        List<BoundingBox> half=List.of(new BoundingBox(0,0,0,1,.5,1));
+        List<BoundingBox> stair=new ArrayList<>(half);
+        stair.add(shape.equals("outer-right")?new BoundingBox(.5,.5,.5,1,1,1):new BoundingBox(.5,.5,0,1,1,1));
+        if(shape.equals("inner-right"))stair.add(new BoundingBox(0,.5,.5,.5,1,1));
+        double[] heights={64.5,65,65,65.0625,65.5,65,64.875,64.875,64.9375,65,64.5};
+        for(int i=0;i<heights.length;i++) {
+            int[] tile=rotate(i,0,direction);
+            Material material;
+            List<BoundingBox> boxes;
+            if(i==0 || i==10) {material=Material.STONE_SLAB;boxes=half;}
+            else if(i==1) {material=Material.OAK_STAIRS;boxes=stair;}
+            else if(i==5) {material=Material.STONE_SLAB;boxes=List.of(new BoundingBox(0,.5,0,1,1,1));}
+            else if(i==6 || i==7) {material=i==6?Material.MUD:Material.SOUL_SAND;boxes=List.of(new BoundingBox(0,0,0,1,.875,1));}
+            else if(i==8) {material=Material.DIRT_PATH;boxes=List.of(new BoundingBox(0,0,0,1,.9375,1));}
+            else {material=Material.STONE;boxes=CUBE;}
+            put(tile[0],64,tile[1],material,boxes.stream().map(box -> rotate(box,direction)).toList());
+            if(i==3)put(tile[0],65,tile[1],Material.WHITE_CARPET,List.of(new BoundingBox(0,0,0,1,.0625,1)));
+            if(i==4)put(tile[0],65,tile[1],Material.STONE_SLAB,half);
+            for(int side:new int[]{-1,1}) {
+                int[] adjacent=rotate(i,side,direction);
+                put(adjacent[0],64,adjacent[1],Material.STONE_SLAB,half);
+            }
+        }
+        List<Location> points=new ArrayList<>();
+        for(int i=0;i<heights.length;i++) {
+            int[] tile=rotate(i,0,direction);
+            points.add(raw(tile[0],(int)Math.ceil(heights[i]),tile[1]));
+        }
+        if(reverse)Collections.reverse(points);
+        int start=reverse?heights.length-1:0, finish=reverse?0:heights.length-1;
+        int[] first=rotate(start,0,direction),last=rotate(finish,0,direction);
+        position=new Location(world,first[0]+.5,heights[start],first[1]+.5);
+        path(points);
+        List<Location> visited=walk(new Location(world,last[0]+.5,heights[finish],last[1]+.5));
+        assertTrue(visited.stream().anyMatch(at -> Math.abs(at.getY()-64.875)<1e-6),"mud/soul sand are actually visited");
+        assertTrue(visited.stream().anyMatch(at -> Math.abs(at.getY()-65.0625)<1e-6),"carpet physical surface is visited");
+        verify(finder,times(1)).findPath(any(Location.class));
+    }
+
+    @ParameterizedTest @MethodSource("mixedSurfaceCases")
+    void repeatedFractionalBumpsOmittedBetweenNativeNodesDoNotCreateABackAndForthLoop(BlockFace direction,boolean reverse) {
+        // Two consecutive mud cells leave enough room for the entire body to clear both
+        // neighbouring ledges; a one-cell dip may legitimately be bridged during replay.
+        double[] heights={64,64.5,64,64.0625,63.875,63.875,64,64.5,64};
+        for(int i=1;i<heights.length-1;i++) {
+            int[] tile=rotate(i,0,direction);
+            if(heights[i]==64.5)put(tile[0],64,tile[1],Material.STONE_SLAB,List.of(new BoundingBox(0,0,0,1,.5,1)));
+            if(heights[i]==64.0625)put(tile[0],64,tile[1],Material.WHITE_CARPET,List.of(new BoundingBox(0,0,0,1,.0625,1)));
+            if(heights[i]==63.875)put(tile[0],63,tile[1],Material.MUD,List.of(new BoundingBox(0,0,0,1,.875,1)));
+        }
+        int last=heights.length-1;
+        int[] first=rotate(reverse?last:0,0,direction),end=rotate(reverse?0:last,0,direction);
+        position=new Location(world,first[0]+.5,64,first[1]+.5);
+        path(raw(first[0],64,first[1]),raw(end[0],64,end[1]));
+        List<Location> visited=walk(new Location(world,end[0]+.5,64,end[1]+.5));
+        assertTrue(visited.stream().anyMatch(at -> Math.abs(at.getY()-64.5)<1e-6));
+        assertTrue(visited.stream().anyMatch(at -> Math.abs(at.getY()-63.875)<1e-6));
+        verify(finder,times(1)).findPath(any(Location.class));
+    }
+
+    @ParameterizedTest @MethodSource("mixedSurfaceCases")
+    void bendsFromMudThroughCarpetAndStairsDoNotOrbitAtTheCorner(BlockFace direction,boolean reverse) {
+        int[][] tiles={{0,0},{1,0},{2,0},{2,1},{2,2},{2,3},{3,3}};
+        double[] heights={64,64.5,63.875,64.0625,65,65,65};
+        List<Location> points=new ArrayList<>();
+        for(int i=0;i<tiles.length;i++) {
+            int[] tile=rotate(tiles[i][0],tiles[i][1],direction);
+            if(i==1)put(tile[0],64,tile[1],Material.STONE_SLAB,List.of(new BoundingBox(0,0,0,1,.5,1)));
+            if(i==2)put(tile[0],63,tile[1],Material.MUD,List.of(new BoundingBox(0,0,0,1,.875,1)));
+            if(i==3)put(tile[0],64,tile[1],Material.WHITE_CARPET,List.of(new BoundingBox(0,0,0,1,.0625,1)));
+            if(i==4)put(tile[0],64,tile[1],Material.OAK_STAIRS,
+                    List.of(new BoundingBox(0,0,0,1,.5,1),new BoundingBox(0,.5,.5,1,1,1))
+                            .stream().map(box -> rotate(box,direction)).toList());
+            if(i==5)put(tile[0],64,tile[1],Material.STONE,CUBE);
+            if(i==6)put(tile[0],64,tile[1],Material.STONE_SLAB,List.of(new BoundingBox(0,.5,0,1,1,1)));
+            points.add(raw(tile[0],(int)Math.ceil(heights[i]),tile[1]));
+        }
+        if(reverse)Collections.reverse(points);
+        int start=reverse?tiles.length-1:0,finish=reverse?0:tiles.length-1;
+        int[] first=rotate(tiles[start][0],tiles[start][1],direction),last=rotate(tiles[finish][0],tiles[finish][1],direction);
+        position=new Location(world,first[0]+.5,heights[start],first[1]+.5);
+        path(points);
+        walk(new Location(world,last[0]+.5,heights[finish],last[1]+.5));
+        verify(finder,times(1)).findPath(any(Location.class));
+    }
+
+    @ParameterizedTest @EnumSource(value=Material.class,names={"COBBLESTONE_WALL","OAK_FENCE","GLASS_PANE","IRON_BARS"})
+    void aFlatRouteCannotTreatAProtrudingBarrierAsAnUnannouncedSlab(Material material) {
+        boolean tall=material==Material.COBBLESTONE_WALL || material==Material.OAK_FENCE;
+        put(1,64,0,material,List.of(new BoundingBox(tall?.375:.4375,0,0,tall?.625:.5625,tall?1.5:1,1)));
+        path(raw(0,64,0),raw(2,64,0));
+        for(int tick=0;tick<100;tick+=2) {
+            Location previous=position.clone();
+            assertNotEquals(RoutineNavigator.Result.ARRIVED,navigator.move(npc,new Location(world,2.5,64,.5),2.4,tick,2));
+            assertStep(previous);
+            assertEquals(64,position.getY(),1e-6,"a barrier must not become a riser in a flat route");
+        }
     }
 }

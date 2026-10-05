@@ -35,6 +35,9 @@ public final class RoutineService {
     private double activationRange;
     private boolean danceEnabled;
     private long danceSeatedTicks;
+    private boolean stuckHopEnabled;
+    private long stuckHopDelayTicks;
+    private double stuckHopHeight,stuckHopDistance;
     private int clockElapsed;
     private UUID internalEntity;
     private boolean mounting;
@@ -61,6 +64,8 @@ public final class RoutineService {
         boolean working,paused,dancing,returningFromDance,recoveryDone;
         boolean recoveringFloor;
         Location travelProgress;
+        Location stuckAnchor;
+        long nextHopAttempt;
         long nextPick, travelSince, nextPresence, nextDialogue, nextPoseCheck, nextDanceCheck, nextUpdate,nextReturnCheck,returnWaitingSince,nextRecoveryCheck;
         int returnDoorway,returnFailedDoorways;
         final Map<RoutineGoal.Point,Long> blockedDanceSeats=new HashMap<>();
@@ -88,6 +93,13 @@ public final class RoutineService {
         danceEnabled=plugin.settings().messages().getBoolean("routines.dancing",true);
         danceSeatedTicks=Math.max(1,Math.min(600,plugin.settings().messages().getInt("routines.dance-seated-seconds",30)))*20L;
         navigator=new RoutineNavigator(doors,this::teleport); failed.clear();
+        var cfg=plugin.settings().messages();
+        navigator.configureHeights(cfg.getDouble("routines.max-climb-height",1.30),cfg.getDouble("routines.max-drop-height",2.30),cfg.getDouble("routines.max-unannounced-drop",1.01));
+        stuckHopEnabled=cfg.getBoolean("routines.stuck-hop.enabled",true);
+        stuckHopDelayTicks=20L*Math.max(1,Math.min(60,cfg.getInt("routines.stuck-hop.delay-seconds",3)));
+        double hopHeight=cfg.getDouble("routines.stuck-hop.height",.6),hopDistance=cfg.getDouble("routines.stuck-hop.distance",1);
+        stuckHopHeight=Double.isFinite(hopHeight)?Math.max(.05,Math.min(4,hopHeight)):.6;
+        stuckHopDistance=Double.isFinite(hopDistance)?Math.max(.05,Math.min(4,hopDistance)):1;
         dancers=new DanceController(plugin,navigator,this::teleport);
         clocks.configure(repository.snapshot().clocks());
         task=Bukkit.getScheduler().runTaskTimer(plugin,this::tick,cadence,cadence);
@@ -177,6 +189,7 @@ public final class RoutineService {
     }
     public void prepareReaction(ActiveNpc npc) {
         State s=states.get(npc.definition().id());if(s==null)return;
+        clearStuckHop(s);
         endDance(s);
         looks.clear(npc,s.look);navigator.cancel(npc.definition().id());
         if(s.pose!=null && s.pose.sleeping)release(s,true);
@@ -185,7 +198,7 @@ public final class RoutineService {
     }
     public RoutineVisuals.Pose beginDrink(ActiveNpc npc,org.bukkit.inventory.ItemStack beer,long tick) {
         State s=states.get(npc.definition().id());
-        if(s!=null){endDance(s);looks.clear(npc,s.look);navigator.cancel(npc.definition().id());}
+        if(s!=null){clearStuckHop(s);endDance(s);looks.clear(npc,s.look);navigator.cancel(npc.definition().id());}
         return visuals.beginDrink(npc,s==null?null:s.pose,beer,tick);
     }
     public boolean drinkTick(RoutineVisuals.Pose pose,long tick){return visuals.drinkTick(pose,tick);}
@@ -248,6 +261,7 @@ public final class RoutineService {
             if(!npc.entity().isValid()){staticFloors.remove(id);continue;}
             if(failed.contains(id))continue;
             if(!enabled(id)) {
+                State held=states.get(id);if(held!=null)clearStuckHop(held);
                 try{updateStaticFloor(npc);}
                 catch(RuntimeException ex) {
                     failed.add(id);staticFloors.remove(id);
@@ -293,7 +307,7 @@ public final class RoutineService {
         }
         if(!s.observed){gravity.reset(s.gravity);s.nextUpdate=ticks+20;return;}
         RoutineGravity.Result result=gravity.tick(npc,s.gravity,ticks,cadence);
-        s.nextUpdate=result==RoutineGravity.Result.FALLING?ticks+cadence:Math.min(ticks+20,s.gravity.nextCheck);
+        s.nextUpdate=result.moving()?ticks+cadence:Math.min(ticks+20,s.gravity.nextCheck);
     }
     private void update(ActiveNpc npc) {
         String id=npc.definition().id(); State s=states.computeIfAbsent(id,k -> {State n=new State(); n.npc=npc;return n;});
@@ -308,6 +322,7 @@ public final class RoutineService {
             // the wider visibility guard below is queried only for pending recovery.
             boolean absent=position.getWorld().getNearbyPlayers(position,range,p -> !p.isDead()).isEmpty();
             if(absent) {
+                clearStuckHop(s);
                 if(!s.paused) {
                     if(plugin.traits()!=null)plugin.traits().cancel(id);
                     // Keep furniture poses when the same schedule remains active. In particular,
@@ -360,6 +375,7 @@ public final class RoutineService {
         var w=window(id,position.getWorld());
         if(!same(s.window,w)) { release(s,true); s.window=w; s.chain=0; s.point=0; s.goal=null; s.nextPick=0; }
         if(w==null || s.chain>=w.chain().size()) {
+            clearStuckHop(s);
             if(recoverFloor(s))return;
             s.status="fuera de horario / secuencia terminada";return;
         }
@@ -368,12 +384,14 @@ public final class RoutineService {
             // Cada entrada a un goal comienza su propio intervalo/demora inicial. Sin esto,
             // un intervalo largo de ayer podría impedir que el NPC hable hoy.
             clearGoalDialogue(id);
+            clearStuckHop(s);
             s.goal=goal; s.point=0; s.nextDialogue=0;s.blockedDanceSeats.clear();
         }
-        if(plugin.reactions()!=null && plugin.reactions().busy(id)){gravity.reset(s.gravity);s.status="enfadado: mirando al jugador";s.travelSince=ticks;return;}
-        if(plugin.traits()!=null && plugin.traits().busy(id)) {gravity.reset(s.gravity);s.status="bebiendo cerveza ofrecida";s.travelSince=ticks;return;}
+        if(plugin.reactions()!=null && plugin.reactions().busy(id)){clearStuckHop(s);gravity.reset(s.gravity);s.status="enfadado: mirando al jugador";s.travelSince=ticks;return;}
+        if(plugin.traits()!=null && plugin.traits().busy(id)) {clearStuckHop(s);gravity.reset(s.gravity);s.status="bebiendo cerveza ofrecida";s.travelSince=ticks;return;}
         if(ticks>=s.nextDialogue) { s.nextDialogue=ticks+20; updateDialogue(npc,goal,System.nanoTime()); }
         if(s.dancing) {
+            clearStuckHop(s);
             gravity.reset(s.gravity);
             var dance=dancers.tick(npc,ticks,cadence,goal.speed());
             if(dance!=DanceController.Result.FINISHED) {s.status=dance==DanceController.Result.DANCING?"bailando junto a músicos":"acercándose a los músicos";return;}
@@ -381,6 +399,7 @@ public final class RoutineService {
             position=npc.position();
         }
         if(s.pose!=null) {
+            clearStuckHop(s);
             gravity.reset(s.gravity);
             if(!validFurniture(goal,s.destination,position.getWorld())) {
                 release(s,true);s.nextPick=ticks+100;return;
@@ -415,13 +434,17 @@ public final class RoutineService {
         }
         if(s.working) {
             if(!npc.definition().mode().musician() || s.approach!=null && position.getWorld()==s.approach.getWorld()
-                    && position.distanceSquared(s.approach)<.36) {s.status="trabajando";return;}
+                    && position.distanceSquared(s.approach)<.36) {clearStuckHop(s);s.status="trabajando";return;}
             // A displaced musician becomes ineligible for audio immediately. Keep the chosen
             // work goal and post, then use the same bounded route to rejoin on arrival.
             s.working=false;if(plugin.music()!=null)plugin.music().remove(id);
             looks.clear(npc,s.look);navigator.cancel(id);
             resetTravelProgress(s,position);s.nextUpdate=ticks+cadence;
         }
+        if(s.destination!=null && !s.returningFromDance && ticks-s.travelSince>1200) {
+            release(s,true);s.nextPick=ticks+100;s.status="ruta inaccesible; esperando reintento";return;
+        }
+        if(stuckHop(s))return;
         if(s.returningFromDance && ticks>=s.nextReturnCheck) {
             s.nextReturnCheck=ticks+100;
             if(!validFurniture(goal,s.destination,position.getWorld())) {
@@ -434,9 +457,6 @@ public final class RoutineService {
                     returnApproach.setYaw(s.destination.yaw());s.approach=returnApproach;
                 }
             }
-        }
-        if(s.destination!=null && !s.returningFromDance && ticks-s.travelSince>1200) {
-            release(s,true);s.nextPick=ticks+100;s.status="ruta inaccesible; esperando reintento";return;
         }
         if(s.destination==null) {
             if(ticks<s.nextPick) return;
@@ -457,11 +477,13 @@ public final class RoutineService {
             if(furniture) occupied.put(key(s.destination),id);
         }
         Location beforeMove=npc.position();
+        observeStuckMotion(s,beforeMove,false);
         // Joining a seat from its checked doorway needs no exact native waypoint. This also
         // recovers a return that ends a few centimetres short without a visible long teleport.
         var result=s.returningFromDance && readyToSit(npc,s.approach)
                 ?RoutineNavigator.Result.ARRIVED:navigator.move(npc,s.approach,goal.speed(),ticks,cadence);
         boolean progressed=travelProgress(s,beforeMove,npc.position(),result);
+        observeStuckMotion(s,npc.position(),false);
         if(result==RoutineNavigator.Result.WAITING && recoverFloor(s))return;
         if(!s.returningFromDance && result==RoutineNavigator.Result.WAITING && navigator.exhausted(id)
                 && (goal.type()==RoutineGoal.Type.SIT || goal.type()==RoutineGoal.Type.SLEEP)) {
@@ -504,6 +526,7 @@ public final class RoutineService {
                 ?result==RoutineNavigator.Result.WAITING?"volviendo al asiento: esperando ruta":"volviendo al asiento"
                 :result==RoutineNavigator.Result.WAITING?"esperando ruta (reintentos limitados)":"caminando a "+goal.type();
         if(result!=RoutineNavigator.Result.ARRIVED) return;
+        clearStuckHop(s);
         switch(goal.type()) {
             case WORK -> { s.working=true; if(plugin.music()!=null)plugin.music().working(npc); npc.anchor().setYaw(s.approach.getYaw()); npc.entity().setRotation(s.approach.getYaw(),0);s.status="trabajando"; }
             case WALK -> {
@@ -544,6 +567,48 @@ public final class RoutineService {
                 || s.travelProgress.distanceSquared(after)<.0025)return false;
         resetTravelProgress(s,after);return true;
     }
+    private void clearStuckHop(State s) {
+        s.stuckAnchor=null;s.nextHopAttempt=0;
+        if(navigator!=null)navigator.cancelHop(s.npc.definition().id());
+    }
+    /** Native retries do not reset this clock. Only accumulated real displacement does. */
+    private void observeStuckMotion(State s,Location at,boolean horizontalOnly) {
+        if(!stuckHopEnabled || s.npc.entity().isInsideVehicle())return;
+        if(s.stuckAnchor==null || s.stuckAnchor.getWorld()!=at.getWorld()) {
+            s.stuckAnchor=at.clone();s.nextHopAttempt=ticks+stuckHopDelayTicks;return;
+        }
+        double dx=at.getX()-s.stuckAnchor.getX(),dz=at.getZ()-s.stuckAnchor.getZ();
+        double dy=horizontalOnly?0:at.getY()-s.stuckAnchor.getY();
+        if(dx*dx+dy*dy+dz*dz>=.0025) {
+            s.stuckAnchor=at.clone();s.nextHopAttempt=ticks+stuckHopDelayTicks;
+        }
+    }
+    /** A hop is walking recovery, never arrival at the routine's destination. */
+    private boolean stuckHop(State s) {
+        ActiveNpc npc=s.npc;String id=npc.definition().id();
+        if(!stuckHopEnabled || npc.entity().isInsideVehicle()) {clearStuckHop(s);return false;}
+        boolean hopping=navigator.activeHop(id);
+        if(s.stuckAnchor==null && s.destination==null && !hopping)return false;
+        observeStuckMotion(s,npc.position(),hopping);
+        if(hopping) {
+            Location before=npc.position();
+            navigator.advanceHop(npc,ticks);
+            Location after=npc.position();observeStuckMotion(s,after,true);
+            if(s.stuckAnchor!=null)s.stuckAnchor.setY(after.getY());
+            // Vertical animation cannot keep an inaccessible route alive indefinitely.
+            Location horizontalBefore=before.clone(),horizontalAfter=after.clone();
+            horizontalBefore.setY(after.getY());
+            if(s.travelProgress!=null)s.travelProgress.setY(after.getY());
+            travelProgress(s,horizontalBefore,horizontalAfter,RoutineNavigator.Result.MOVING);
+            if(plugin.sounds()!=null)plugin.sounds().moved(npc,before,after,ticks);
+            if(!navigator.activeHop(id))s.nextHopAttempt=ticks+stuckHopDelayTicks;
+            s.nextUpdate=ticks+cadence;s.status="salto corto para destrabarse";return true;
+        }
+        if(ticks<s.nextHopAttempt)return false;
+        s.nextHopAttempt=ticks+stuckHopDelayTicks;
+        if(!navigator.startHop(npc,stuckHopHeight,stuckHopDistance,ticks))return false;
+        s.nextUpdate=ticks+cadence;s.status="salto corto para destrabarse";return true;
+    }
     /** Returns true while floor recovery owns this update; reservations remain unchanged. */
     private boolean recoverFloor(State s) {
         ActiveNpc npc=s.npc;String id=npc.definition().id();
@@ -553,7 +618,7 @@ public final class RoutineService {
                 || navigator.controlsVerticalStep(id)) {
             gravity.reset(s.gravity);return false;
         }
-        RoutineGravity.Result result=gravity.tick(npc,s.gravity,ticks,cadence);
+        RoutineGravity.Result result=gravity.tick(npc,s.gravity,ticks,cadence,s.goal==null?2.4:s.goal.speed());
         if(result!=RoutineGravity.Result.STABLE) {
             if(!s.recoveringFloor) {
                 s.recoveringFloor=true;navigator.cancel(id);looks.clear(npc,s.look);
@@ -563,8 +628,9 @@ public final class RoutineService {
                 }
                 resetTravelProgress(s,npc.position());
             }
-            s.nextUpdate=ticks+(result==RoutineGravity.Result.FALLING?cadence:20);
-            s.status=result==RoutineGravity.Result.FALLING?"cayendo al perder el suelo":"esperando suelo seguro";
+            s.nextUpdate=ticks+(result.moving()?cadence:20);
+            s.status=result==RoutineGravity.Result.FALLING?"cayendo al perder el suelo"
+                    :result==RoutineGravity.Result.LIFTING?"recuperando apoyo":"esperando suelo seguro";
             return true;
         }
         if(!s.recoveringFloor)return false;
@@ -593,6 +659,7 @@ public final class RoutineService {
     }
     private void endDance(State s) {
         if(!s.dancing)return;
+        clearStuckHop(s);
         if(dancers!=null)dancers.cancel(s.npc.definition().id());
         s.dancing=false;s.returningFromDance=s.goal!=null && s.goal.type()==RoutineGoal.Type.SIT
                 && s.destination!=null && s.approach!=null;

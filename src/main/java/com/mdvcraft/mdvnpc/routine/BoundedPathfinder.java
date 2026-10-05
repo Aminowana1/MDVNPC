@@ -47,7 +47,9 @@ public final class BoundedPathfinder {
         return used;
     }
     private static final int[][] DIRECTIONS = {{1,0},{-1,0},{0,1},{0,-1}};
-    private static final int[] HEIGHTS = {0,1,-1};
+    // Integer node deltas needed to represent physical +1.5 / -2.3 transitions on
+    // slabs, carpets and lowered blocks. Grid.edge remains the authoritative geometry check.
+    private static final int[] HEIGHTS = {0,1,-1,2,-2,-3};
     public boolean done() { return done; }
     public List<Node> result() { return result; }
     public int visited() { return cost.size(); }

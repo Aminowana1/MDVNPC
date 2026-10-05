@@ -20,6 +20,7 @@ import java.util.function.BiPredicate;
  */
 public final class RoutineNavigator {
     public enum Result { MOVING, ARRIVED, WAITING }
+    public enum HopFailure { NONE, INVALID_START, BLOCKED, DISPLACED, NO_MOTION, TELEPORT_REJECTED }
     private enum SearchFailure { NONE, NO_ROUTE, CHUNK, DENIED_DOOR }
     private static final int[] PAPER_SEARCH_RANGES = {16, 24, 32, 48, 64};
     private static final int MAX_PATH_POINTS = 2048;
@@ -31,20 +32,27 @@ public final class RoutineNavigator {
     private static final double GOAL_PROGRESS_DISTANCE = .15;
     private static final double MOVEMENT_EPSILON_SQUARED = 1e-12;
     private static final double GROUND_EPSILON = .015;
+    private static final double FLOOR_SETTLE_EPSILON = 1e-7;
     /** Waypoints are converted from Paper's integer cells to the real collision height.
      * Horizontal tolerance prevents tiny orbiting near the centre, while the vertical
      * tolerance stays tight so mud/soul-sand/path/carpet levels are actually visited. */
     private static final double WAYPOINT_HORIZONTAL_EPSILON = .15;
-    private static final double WAYPOINT_VERTICAL_EPSILON = .02;
-    private static final double MAX_STEP_HEIGHT = 1.01;
-    /** Look slightly ahead of the 0.30-wide body so a low physical riser is raised onto
-     * before collision, even when Paper compresses both route nodes to the same Y. */
-    private static final double RISER_LOOKAHEAD = .42;
+    private static final double WAYPOINT_VERTICAL_EPSILON = 1e-4;
+    /** MDVNPC deliberately allows slightly more capable pedestrian traversal than vanilla:
+     * decorative market paths frequently combine a full block with carpet/slab layers. */
+    private double MAX_CLIMB_HEIGHT = 1.30;
+    private double MAX_DROP_HEIGHT = 2.30;
+    private double MAX_STEP_HEIGHT = MAX_CLIMB_HEIGHT;
+    /** Starting the lift before the hitbox reaches the riser is essential: teleport replay
+     * cannot pass through a slab/full-block side while incrementally gaining Y. */
     private static final double RISER_SUPPORT_RADIUS = .065;
-    /** When Paper keeps both nodes at the same Y, follow any real sub-block rise, but
-     * never promote a complete one-block obstacle to a stair. The almost-point-sized
-     * probe samples the route centreline and ignores a slab/block merely beside it. */
-    private static final double MAX_UNANNOUNCED_RISER = .99;
+    /** When Paper compresses consecutive nodes to the same Y, follow the real support on
+     * the route centreline. The almost-point-sized probe prevents a merely lateral block from
+     * becoming a stair; the vertical envelope itself is still capped at MAX_CLIMB_HEIGHT. */
+    private double MAX_UNANNOUNCED_RISER = MAX_CLIMB_HEIGHT;
+    /** Small decorative dips may be absent from Paper's node list. Larger falls require a
+     * lower native waypoint so a compressed flat route cannot make an NPC dive into a pit. */
+    private double MAX_UNANNOUNCED_DROP = 1.01;
     private static final double UNANNOUNCED_SUPPORT_RADIUS = .001;
     /** Approximate villager/player half-width. When a horizontal substep first collides,
      * sample just beyond the body's leading edge to discover the low surface causing it. */
@@ -53,9 +61,14 @@ public final class RoutineNavigator {
      * makes the NPC hug the wall/floor. Widen first so Paper can discover stairs/ramps/doors. */
     private static final double VERTICAL_SHADOW_HORIZONTAL_SQUARED = 4.5 * 4.5;
     private static final double VERTICAL_SHADOW_MIN_Y = .75;
+    private static final int MINIMUM_HOP_TICKS = 12;
+    private static final double HOP_SWEEP_INTERVAL = .08;
+    private static final double HOP_POSITION_TOLERANCE_SQUARED = .05*.05;
     private final DoorController doors;
     private final BiPredicate<ActiveNpc, Location> teleport;
     private final Map<String, Travel> travels = new LinkedHashMap<>();
+    private final Map<String, RecoveryHop> hops = new LinkedHashMap<>();
+    private final Map<String, HopFailure> hopFailures = new LinkedHashMap<>();
     private long budgetTick = Long.MIN_VALUE, spentNanos;
     private int maximumStarts = 2, startsLeft = 2;
     private long maximumNanos = 2_000_000;
@@ -78,12 +91,17 @@ public final class RoutineNavigator {
         int localFailures;
         boolean exhausted;
         boolean avoidClosedDoors;
+        boolean doorDeniedDuringStep;
         final Deque<Location> partialEndpoints = new ArrayDeque<>();
         double bestGoalDistance;
         double segmentStartBest;
         int segmentsWithoutGoalProgress;
         Location riserWaypoint;
         double riserHeight = Double.NaN;
+        double riserBaseY = Double.NaN;
+        /** Safe floor selected while crossing a ledge. Kept across ticks so RoutineGravity
+         * does not steal/cancel the route in the middle of a controlled <=2.3 block descent. */
+        double dropHeight = Double.NaN;
         Location lastCommandPosition;
         Location lastProgressPosition;
         long lastProgressTick;
@@ -98,8 +116,44 @@ public final class RoutineNavigator {
         }
     }
 
+    private static final class RecoveryHop {
+        final ActiveNpc npc;
+        final RoutineTerrain terrain;
+        final Location start, landing;
+        final double height, quadratic, linear, sweepRate;
+        final int duration;
+        Location lastCommand;
+        long lastTick;
+        int elapsed;
+        RecoveryHop(ActiveNpc npc,RoutineTerrain terrain,Location start,Location landing,double height,long tick) {
+            this.npc=npc;this.terrain=terrain;this.start=start.clone();this.landing=landing.clone();this.height=height;
+            double delta=landing.getY()-start.getY();
+            // Solve the parabola through both floors with its apex at startY + height.
+            quadratic=2*height-delta+2*Math.sqrt(Math.max(0,height*(height-delta)));
+            linear=quadratic+delta;
+            sweepRate=Math.hypot(landing.getX()-start.getX(),landing.getZ()-start.getZ())
+                    +Math.max(Math.abs(linear),Math.abs(linear-2*quadratic));
+            duration=Math.max(MINIMUM_HOP_TICKS,(int)Math.ceil(Math.max(height*20,
+                    Math.hypot(landing.getX()-start.getX(),landing.getZ()-start.getZ())*8)));
+            lastCommand=start.clone();lastTick=tick;
+        }
+        Location frame(double phase) {
+            if(phase>=1)return landing.clone();
+            return start.clone().add((landing.getX()-start.getX())*phase,
+                    linear*phase-quadratic*phase*phase,(landing.getZ()-start.getZ())*phase);
+        }
+    }
+
     public RoutineNavigator(DoorController doors, BiPredicate<ActiveNpc, Location> teleport) {
         this.doors = doors; this.teleport = teleport;
+    }
+    /** Vertical limits in blocks; invalid values fall back to the defaults. */
+    public void configureHeights(double climb, double drop, double unannouncedDrop) {
+        MAX_CLIMB_HEIGHT = climb > 0 && climb <= 4 ? climb : 1.30;
+        MAX_STEP_HEIGHT = MAX_CLIMB_HEIGHT;
+        MAX_UNANNOUNCED_RISER = MAX_CLIMB_HEIGHT;
+        MAX_DROP_HEIGHT = drop > 0 && drop <= 8 ? drop : 2.30;
+        MAX_UNANNOUNCED_DROP = unannouncedDrop > 0 && unannouncedDrop <= MAX_DROP_HEIGHT ? unannouncedDrop : Math.min(1.01, MAX_DROP_HEIGHT);
     }
     /** Compatibility with older integrations; the former A* limits and route cache are unused. */
     public RoutineNavigator(DoorController doors, BiPredicate<ActiveNpc, Location> teleport, int maxNodes, int cacheSize) {
@@ -116,11 +170,121 @@ public final class RoutineNavigator {
     /** No background A* search remains. Kept for source compatibility only. */
     public void searchBudget(int nodes, long nanos) {}
 
+    /** Preflight only: the routine decides when a grounded, idle walker needs recovery. */
+    public boolean startHop(ActiveNpc npc,double height,double distance,long tick) {
+        String id=npc.definition().id();
+        if(hops.containsKey(id))return false;
+        Location start=npc.entity().getLocation();
+        if(!Double.isFinite(height) || !Double.isFinite(distance) || height<.05 || height>4
+                || distance<.05 || distance>4 || start.getWorld()==null
+                || !Float.isFinite(start.getYaw()) || !npc.entity().isValid() || npc.entity().isInsideVehicle()) {
+            recordHopFailure(id,HopFailure.INVALID_START);return false;
+        }
+        RoutineTerrain terrain=new RoutineTerrain(start.getWorld(),doors);
+        try(RoutineTerrain.Update ignored=terrain.beginUpdate()) {
+            double support=terrain.supportHeight(start.getX(),start.getY(),start.getZ(),.02);
+            if(!Double.isFinite(support) || Math.abs(support-start.getY())>.02
+                    || !terrain.recoveryHopFits(start.getX(),start.getY(),start.getZ(),start.getY(),false)) {
+                recordHopFailure(id,HopFailure.INVALID_START);return false;
+            }
+            double yaw=Math.toRadians(start.getYaw());
+            Location landing=start.clone().add(-Math.sin(yaw)*distance,0,Math.cos(yaw)*distance);
+            double floor=terrain.recoveryHopLanding(landing.getX(),start.getY(),landing.getZ(),
+                    Math.min(height,MAX_DROP_HEIGHT),height);
+            if(!Double.isFinite(floor) || floor>start.getY()+height+FLOOR_SETTLE_EPSILON) {
+                recordHopFailure(id,HopFailure.BLOCKED);return false;
+            }
+            landing.setY(floor);
+            RecoveryHop hop=new RecoveryHop(npc,terrain,start,landing,height,tick);
+            if(!hopArcClear(hop,0,1,true)) {recordHopFailure(id,HopFailure.BLOCKED);return false;}
+            hops.put(id,hop);hopFailures.remove(id);return true;
+        }
+    }
+
+    /** Advance one visible frame; missed updates cannot collapse the arc into one teleport. */
+    public Result advanceHop(ActiveNpc npc,long tick) {
+        String id=npc.definition().id();RecoveryHop hop=hops.get(id);
+        if(hop==null)return Result.WAITING;
+        Location current=npc.entity().getLocation();
+        if(hop.npc!=npc || current.getWorld()!=hop.start.getWorld()
+                || current.distanceSquared(hop.lastCommand)>HOP_POSITION_TOLERANCE_SQUARED) {
+            travels.remove(id);return abortHop(id,HopFailure.DISPLACED);
+        }
+        if(!npc.entity().isValid() || npc.entity().isInsideVehicle())return abortHop(id,HopFailure.INVALID_START);
+        if(tick<=hop.lastTick)return Result.MOVING;
+        int nextElapsed=Math.min(hop.duration,hop.elapsed+(int)Math.min(2,tick-hop.lastTick));
+        double before=(double)hop.elapsed/hop.duration,phase=(double)nextElapsed/hop.duration;
+        Location next=hop.frame(phase);
+        try(RoutineTerrain.Update ignored=hop.terrain.beginUpdate()) {
+            double landing=hop.terrain.recoveryHopLanding(hop.landing.getX(),hop.start.getY(),hop.landing.getZ(),
+                    Math.min(hop.height,MAX_DROP_HEIGHT),hop.height);
+            if(!Double.isFinite(landing) || Math.abs(landing-hop.landing.getY())>WAYPOINT_VERTICAL_EPSILON
+                    || !hopChordClear(hop,current,next,tick) || !hopArcClear(hop,before,phase,false))
+                return abortHop(id,HopFailure.BLOCKED);
+            boolean accepted=teleport.test(npc,next);
+            Location actual=npc.entity().getLocation();
+            boolean moved=actual.getWorld()!=current.getWorld()
+                    || actual.distanceSquared(current)>MOVEMENT_EPSILON_SQUARED;
+            if(moved)travels.remove(id);
+            if(!accepted)return abortHop(id,HopFailure.TELEPORT_REJECTED);
+            if(!moved)return abortHop(id,HopFailure.NO_MOTION);
+            if(actual.getWorld()!=next.getWorld() || actual.distanceSquared(next)>HOP_POSITION_TOLERANCE_SQUARED
+                    || !hop.terrain.recoveryHopFits(actual.getX(),actual.getY(),actual.getZ(),hop.start.getY(),false))
+                return abortHop(id,HopFailure.DISPLACED);
+            hop.lastCommand=actual.clone();hop.elapsed=nextElapsed;hop.lastTick=tick;
+            if(nextElapsed>=hop.duration) {
+                double actualFloor=hop.terrain.recoveryHopLanding(actual.getX(),hop.start.getY(),actual.getZ(),
+                        Math.min(hop.height,MAX_DROP_HEIGHT),hop.height);
+                if(!Double.isFinite(actualFloor) || Math.abs(actual.getY()-actualFloor)>WAYPOINT_VERTICAL_EPSILON)
+                    return abortHop(id,HopFailure.DISPLACED);
+                hops.remove(id);hopFailures.remove(id);return Result.ARRIVED;
+            }
+            return Result.MOVING;
+        }
+    }
+
+    private boolean hopArcClear(RecoveryHop hop,double from,double to,boolean planned) {
+        int samples=Math.max(1,(int)Math.ceil(hop.sweepRate*(to-from)/HOP_SWEEP_INTERVAL));
+        for(int i=0;i<=samples;i++) {
+            Location point=hop.frame(from+(to-from)*i/samples);
+            if(!hop.terrain.recoveryHopFits(point.getX(),point.getY(),point.getZ(),hop.start.getY(),planned))return false;
+        }
+        return true;
+    }
+    private boolean hopChordClear(RecoveryHop hop,Location from,Location to,long tick) {
+        int samples=Math.max(1,(int)Math.ceil(from.distance(to)/HOP_SWEEP_INTERVAL));
+        for(int i=1;i<=samples;i++) {
+            double phase=(double)i/samples;
+            Location point=from.clone().add((to.getX()-from.getX())*phase,(to.getY()-from.getY())*phase,
+                    (to.getZ()-from.getZ())*phase);
+            if(!doors.openNear(hop.npc.entity(),point,tick)
+                    || !hop.terrain.recoveryHopFits(point.getX(),point.getY(),point.getZ(),hop.start.getY(),false))return false;
+        }
+        return true;
+    }
+    private Result abortHop(String id,HopFailure reason) {
+        hops.remove(id);recordHopFailure(id,reason);return Result.WAITING;
+    }
+    private void recordHopFailure(String id,HopFailure reason) {
+        if(!hopFailures.containsKey(id) && hopFailures.size()>=256)hopFailures.remove(hopFailures.keySet().iterator().next());
+        hopFailures.put(id,reason);
+    }
+    public boolean activeHop(String id) {return hops.containsKey(id);}
+    public HopFailure hopFailure(String id) {return hopFailures.getOrDefault(id,HopFailure.NONE);}
+    public void cancelHop(String id) {hops.remove(id);hopFailures.remove(id);}
+
     public Result move(ActiveNpc npc, Location destination, double speed, long tick, int cadence) {
         String id = npc.definition().id();
         Location current = npc.entity().getLocation();
         if (destination.getWorld() == null || current.getWorld() != destination.getWorld()) {
             cancel(id); return Result.WAITING;
+        }
+        if(activeHop(id)) {
+            Result recovery=advanceHop(npc,tick);
+            // Completing recovery is not arrival at the caller's routine destination.
+            if(recovery==Result.ARRIVED)
+                return arrivedAt(npc.entity().getLocation(),destination)?Result.ARRIVED:Result.MOVING;
+            return recovery;
         }
         if (arrivedAt(current,destination)) { cancel(id); return Result.ARRIVED; }
         if (budgetTick != tick) beginTick(tick, maximumStarts, maximumNanos);
@@ -135,6 +299,7 @@ public final class RoutineNavigator {
     }
 
     private Result advance(Travel travel, Location current, double speed, long tick, int cadence) {
+        travel.doorDeniedDuringStep=false;
         ActiveNpc npc = travel.npc;
         Location destination = travel.destination;
         // An external teleport/push invalidates the route's starting assumptions. Re-query
@@ -144,7 +309,7 @@ public final class RoutineNavigator {
             travel.partialEndpoints.clear(); travel.segmentsWithoutGoalProgress = 0;
             travel.searchLevel = 0; travel.minimumSearchLevel = 0;
             travel.avoidClosedDoors = false;
-            travel.riserWaypoint = null; travel.riserHeight = Double.NaN;
+            travel.riserWaypoint = null; travel.riserHeight = Double.NaN; travel.riserBaseY = Double.NaN; travel.dropHeight = Double.NaN;
             travel.bestGoalDistance = current.distance(destination);
             travel.lastCommandPosition = current.clone();
             travel.lastProgressPosition = current.clone(); travel.lastProgressTick = tick;
@@ -206,9 +371,18 @@ public final class RoutineNavigator {
                 }
                 travel.path = plan.points(); travel.pathReachesFinal=plan.reachesFinal();
                 travel.index = 0; travel.pending = false; travel.exhausted=false;
+                // Paper's first node represents the occupied starting cell. Replaying its
+                // centre after every local replan makes an off-centre NPC walk backward,
+                // then forward into the same obstacle indefinitely. Consume that node only
+                // on the actual starting floor; higher/lower starts still need a transition.
+                Location first=travel.path.getFirst();
+                if(travel.path.size()>1 && first.getBlockX()==current.getBlockX()
+                        && first.getBlockZ()==current.getBlockZ()
+                        && Math.abs(first.getY()-current.getY())<=WAYPOINT_VERTICAL_EPSILON)
+                    travel.index=1;
                 travel.segmentStartBest = travel.bestGoalDistance;
                 travel.lastProgressPosition = current.clone(); travel.lastProgressTick = tick;
-                travel.riserWaypoint = null; travel.riserHeight = Double.NaN;
+                travel.riserWaypoint = null; travel.riserHeight = Double.NaN; travel.riserBaseY = Double.NaN; travel.dropHeight = Double.NaN;
                 tuneNextSearch(travel,start,plan);
             } finally {
                 spentNanos += System.nanoTime() - started;
@@ -220,7 +394,7 @@ public final class RoutineNavigator {
             // A partial path is a valid segment of a long trip. Re-query from its endpoint;
             // the search level may already have widened if that segment represented a detour.
             if (!travel.pathReachesFinal) rememberPartialEndpoint(travel);
-            travel.riserWaypoint = null; travel.riserHeight = Double.NaN;
+            travel.riserWaypoint = null; travel.riserHeight = Double.NaN; travel.riserBaseY = Double.NaN; travel.dropHeight = Double.NaN;
             travel.path = null; travel.pending = true; travel.retry = tick + PARTIAL_RETRY_TICKS;
             return Result.WAITING;
         }
@@ -233,12 +407,12 @@ public final class RoutineNavigator {
         }
         double distance = Math.max(.01, speed) * Math.max(1, cadence) / 20.0;
         Location step = walkingStep(travel,current,next,distance,tick);
-        if(step==null) step = recoverPartialRiser(travel,current,next,distance,tick);
         if(step==null) {localFailure(travel,tick);return Result.WAITING;}
         Vector delta = step.toVector().subtract(current.toVector());
         if (Math.abs(delta.getX()) + Math.abs(delta.getZ()) > .001)
             step.setDirection(new Vector(delta.getX(), 0, delta.getZ()));
         if (!applyStep(travel, current, step)) { localFailure(travel, tick); return Result.WAITING; }
+        if(travel.doorDeniedDuringStep) { localFailure(travel,tick);return Result.WAITING; }
         return Result.MOVING;
     }
 
@@ -302,7 +476,9 @@ public final class RoutineNavigator {
      * before the whole Paper route is discarded. */
     private Location walkingStep(Travel travel,Location current,Location next,double allowance,long tick) {
         if (travel.riserWaypoint != next) {
-            travel.riserWaypoint = next; travel.riserHeight = Double.NaN;
+            // The waypoint tolerance can advance while the feet still cross the old riser.
+            // Keep its grounded fence projection until actual narrow support releases it.
+            travel.riserWaypoint = next;
         }
         Location at=current.clone();
         int limit=(int)Math.ceil(allowance/.08)+20;
@@ -313,25 +489,42 @@ public final class RoutineNavigator {
                 // Never chase Paper's integer Y through empty air. At the waypoint centre,
                 // follow the real collision support instead. This is what prevents 1/16-1/8
                 // height blocks from producing a vertical oscillation/spin.
-                double support=travel.terrain.supportHeight(at.getX(),at.getY(),at.getZ(),MAX_STEP_HEIGHT);
-                if(!Double.isFinite(support))return null;
+                double support=replaySupport(travel,at,next,0,0);
+                if(!Double.isFinite(support))return lastClearStep(current,at);
                 double dy=support-at.getY();
                 if(Math.abs(dy)<=WAYPOINT_VERTICAL_EPSILON)break;
-                if(Math.abs(dy)>MAX_STEP_HEIGHT)return null;
+                if(dy>MAX_STEP_HEIGHT || dy < -MAX_DROP_HEIGHT)return lastClearStep(current,at);
                 Location vertical=at.clone().add(0,Math.copySign(Math.min(Math.abs(dy),Math.min(.08,allowance)),dy),0);
-                if(!walkable(travel,vertical,tick))return null;
+                if(!walkable(travel,vertical,tick))return lastClearStep(current,at);
                 candidate=vertical;
             } else {
                 double ux=dx/horizontal,uz=dz/horizontal;
-                double support=travel.terrain.supportHeight(at.getX(),at.getY(),at.getZ());
-                if(!Double.isFinite(support))return null;
-                if (Double.isFinite(travel.riserHeight) && support >= travel.riserHeight - GROUND_EPSILON
-                        && at.getY() >= travel.riserHeight - GROUND_EPSILON) travel.riserHeight = Double.NaN;
+                double support=replaySupport(travel,at,next,ux,uz);
+                if(!Double.isFinite(support))return lastClearStep(current,at);
+                if(Double.isFinite(travel.riserHeight) && at.getY()>=travel.riserHeight-GROUND_EPSILON) {
+                    // Full-body support may find the new ledge under the front shoulder
+                    // before the feet transfer. Only the narrow feet probe releases the lift.
+                    double footSupport=travel.terrain.supportHeight(at.getX(),at.getY(),at.getZ(),.02);
+                    if(Double.isFinite(footSupport) && footSupport>=travel.riserHeight-GROUND_EPSILON) {
+                        travel.riserHeight=Double.NaN;travel.riserBaseY=Double.NaN;
+                    }
+                }
+                if (Double.isFinite(travel.dropHeight) && at.getY() <= travel.dropHeight + GROUND_EPSILON)
+                    travel.dropHeight = Double.NaN;
+                boolean crossingRiser = Double.isFinite(travel.riserHeight)
+                        && support < travel.riserHeight - GROUND_EPSILON;
+                boolean paperDescent = next.getY() < at.getY() - GROUND_EPSILON;
+                double allowedDrop = paperDescent ? MAX_DROP_HEIGHT : MAX_UNANNOUNCED_DROP;
 
-                // Follow Paper's vertical intent for real descents. Keep walking at the old
-                // height until the complete body clears the previous ledge; only then lower.
-                if(next.getY()<at.getY()-GROUND_EPSILON && support<at.getY()-GROUND_EPSILON) {
-                    Location down=at.clone().add(0,-Math.min(at.getY()-Math.max(support,next.getY()),Math.min(.08,allowance)),0);
+                // Follow the real floor for descents even when Paper compresses/omits the
+                // intermediate Y node. Never settle while a staged ascent still owns the Y
+                // axis: the old lower floor remains under the rear half of the body until the
+                // NPC has actually transferred onto the higher surface.
+                if(!crossingRiser && support<at.getY()-FLOOR_SETTLE_EPSILON
+                        && at.getY()-support<=allowedDrop+GROUND_EPSILON) {
+                    travel.dropHeight=support;
+                    double fall=Math.min(at.getY()-support,Math.min(.08,allowance));
+                    Location down=at.clone().add(0,-fall,0);
                     if(walkable(travel,down,tick))candidate=down;
                 }
 
@@ -344,14 +537,20 @@ public final class RoutineNavigator {
                     boolean paperRiser=next.getY()>at.getY()+GROUND_EPSILON;
                     double riseLimit=paperRiser?MAX_STEP_HEIGHT:MAX_UNANNOUNCED_RISER;
                     double radius=paperRiser?RISER_SUPPORT_RADIUS:UNANNOUNCED_SUPPORT_RADIUS;
-                    double probe=Math.min(horizontal,RISER_LOOKAHEAD);
-                    double contact=travel.terrain.supportHeight(at.getX()+ux*probe,at.getY(),at.getZ()+uz*probe,
+                    // Lift only when the next short horizontal step brings the leading edge
+                    // to a riser. A long look-ahead raises an NPC at the previous cell centre
+                    // and can skip the lower tread of a mixed stair/slab entrance.
+                    double probe=Math.min(horizontal,Math.min(.08,allowance)+RISER_BODY_LEAD);
+                    double contact=travel.terrain.climbSupportHeight(at.getX()+ux*probe,at.getY(),at.getZ()+uz*probe,
                             riseLimit,radius);
                     if(Double.isFinite(contact) && contact>at.getY()+GROUND_EPSILON
-                            && contact-at.getY()<=riseLimit+GROUND_EPSILON) {
+                            && contact-at.getY()<=riseLimit+GROUND_EPSILON
+                            && travel.terrain.recoveryHopFits(at.getX()+ux*probe,contact,at.getZ()+uz*probe,
+                            Double.isFinite(travel.riserBaseY)?travel.riserBaseY:at.getY(),true)) {
                         Location up=at.clone().add(0,Math.min(contact-at.getY(),Math.min(.08,allowance)),0);
                         if(walkable(travel,up,tick)) {
                             candidate=up;
+                            if(!Double.isFinite(travel.riserBaseY))travel.riserBaseY=at.getY();
                             travel.riserHeight = contact;
                         }
                     }
@@ -362,10 +561,8 @@ public final class RoutineNavigator {
                 // old ledge still intersects the body, keep walking and retry after it is clear.
                 // Once lifted for a verified riser, transfer horizontally onto it before
                 // settling. The old lower floor otherwise undoes every ascent in this loop.
-                boolean crossingRiser = Double.isFinite(travel.riserHeight)
-                        && support < travel.riserHeight - GROUND_EPSILON;
-                if(candidate==null && !crossingRiser && support<at.getY()-GROUND_EPSILON
-                        && at.getY()-support<=MAX_STEP_HEIGHT) {
+                if(candidate==null && !crossingRiser && support<at.getY()-FLOOR_SETTLE_EPSILON
+                        && at.getY()-support<=allowedDrop) {
                     Location down=at.clone().add(0,-Math.min(at.getY()-support,Math.min(.08,allowance)),0);
                     if(walkable(travel,down,tick))candidate=down;
                 }
@@ -380,18 +577,21 @@ public final class RoutineNavigator {
                         // the leading edge, then raise while still beside the obstacle; once
                         // the feet reach its top, ordinary horizontal replay continues.
                         double lead=Math.min(horizontal,stride+RISER_BODY_LEAD);
-                        double contact=travel.terrain.supportHeight(at.getX()+ux*lead,at.getY(),
+                        double contact=travel.terrain.climbSupportHeight(at.getX()+ux*lead,at.getY(),
                                 at.getZ()+uz*lead,MAX_UNANNOUNCED_RISER,UNANNOUNCED_SUPPORT_RADIUS);
                         if(Double.isFinite(contact) && contact>at.getY()+GROUND_EPSILON
-                                && contact-at.getY()<=MAX_UNANNOUNCED_RISER+GROUND_EPSILON) {
+                                && contact-at.getY()<=MAX_UNANNOUNCED_RISER+GROUND_EPSILON
+                                && travel.terrain.recoveryHopFits(at.getX()+ux*lead,contact,at.getZ()+uz*lead,
+                                Double.isFinite(travel.riserBaseY)?travel.riserBaseY:at.getY(),true)) {
                             Location up=at.clone().add(0,Math.min(contact-at.getY(),Math.min(.08,allowance)),0);
                             if(walkable(travel,up,tick)) {
                                 candidate=up;
+                                if(!Double.isFinite(travel.riserBaseY))travel.riserBaseY=at.getY();
                                 travel.riserHeight=contact;
                             }
                         }
                     }
-                    if(candidate==null)return null;
+                    if(candidate==null)return lastClearStep(current,at);
                 }
             }
             double moved=at.distance(candidate);
@@ -401,9 +601,42 @@ public final class RoutineNavigator {
         return at;
     }
 
+    private static Location lastClearStep(Location current,Location at) {
+        // A later blocked substep must not erase the valid motion already accumulated in
+        // this update or replace it with a speculative lift from the original position.
+        return current.distanceSquared(at)>MOVEMENT_EPSILON_SQUARED?at:null;
+    }
+
+    private double replaySupport(Travel travel,Location at,Location next,double ux,double uz) {
+        double support=travel.terrain.supportHeight(at.getX(),at.getY(),at.getZ(),.02);
+        if(Double.isFinite(support))return support;
+        boolean descent=next.getY()<at.getY()-GROUND_EPSILON;
+        boolean transferring=Double.isFinite(travel.riserHeight);
+        // Rear-body contact must not let a flat compressed route enter a deep pit. Only a
+        // native lower waypoint or a verified staged lift owns this larger vertical gap.
+        if(!descent && !transferring)return Double.NaN;
+        support=travel.terrain.safeSupportBelow(at.getX(),at.getY(),at.getZ(),MAX_DROP_HEIGHT);
+        if(Double.isFinite(support) || !descent || Math.abs(ux)+Math.abs(uz)<1e-7)return support;
+        // At the exact ledge boundary the old block can still clip a lower landing by a
+        // floating-point fraction. Validate the landing one substep ahead and keep crossing
+        // horizontally; the downward body sweep will wait until the rear is actually clear.
+        double ahead=Math.min(.08,Math.hypot(next.getX()-at.getX(),next.getZ()-at.getZ()));
+        return travel.terrain.safeSupportBelow(at.getX()+ux*ahead,at.getY(),at.getZ()+uz*ahead,MAX_DROP_HEIGHT);
+    }
+
     private Location horizontalStep(Travel travel,Location at,Location next,double ux,double uz,double stride,long tick) {
+        double allowedDrop=next.getY()<at.getY()-GROUND_EPSILON?MAX_DROP_HEIGHT:MAX_UNANNOUNCED_DROP;
+        boolean transferringRiser=Double.isFinite(travel.riserHeight)
+                && at.getY()>=travel.riserHeight-GROUND_EPSILON;
         Location direct=at.clone().add(ux*stride,0,uz*stride);
-        if(walkable(travel,direct,tick) && supported(travel,direct))return direct;
+        // For rises above one block the old floor is temporarily >1.01 below the raised feet.
+        // Once the verified target height has been reached, allow the short horizontal transfer
+        // onto that surface instead of mistaking the intentional step-up for unsupported air.
+        double groundedBase=Double.isFinite(travel.riserBaseY)?travel.riserBaseY:at.getY();
+        if(walkable(travel,direct,tick)
+                && (!Double.isFinite(travel.riserBaseY)
+                || travel.terrain.recoveryHopFits(direct.getX(),direct.getY(),direct.getZ(),groundedBase,false))
+                && (supported(travel,direct,next,allowedDrop) || transferringRiser))return direct;
 
         if(Math.abs(ux)<1e-6 || Math.abs(uz)<1e-6)return null;
 
@@ -412,56 +645,39 @@ public final class RoutineNavigator {
         ArrayList<Location> axes=new ArrayList<>(2);
         Location x=at.clone().add(Math.copySign(Math.min(Math.abs(next.getX()-at.getX()),stride),ux),0,0);
         Location z=at.clone().add(0,0,Math.copySign(Math.min(Math.abs(next.getZ()-at.getZ()),stride),uz));
-        if(walkable(travel,x,tick) && supported(travel,x))axes.add(x);
-        if(walkable(travel,z,tick) && supported(travel,z))axes.add(z);
+        if(walkable(travel,x,tick)
+                && (!Double.isFinite(travel.riserBaseY)
+                || travel.terrain.recoveryHopFits(x.getX(),x.getY(),x.getZ(),groundedBase,false))
+                && (supported(travel,x,next,allowedDrop) || transferringRiser))axes.add(x);
+        if(walkable(travel,z,tick)
+                && (!Double.isFinite(travel.riserBaseY)
+                || travel.terrain.recoveryHopFits(z.getX(),z.getY(),z.getZ(),groundedBase,false))
+                && (supported(travel,z,next,allowedDrop) || transferringRiser))axes.add(z);
         if(axes.isEmpty())return null;
         axes.sort(Comparator.comparingDouble(next::distanceSquared));
         return axes.getFirst();
     }
 
 
-    /**
-     * Last-resort recovery for a physical half-step that Paper omitted from its node list.
-     * This is intentionally restricted to partial blocks (at most half a block above the
-     * current feet), so a wall/full cube beside a flat route can never become a fake stair.
-     * It is used only after the normal replay failed, and therefore prevents a valid
-     * slab/carpet transition from being converted into WAITING -> replan -> circling.
-     */
-    private Location recoverPartialRiser(Travel travel,Location current,Location next,double allowance,long tick) {
-        double dx=next.getX()-current.getX(),dz=next.getZ()-current.getZ();
-        double horizontal=Math.hypot(dx,dz);
-        if(horizontal<1e-7)return null;
-        double ux=dx/horizontal,uz=dz/horizontal;
-
-        // Probe from just beyond the leading edge through a small forward band. The first
-        // collision can occur between Paper waypoints, especially for carpet/slab overlays.
-        double[] probes={RISER_BODY_LEAD+.02,RISER_BODY_LEAD+.10,RISER_LOOKAHEAD,RISER_LOOKAHEAD+.10};
-        double contact=Double.NaN;
-        for(double requested:probes) {
-            double ahead=Math.min(horizontal,requested);
-            if(ahead<=1e-7)continue;
-            double found=travel.terrain.supportHeight(current.getX()+ux*ahead,current.getY(),
-                    current.getZ()+uz*ahead,.51,UNANNOUNCED_SUPPORT_RADIUS);
-            if(Double.isFinite(found) && found>current.getY()+1e-4 && found-current.getY()<=.51+GROUND_EPSILON) {
-                contact=found; break;
-            }
-        }
-        if(!Double.isFinite(contact))return null;
-
-        double climb=Math.min(contact-current.getY(),Math.max(.01,allowance));
-        Location raised=current.clone().add(0,climb,0);
-        if(!walkable(travel,raised,tick))return null;
-        travel.riserWaypoint=next;
-        travel.riserHeight=contact;
-        return raised;
-    }
-
-    private boolean supported(Travel travel,Location at) {
-        return Double.isFinite(travel.terrain.supportHeight(at.getX(),at.getY(),at.getZ()));
+    private boolean supported(Travel travel,Location at,Location next,double maximumDrop) {
+        double dx=next.getX()-at.getX(),dz=next.getZ()-at.getZ(),horizontal=Math.hypot(dx,dz);
+        double support=replaySupport(travel,at,next,horizontal>1e-7?dx/horizontal:0,horizontal>1e-7?dz/horizontal:0);
+        if(!Double.isFinite(support) || at.getY()-support>maximumDrop+GROUND_EPSILON)return false;
+        // Remember ownership even for small drops (slab -> block, carpet -> block, mud ledges).
+        // RoutineGravity runs before the next navigation update and would otherwise interpret
+        // that legal transition as accidental floor loss and cancel the route.
+        if(!Double.isFinite(travel.riserHeight) && support<at.getY()-GROUND_EPSILON)
+            travel.dropHeight=support;
+        return true;
     }
     private boolean walkable(Travel travel,Location candidate,long tick) {
-        return doors.openNear(travel.npc.entity(),candidate,tick)
-                && travel.terrain.fits(candidate.getX(),candidate.getY(),candidate.getZ(),false);
+        // A cancelled opening must not fire again for another candidate in this update.
+        // Keep earlier safe substeps, but return WAITING so the denial gets the local retry.
+        if(travel.doorDeniedDuringStep)return false;
+        if(!doors.openNear(travel.npc.entity(),candidate,tick)) {
+            travel.doorDeniedDuringStep=true;return false;
+        }
+        return travel.terrain.fits(candidate.getX(),candidate.getY(),candidate.getZ(),false);
     }
 
     private Location prepareStart(Travel travel, Location current, long tick, double speed, int cadence) {
@@ -479,12 +695,18 @@ public final class RoutineNavigator {
             // feet Y can sit a few pixels inside its new collision. A normal vertical sweep
             // cannot leave an already-overlapping shape. Recover only to a verified partial
             // support and only by at most half a block; full cubes remain deliberately blocked.
-            double shallow=travel.terrain.height(start), lift=shallow-current.getY();
-            if(lift>GROUND_EPSILON && lift<=.51 && travel.terrain.partialSupport(start)) {
+            double shallow=travel.terrain.supportHeightAtNode(start,current.getX(),current.getZ()), lift=shallow-current.getY();
+            if(lift>GROUND_EPSILON && lift<=.51
+                    && travel.terrain.partialSupport(start,current.getX(),current.getZ())) {
                 Location recovered=current.clone();recovered.setY(shallow);
                 if(doors.openNear(travel.npc.entity(),recovered,tick)
-                        && travel.terrain.fits(recovered.getX(),recovered.getY(),recovered.getZ(),false))
-                    return applyStep(travel,current,recovered)?travel.npc.entity().getLocation():null;
+                        && travel.terrain.fits(recovered.getX(),recovered.getY(),recovered.getZ(),false)
+                        && travel.terrain.fitsPartialEscape(current.getX(),current.getY(),current.getZ(),start)) {
+                    double allowance=Math.max(.01,speed)*Math.max(1,cadence)/20.0;
+                    recovered.setY(current.getY()+Math.min(lift,allowance));
+                    if(travel.terrain.fitsPartialEscape(recovered.getX(),recovered.getY(),recovered.getZ(),start))
+                        return applyStep(travel,current,recovered)?travel.npc.entity().getLocation():null;
+                }
             }
             return null;
         }
@@ -506,11 +728,20 @@ public final class RoutineNavigator {
         pathfinder.setCanPassDoors(true);
         pathfinder.setCanFloat(false);
         AttributeInstance range = travel.npc.entity().getAttribute(Attribute.FOLLOW_RANGE);
+        AttributeInstance stepHeight = travel.npc.entity().getAttribute(Attribute.STEP_HEIGHT);
+        AttributeInstance safeFall = travel.npc.entity().getAttribute(Attribute.SAFE_FALL_DISTANCE);
         int requestedRange=PAPER_SEARCH_RANGES[Math.max(0,Math.min(PAPER_SEARCH_RANGES.length-1,travel.searchLevel))];
         double priorRange = range == null ? requestedRange : range.getBaseValue();
+        double priorStep = stepHeight == null ? MAX_CLIMB_HEIGHT : stepHeight.getBaseValue();
+        double priorFall = safeFall == null ? MAX_DROP_HEIGHT : safeFall.getBaseValue();
         Pathfinder.PathResult result;
         try {
             if (range != null) range.setBaseValue(requestedRange);
+            // Let the native Paper search plan the same terrain transitions that our controlled
+            // replay supports. Values are restored immediately after findPath, so gameplay stats
+            // are not permanently modified.
+            if (stepHeight != null) stepHeight.setBaseValue(MAX_CLIMB_HEIGHT);
+            if (safeFall != null) safeFall.setBaseValue(MAX_DROP_HEIGHT);
             // Paper's synchronous navigator works from currently available world data. Do not
             // reject the whole query merely because an unrelated neighboring chunk is unloaded.
             // The replay destination uses the exact physical feet height (for example
@@ -529,6 +760,8 @@ public final class RoutineNavigator {
             }
         } finally {
             if (range != null) range.setBaseValue(priorRange);
+            if (stepHeight != null) stepHeight.setBaseValue(priorStep);
+            if (safeFall != null) safeFall.setBaseValue(priorFall);
         }
         if (result == null) return new SearchOutcome(null,SearchFailure.NO_ROUTE);
         List<Location> points = result.getPoints();
@@ -571,6 +804,7 @@ public final class RoutineNavigator {
 
     private void avoidClosedDoors(Travel travel,long tick,int cadence) {
         travel.path=null;travel.pending=true;travel.pathReachesFinal=false;
+        travel.riserWaypoint=null;travel.riserHeight=Double.NaN;travel.riserBaseY=Double.NaN;travel.dropHeight=Double.NaN;
         travel.avoidClosedDoors=true;travel.exhausted=false;
         // The alternate policy gets its own shared-budget query on a later update.
         travel.retry=tick+Math.max(1,cadence);
@@ -610,27 +844,32 @@ public final class RoutineNavigator {
 
     private void noRouteFailure(Travel travel,long tick) {
         travel.path=null;travel.pending=true;travel.pathReachesFinal=false;
+        travel.riserWaypoint=null;travel.riserHeight=Double.NaN;travel.riserBaseY=Double.NaN;travel.dropHeight=Double.NaN;
         if(travel.searchLevel<travel.maxSearchLevel) {
             travel.searchLevel++;travel.retry=tick+LOCAL_RETRY_TICKS;travel.exhausted=false;
         } else {
             travel.exhausted=true;travel.retry=tick+IMPOSSIBLE_RETRY_TICKS;
             travel.avoidClosedDoors=false;
-            travel.riserWaypoint=null;travel.riserHeight=Double.NaN;
+            travel.riserWaypoint=null;travel.riserHeight=Double.NaN;travel.riserBaseY=Double.NaN;travel.dropHeight=Double.NaN;
         }
     }
     private void localFailure(Travel travel,long tick) {
         travel.path=null;travel.pending=true;travel.pathReachesFinal=false;travel.localFailures++;
+        // Once a route is discarded it no longer owns an in-air Y transition. Releasing the
+        // marker lets RoutineGravity settle the NPC instead of leaving it hovering/spinning.
+        travel.riserWaypoint=null;travel.riserHeight=Double.NaN;travel.riserBaseY=Double.NaN;travel.dropHeight=Double.NaN;
         if(travel.localFailures>=2 && travel.searchLevel<travel.maxSearchLevel) {
             travel.searchLevel++;travel.localFailures=0;
         } else if(travel.localFailures>=3 && travel.searchLevel>=travel.maxSearchLevel) {
             travel.exhausted=true;
             travel.avoidClosedDoors=false;
-            travel.riserWaypoint=null;travel.riserHeight=Double.NaN;
+            travel.riserWaypoint=null;travel.riserHeight=Double.NaN;travel.riserBaseY=Double.NaN;travel.dropHeight=Double.NaN;
         }
         travel.retry=tick+(travel.exhausted?IMPOSSIBLE_RETRY_TICKS:LOCAL_RETRY_TICKS);
     }
     private void chunkFailure(Travel travel,long tick) {
         travel.path=null;travel.pending=true;travel.pathReachesFinal=false;
+        travel.riserWaypoint=null;travel.riserHeight=Double.NaN;travel.riserBaseY=Double.NaN;travel.dropHeight=Double.NaN;
         travel.retry=tick+CHUNK_RETRY_TICKS;
     }
 
@@ -639,11 +878,12 @@ public final class RoutineNavigator {
     }
     /** A staged lift remains owned by route replay during its short local retry. */
     public boolean controlsVerticalStep(String npc) {
-        Travel travel=travels.get(npc);return travel!=null && Double.isFinite(travel.riserHeight);
+        Travel travel=travels.get(npc);
+        return activeHop(npc) || travel!=null && (Double.isFinite(travel.riserHeight) || Double.isFinite(travel.dropHeight));
     }
-    public void cancel(String npc) { travels.remove(npc); }
+    public void cancel(String npc) { travels.remove(npc);cancelHop(npc); }
     public void clear() {
-        travels.clear(); budgetTick = Long.MIN_VALUE;
+        travels.clear();hops.clear();hopFailures.clear(); budgetTick = Long.MIN_VALUE;
     }
 
     /**

@@ -59,4 +59,39 @@ class RoutineSettingsTest {
         yaml.set("routines.name-offset-seated-y", -.45); yaml.set("routines.name-offset-sleeping-y", .75);
         assertDoesNotThrow(() -> Settings.parse(yaml));
     }
+
+    @Test void shippedStuckHopDefaultsMatchTheRequestedRecovery() throws Exception {
+        try (var stream=getClass().getResourceAsStream("/config.yml")) {
+            assertNotNull(stream);
+            var settings=Settings.parse(YamlConfiguration.loadConfiguration(new InputStreamReader(stream,StandardCharsets.UTF_8)));
+            assertTrue(settings.messages().getBoolean("routines.stuck-hop.enabled"));
+            assertEquals(3,settings.messages().getInt("routines.stuck-hop.delay-seconds"));
+            assertEquals(.6,settings.messages().getDouble("routines.stuck-hop.height"));
+            assertEquals(1,settings.messages().getDouble("routines.stuck-hop.distance"));
+            assertEquals(1.3,settings.messages().getDouble("routines.max-climb-height"),"retain the supplied climb preference");
+        }
+    }
+
+    @Test void malformedRecoveryParametersAreRejectedBeforeReload() {
+        for(String key:List.of("routines.stuck-hop.height","routines.stuck-hop.distance"))
+            for(Object value:List.of(.049,4.001,Double.NaN,Double.POSITIVE_INFINITY,"alto")) {
+                var yaml=new YamlConfiguration();yaml.set(key,value);
+                assertTrue(assertThrows(IllegalArgumentException.class,()->Settings.parse(yaml)).getMessage().contains(key));
+            }
+        for(Object value:List.of(0,61,3.5,Double.NaN,"tres")) {
+            var yaml=new YamlConfiguration();yaml.set("routines.stuck-hop.delay-seconds",value);
+            assertThrows(IllegalArgumentException.class,()->Settings.parse(yaml));
+        }
+        var yaml=new YamlConfiguration();yaml.set("routines.stuck-hop.enabled","true");
+        assertThrows(IllegalArgumentException.class,()->Settings.parse(yaml));
+    }
+
+    @Test void configurableRecoveryBoundariesAndLegacyConfigurationsRemainAccepted() {
+        assertDoesNotThrow(()->Settings.parse(new YamlConfiguration()));
+        for(double value:new double[]{.05,4}) {
+            var yaml=new YamlConfiguration();yaml.set("routines.stuck-hop.height",value);yaml.set("routines.stuck-hop.distance",value);
+            yaml.set("routines.stuck-hop.enabled",false);yaml.set("routines.stuck-hop.delay-seconds",value==.05?1:60);
+            assertDoesNotThrow(()->Settings.parse(yaml));
+        }
+    }
 }

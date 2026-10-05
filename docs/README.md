@@ -1,4 +1,15 @@
-# MDVNPC 1.11.8
+# MDVNPC 1.11.10
+
+Las vallas ya no se pueden usar como escalón ni cruzar durante una subida
+o un salto de recuperación. Durante la caminata de los goals, 3 segundos
+sin movimiento real permiten intentar un salto sutil de 0.6 bloques de alto
+y 1 bloque hacia la mirada del NPC. La altura, distancia e intervalo son
+configurables. Dormir, estar sentado o trabajar en el puesto excluyen el salto.
+Se conservan las modificaciones de la base 1.11.9 y sus límites de altura.
+Consulta [la guía de esta entrega](GUIA-1.11.10.md) y
+[su validación](VALIDACION-1.11.10.md).
+
+## Actualización 1.11.8
 
 Corrige el atasco/giro en círculos del replay de rutas cuando el suelo mezcla alturas
 físicas parciales. La navegación ya no depende sólo de la Y que devuelven los nodos

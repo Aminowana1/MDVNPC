@@ -30,6 +30,19 @@ public record Settings(int intervalTicks, int lookIntervalTicks, boolean ignoreI
                     || number.intValue() < 1 || number.intValue() > 600))
                 throw new IllegalArgumentException(key + ": usar segundos enteros entre 1 y 600");
         }
+        Object hopEnabled = yaml.get("routines.stuck-hop.enabled");
+        if (hopEnabled != null && !(hopEnabled instanceof Boolean))
+            throw new IllegalArgumentException("routines.stuck-hop.enabled: usar true o false");
+        Object hopDelay = yaml.get("routines.stuck-hop.delay-seconds");
+        if (hopDelay != null && (!(hopDelay instanceof Number number) || !Double.isFinite(number.doubleValue())
+                || number.doubleValue() != number.intValue() || number.intValue() < 1 || number.intValue() > 60))
+            throw new IllegalArgumentException("routines.stuck-hop.delay-seconds: usar segundos enteros entre 1 y 60");
+        for (String key : java.util.List.of("routines.stuck-hop.height", "routines.stuck-hop.distance")) {
+            Object value = yaml.get(key);
+            if (value != null && (!(value instanceof Number number) || !Double.isFinite(number.doubleValue())
+                    || number.doubleValue() < .05 || number.doubleValue() > 4))
+                throw new IllegalArgumentException(key + ": usar bloques entre 0.05 y 4");
+        }
         return new Settings(ticks, lookTicks, yaml.getBoolean("ignore-invisible-players", true),
                 yaml.getBoolean("ignore-spectators", true), threshold, yaml);
     }

@@ -27,7 +27,13 @@ public final class NpcListener implements Listener {
         event.setCancelled(true); // Never open the base villager's trading interface.
         if (event.getHand() != EquipmentSlot.HAND) return;
         var npc = manager.find(event.getRightClicked());
-        if (npc == null || !PlayerFilter.accepts(event.getPlayer(), plugin.settings())) return;
+        if (npc == null) return;
+        var clicker = event.getPlayer();
+        if (clicker.isSneaking() && clicker.isOp()) {
+            plugin.npcEditor().open(clicker, npc.definition().id());
+            return;
+        }
+        if (!PlayerFilter.accepts(clicker, plugin.settings())) return;
         // Even inside protected regions, an off-duty NPC may explain why it cannot be used.
         // Actual commands/shops still respect the previous cancelled-interaction policy.
         if (wasCancelled && !plugin.canInteract(npc)) {
