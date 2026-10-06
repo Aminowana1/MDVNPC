@@ -46,6 +46,7 @@ public final class NpcEditor implements Listener {
         h.inventory.setItem(15,item(Material.WRITABLE_BOOK,"&dPrefijo de los diálogos","&7Personaliza cómo habla este NPC.","&eClic para abrir"));
         h.inventory.setItem(16,item(def.nameVisible()?Material.ENDER_EYE:Material.ENDER_PEARL,"&eNombre visible",def.nameVisible()?"&aActivado":"&7Desactivado","&eClic para cambiar"));
         h.inventory.setItem(19,item(def.enabled()?Material.LIME_DYE:Material.GRAY_DYE,def.enabled()?"&aNPC activado":"&7NPC desactivado","&eClic para cambiar"));
+        if(def.mode()==NpcDefinition.Mode.SHOP)h.inventory.setItem(20,item(Material.ANVIL,"&6Categoría y estaciones","&7Vendedor o Herrero.","&eClic para configurar"));
         h.inventory.setItem(22,item(Material.ARROW,"&eVolver a las rutinas"));p.openInventory(h.inventory);
     }
     private void openJob(Player p,String id){
@@ -102,12 +103,14 @@ public final class NpcEditor implements Listener {
             case 15->plugin.prefixEditor().open(p,h.npc,0);
             case 16->{save(p,h.npc,y->y.set("npcs."+h.npc+".name-visible",!def.nameVisible()));open(p,h.npc);}
             case 19->{save(p,h.npc,y->y.set("npcs."+h.npc+".enabled",!def.enabled()));open(p,h.npc);}
+            case 20->{if(def.mode()==NpcDefinition.Mode.SHOP && plugin.workEditor()!=null)plugin.workEditor().open(p,h.npc);}
         }
     }
     private void setMode(Player p,String id,NpcDefinition.Mode mode)throws Exception{
-        if(plugin.definitions().get(id).mode()==mode){open(p,id);return;}
+        if(plugin.definitions().get(id).mode()==mode){if(mode==NpcDefinition.Mode.SHOP && plugin.workEditor()!=null)plugin.workEditor().open(p,id);else open(p,id);return;}
         save(p,id,y->y.set("npcs."+id+".mode",mode.name().toLowerCase(Locale.ROOT)));
-        message(p,"&aTrabajo guardado: &f"+jobName(mode)+(mode.musician()?"&a. Configura una rutina de Trabajo con horario y puesto.":""));open(p,id);
+        message(p,"&aTrabajo guardado: &f"+jobName(mode)+(mode.musician()?"&a. Configura una rutina de Trabajo con horario y puesto.":""));
+        if(mode==NpcDefinition.Mode.SHOP && plugin.workEditor()!=null)plugin.workEditor().open(p,id);else open(p,id);
     }
     public void openName(Player p,String id){
         if(!valid(p,id))return;cancel(p);cancelOtherInputs(p);
@@ -162,7 +165,7 @@ public final class NpcEditor implements Listener {
         for(var session:sessions){session.inventory().clear();Player p=Bukkit.getPlayer(session.owner());if(p!=null && isViewing(p,session.inventory()))p.closeInventory();}
     }
     private static boolean isViewing(Player p,Inventory inventory){InventoryView view=p.getOpenInventory();return view!=null && inventory.equals(view.getTopInventory());}
-    private void cancelOtherInputs(Player p){if(plugin.routineCommands()!=null)plugin.routineCommands().cancelSelection(p);if(plugin.prefixEditor()!=null)plugin.prefixEditor().cancel(p);}
+    private void cancelOtherInputs(Player p){if(plugin.routineCommands()!=null)plugin.routineCommands().cancelSelection(p);if(plugin.prefixEditor()!=null)plugin.prefixEditor().cancel(p);if(plugin.workEditor()!=null)plugin.workEditor().cancel(p);}
     private boolean valid(Player p,String id){if(!p.hasPermission("mdvnpc.admin"))return false;if(!plugin.definitions().containsKey(id)){message(p,"&cEl NPC ya no existe.");return false;}return true;}
     private static boolean buttonClick(InventoryClickEvent e){return e.getClick()==ClickType.LEFT || e.getClick()==ClickType.RIGHT;}
     private static boolean validName(String name){return name!=null && !name.trim().isEmpty() && name.length()<=MAX_NAME_LENGTH && name.chars().noneMatch(Character::isISOControl);}

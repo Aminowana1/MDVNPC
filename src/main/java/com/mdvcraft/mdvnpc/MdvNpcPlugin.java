@@ -22,6 +22,8 @@ public final class MdvNpcPlugin extends JavaPlugin {
     private com.mdvcraft.mdvnpc.trait.TraitService traits;
     private com.mdvcraft.mdvnpc.trait.TraitEditor traitEditor;
     private com.mdvcraft.mdvnpc.editor.NpcEditor npcEditor;
+    private com.mdvcraft.mdvnpc.work.ShopWorkEditor workEditor;
+    public com.mdvcraft.mdvnpc.work.ShopWorkEditor workEditor(){return workEditor;}
     public com.mdvcraft.mdvnpc.editor.NpcEditor npcEditor(){return npcEditor;}
     public com.mdvcraft.mdvnpc.trait.TraitEditor traitEditor(){return traitEditor;}
     public com.mdvcraft.mdvnpc.trait.NpcSounds sounds(){return sounds;}
@@ -58,6 +60,7 @@ public final class MdvNpcPlugin extends JavaPlugin {
             music = new com.mdvcraft.mdvnpc.music.MusicService(this);
             routines = new com.mdvcraft.mdvnpc.routine.RoutineService(this);
             routineCommands = new com.mdvcraft.mdvnpc.routine.RoutineCommands(this);
+            workEditor = new com.mdvcraft.mdvnpc.work.ShopWorkEditor(this);
             traitEditor = new com.mdvcraft.mdvnpc.trait.TraitEditor(this);
             prefixEditor = new com.mdvcraft.mdvnpc.trait.PrefixEditor(this);
             npcEditor = new com.mdvcraft.mdvnpc.editor.NpcEditor(this);
@@ -68,6 +71,7 @@ public final class MdvNpcPlugin extends JavaPlugin {
             getServer().getPluginManager().registerEvents(traitEditor, this);
             getServer().getPluginManager().registerEvents(prefixEditor, this);
             getServer().getPluginManager().registerEvents(npcEditor, this);
+            getServer().getPluginManager().registerEvents(workEditor, this);
             getServer().getPluginManager().registerEvents(shops, this);
             getServer().getPluginManager().registerEvents(new NpcListener(this), this);
             if (getServer().getPluginManager().isPluginEnabled("WorldGuard")) {
@@ -95,6 +99,7 @@ public final class MdvNpcPlugin extends JavaPlugin {
         shops.prepareReload();
         shops.load(); // Validate everything before touching active NPCs.
         if(npcEditor!=null)npcEditor.closeAll();
+        if(workEditor!=null)workEditor.closeAll();
         music.stop();
         routines.stop();
         if (manager != null) manager.stop();
@@ -109,6 +114,7 @@ public final class MdvNpcPlugin extends JavaPlugin {
     }
     @Override public void onDisable() {
         if(npcEditor!=null)npcEditor.closeAll();
+        if(workEditor!=null)workEditor.closeAll();
         if(prefixEditor!=null)prefixEditor.clear();
         if(reactions!=null)reactions.clear();
         if (shops != null) shops.closeAll();

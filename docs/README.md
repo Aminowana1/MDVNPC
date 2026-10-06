@@ -1,4 +1,14 @@
-# MDVNPC 1.11.12
+# MDVNPC 1.11.13
+
+Las tiendas admiten la categoría **Herrero** con estaciones configurables de
+fundición, caldero con agua y yunque. Durante su goal Trabajo el NPC recorre las
+estaciones con sonidos, partículas y objetos visuales que no se pueden recoger.
+Conserva sus intercambios y vuelve al puesto normal cuando la animación no puede
+ejecutarse. Los menús permiten elegir Vendedor/Herrero y marcar las estaciones
+desde el juego, también con `/mdvnpc herrero <id>`.
+Consulta [la guía de Herrero](GUIA-1.11.13.md).
+
+## Actualización 1.11.12
 
 El fallback siempre inicia el impulso de salto tras el intervalo de inmovilidad,
 incluso flotando, incrustado o sin un aterrizaje seguro. Usa la altura y distancia

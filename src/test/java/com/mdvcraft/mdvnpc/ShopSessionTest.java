@@ -87,4 +87,10 @@ class ShopSessionTest {
         assertTrue(purchase().isCancelled());
         verify(inventory, never()).setItem(anyInt(), any());
     }
+    @Test void workAnimationCanDetectAnOpenMerchantAndItsClose() {
+        assertTrue(shops.hasOpenSession("shop"));assertFalse(shops.hasOpenSession("other"));
+        when(player.getOpenInventory().getPlayer()).thenReturn(player);
+        shops.close(new org.bukkit.event.inventory.InventoryCloseEvent(player.getOpenInventory()));
+        assertFalse(shops.hasOpenSession("shop"));
+    }
 }

@@ -28,10 +28,11 @@ public final class RoutineCommands implements Listener {
     public RoutineCommands(MdvNpcPlugin plugin) { this.plugin=plugin; this.editor=new RoutineEditor(plugin,this); }
     public RoutineEditor editor() { return editor; }
     private RoutineRepository repo() {return plugin.routines().repository();}
-    public void cancelSelection(Player player){selections.remove(player.getUniqueId());editor.cancelInput(player);}
+    public void cancelSelection(Player player){selections.remove(player.getUniqueId());editor.cancelInput(player);if(plugin.workEditor()!=null)plugin.workEditor().cancel(player);}
     private static void say(CommandSender player,String message) {player.sendMessage(ChatColor.GOLD+"[MDVNPC] "+ChatColor.RESET+message);}
     public void command(CommandSender sender,String[] a) throws Exception {
         if(!sender.hasPermission("mdvnpc.admin")) return;
+        if(sender instanceof Player player && plugin.workEditor()!=null)plugin.workEditor().cancel(player);
         if(sender instanceof Player player && plugin.prefixEditor()!=null)plugin.prefixEditor().cancel(player);
         if(a.length<2 || a[1].equalsIgnoreCase("help")) {help(sender);return;}
         if(a[1].equalsIgnoreCase("cancelar") || a[1].equalsIgnoreCase("cancel")) {
@@ -83,6 +84,7 @@ public final class RoutineCommands implements Listener {
         }
     }
     public void beginNew(Player p,String id,int order,RoutineGoal.Type type,RoutineGoal.WalkMode mode) {
+        if(plugin.workEditor()!=null)plugin.workEditor().cancel(p);
         var def=plugin.definitions().get(id); if(def==null){say(p,"NPC no encontrado: "+id);return;}
         try {
             World world=plugin.manager().resolveWorld(def); if(world==null || p.getWorld()!=world) throw new IllegalArgumentException("Debes estar en el mundo del NPC");
@@ -98,6 +100,7 @@ public final class RoutineCommands implements Listener {
         beginReselect(p,id,goal,0);
     }
     public void beginReselect(Player p,String id,RoutineGoal goal,int option) {
+        if(plugin.workEditor()!=null)plugin.workEditor().cancel(p);
         var def=plugin.definitions().get(id); if(def==null){say(p,"NPC no encontrado: "+id);return;}
         try {
             World world=plugin.manager().resolveWorld(def);if(world==null || p.getWorld()!=world)throw new IllegalArgumentException("Debes estar en el mundo del NPC");
@@ -109,6 +112,7 @@ public final class RoutineCommands implements Listener {
         } catch(Exception ex){say(p,"No se pudo iniciar: "+ex.getMessage());}
     }
     public void beginOption(Player p,String id,int order,int option,RoutineGoal.Type type,RoutineGoal.WalkMode mode) {
+        if(plugin.workEditor()!=null)plugin.workEditor().cancel(p);
         var def=plugin.definitions().get(id);if(def==null){say(p,"NPC no encontrado: "+id);return;}
         try {
             World world=plugin.manager().resolveWorld(def);if(world==null || p.getWorld()!=world)throw new IllegalArgumentException("Debes estar en el mundo del NPC");
@@ -213,7 +217,13 @@ public final class RoutineCommands implements Listener {
         } else if(current!=null) goal=current.withChoice(0,goal);
         plugin.shops().prepareReload();repo().put(s.npc,goal);selections.remove(p.getUniqueId(),s);plugin.reloadNpcs();
         say(p,(s.optionSelection?"Opción "+(s.option+1)+" del goal ":"Goal ")+s.order+" guardado para "+s.npc+".");
-        if(s.reopenEditor) Bukkit.getScheduler().runTask(plugin,()->editor.openChoice(p,s.npc,s.order,s.optionSelection?s.option:0));
+        var configured=plugin.definitions().get(s.npc);
+        if(s.type==RoutineGoal.Type.WORK && configured!=null && configured.mode()==com.mdvcraft.mdvnpc.model.NpcDefinition.Mode.SHOP
+                && configured.shopWork().category()==com.mdvcraft.mdvnpc.work.ShopWorkDefinition.Category.BLACKSMITH
+                && !configured.shopWork().complete() && plugin.workEditor()!=null) {
+            say(p,"Puesto del herrero guardado. Ahora marca fundición, caldero con agua y yunque.");
+            Bukkit.getScheduler().runTask(plugin,()->{if(p.isOnline())plugin.workEditor().openStations(p,s.npc);});
+        }else if(s.reopenEditor) Bukkit.getScheduler().runTask(plugin,()->editor.openChoice(p,s.npc,s.order,s.optionSelection?s.option:0));
     }
     @EventHandler(priority=EventPriority.HIGHEST) public void breakBlock(BlockBreakEvent e) {if(selections.containsKey(e.getPlayer().getUniqueId()))e.setCancelled(true);}
     @EventHandler public void quit(PlayerQuitEvent e) {selections.remove(e.getPlayer().getUniqueId());}

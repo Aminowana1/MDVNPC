@@ -121,6 +121,7 @@ messages:
   shop-saved: '&aTienda guardada: &f{npc}&a (página &f{page}&a).'
   action-denied: '&cNo tienes permiso para interactuar con este NPC.'
   help:
+    - '&e/mdvnpc herrero <id> &7- Categoría de tienda y estaciones del herrero.'
     - "&e/mdvnpc rasgo <id> [ninguno|alcoholico|lector|gloton|inquieto|ruidoso]"
     - '&e/mdvnpc list &7- Ver los NPC.'
     - '&e/mdvnpc status [id] &7- Ver activos o estado de rutina/música de un NPC.'
@@ -177,4 +178,13 @@ music:
     enabled: true # instrumento y gestos cosméticos solo durante el trabajo musical
     head-movement: true # movimiento suave al ritmo; respeta golpes y otras actividades
     note-particles: true # notas ascendentes enviadas solo a la audiencia cercana
+
+# Animación de tienda Herrero, únicamente durante un goal de Trabajo alcanzado.
+# Las estaciones se configuran por NPC desde Trabajo → Tienda → Herrero.
+blacksmith:
+  smelt-seconds: 8 # fundición de varios RAW_IRON visuales
+  quench-seconds: 5 # enfriamiento del lingote o espada en el caldero
+  anvil-seconds: 120 # duración de cada sesión de martilleo con MACE
+  travel-timeout-seconds: 30 # si una estación es inaccesible, vuelve al puesto normal
+  retry-seconds: 30 # espera en el puesto antes de volver a probar estaciones
 

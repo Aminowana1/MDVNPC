@@ -2,6 +2,8 @@ package com.mdvcraft.mdvnpc.routine;
 
 import com.mdvcraft.mdvnpc.MdvNpcPlugin;
 import com.mdvcraft.mdvnpc.model.NpcDefinition;
+import com.mdvcraft.mdvnpc.work.ShopWorkDefinition;
+import com.mdvcraft.mdvnpc.work.BlacksmithController;
 import com.mdvcraft.mdvnpc.runtime.ActiveNpc;
 import com.mdvcraft.mdvnpc.runtime.PlayerFilter;
 import com.mdvcraft.mdvnpc.trait.Trait;
@@ -25,6 +27,8 @@ public final class RoutineService {
     private final RoutineGravity gravity;
     private RoutineNavigator navigator;
     private DanceController dancers;
+    private BlacksmithController blacksmiths;
+    private long blacksmithRetryTicks;
     private final RoutineChoices choices=new RoutineChoices();
     private record CachedWindow(World world,long time,RoutineRepository.Plan plan,RoutineSchedule.Window value) {}
     private final Map<String,CachedWindow> windows=new HashMap<>();
@@ -64,6 +68,8 @@ public final class RoutineService {
         boolean working,paused,dancing,returningFromDance,recoveryDone;
         boolean recoveringFloor;
         boolean recoveringHopFloor;
+        boolean blacksmithReturning,blacksmithTrade;
+        long nextBlacksmithAttempt;
         Location travelProgress;
         Location stuckAnchor;
         Location recoveryHopStart;
@@ -86,6 +92,7 @@ public final class RoutineService {
         gravity=new RoutineGravity(doors,this::teleport);
     }
     public RoutineRepository repository() { return repository; }
+    public BlacksmithController blacksmiths() { return blacksmiths; }
     public void start() {
         cadence=Math.max(1,Math.min(4,plugin.settings().messages().getInt("routines.movement-interval-ticks",2)));
         passiveCadence=Math.max(2,Math.min(20,plugin.settings().messages().getInt("routines.passive-update-ticks",8)));
@@ -103,6 +110,8 @@ public final class RoutineService {
         stuckHopHeight=Double.isFinite(hopHeight)?Math.max(.05,Math.min(4,hopHeight)):.6;
         stuckHopDistance=Double.isFinite(hopDistance)?Math.max(.05,Math.min(4,hopDistance)):1;
         dancers=new DanceController(plugin,navigator,this::teleport);
+        blacksmiths=new BlacksmithController(plugin,navigator,this::teleport);
+        blacksmithRetryTicks=20L*Math.max(1,Math.min(600,cfg.getInt("blacksmith.retry-seconds",30)));
         clocks.configure(repository.snapshot().clocks());
         task=Bukkit.getScheduler().runTaskTimer(plugin,this::tick,cadence,cadence);
     }
@@ -110,7 +119,7 @@ public final class RoutineService {
         if(task!=null) {task.cancel();task=null;}
         for(String id:List.copyOf(states.keySet())) remove(id);
         if(navigator!=null) navigator.clear(); doors.close();
-        if(dancers!=null)dancers.clear();choices.clear();windows.clear();
+        if(dancers!=null)dancers.clear();if(blacksmiths!=null)blacksmiths.clear();choices.clear();windows.clear();
         dialogueStates.clear(); unavailableStates.clear();staticFloors.clear();
     }
     public void close() { stop(); clocks.close(); }
@@ -162,7 +171,8 @@ public final class RoutineService {
         State s=states.get(npc.definition().id());
         if(s==null || !s.working || s.paused || s.npc!=npc || s.approach==null) return false;
         var w=window(npc.definition().id(),npc.entity().getWorld());
-        return same(s.window,w) && npc.entity().getLocation().distanceSquared(s.approach)<.36;
+        return same(s.window,w) && (npc.entity().getLocation().distanceSquared(s.approach)<.36
+                || isBlacksmithWork(s) && (s.blacksmithTrade || blacksmiths!=null && blacksmiths.active(npc.definition().id())));
     }
     /** Commands and shops may be enabled for a goal without granting WORK, music or idle look ownership. */
     public boolean canUseJob(ActiveNpc npc) {
@@ -179,7 +189,7 @@ public final class RoutineService {
         // The live parent flag also revokes cached alternatives immediately after an edit.
         return scheduled.order()==s.goal.order() && scheduled.workInteraction() && s.goal.workInteraction();
     }
-    public boolean canLook(ActiveNpc npc) { return (plugin.reactions()==null || !plugin.reactions().busy(npc.definition().id())) && (plugin.traits()==null || !plugin.traits().busy(npc.definition().id())) && (!enabled(npc.definition().id()) || canInteract(npc)); }
+    public boolean canLook(ActiveNpc npc) { return (blacksmiths==null || !blacksmiths.active(npc.definition().id())) && (plugin.reactions()==null || !plugin.reactions().busy(npc.definition().id())) && (plugin.traits()==null || !plugin.traits().busy(npc.definition().id())) && (!enabled(npc.definition().id()) || canInteract(npc)); }
     public boolean canReceiveBeer(ActiveNpc npc) {
         if(plugin.reactions()!=null && plugin.reactions().busy(npc.definition().id()))return false;
         if(!enabled(npc.definition().id()))return true;
@@ -192,6 +202,7 @@ public final class RoutineService {
     public void prepareReaction(ActiveNpc npc) {
         State s=states.get(npc.definition().id());if(s==null)return;
         clearStuckHop(s);
+        interruptBlacksmith(s);
         endDance(s);
         looks.clear(npc,s.look);navigator.cancel(npc.definition().id());
         if(s.pose!=null && s.pose.sleeping)release(s,true);
@@ -200,7 +211,7 @@ public final class RoutineService {
     }
     public RoutineVisuals.Pose beginDrink(ActiveNpc npc,org.bukkit.inventory.ItemStack beer,long tick) {
         State s=states.get(npc.definition().id());
-        if(s!=null){clearStuckHop(s);endDance(s);looks.clear(npc,s.look);navigator.cancel(npc.definition().id());}
+        if(s!=null){clearStuckHop(s);interruptBlacksmith(s);endDance(s);looks.clear(npc,s.look);navigator.cancel(npc.definition().id());}
         return visuals.beginDrink(npc,s==null?null:s.pose,beer,tick);
     }
     public boolean drinkTick(RoutineVisuals.Pose pose,long tick){return visuals.drinkTick(pose,tick);}
@@ -235,6 +246,7 @@ public final class RoutineService {
         return a==b || a!=null && b!=null && a.occurrence()==b.occurrence() && a.timedOrder()==b.timedOrder();
     }
     private void release(State s,boolean reposition) {
+        stopBlacksmith(s);
         endDance(s);
         if(plugin.traits()!=null)plugin.traits().cancel(s.npc.definition().id());
         looks.clear(s.npc,s.look);
@@ -249,6 +261,7 @@ public final class RoutineService {
     }
     public void remove(String id) {
         staticFloors.remove(id);
+        if(blacksmiths!=null)blacksmiths.stop(id);
         State s=states.remove(id); if(s!=null) release(s,false);
         clearGoalDialogue(id);
         unavailableStates.keySet().removeIf(k->k.npc().equals(id));
@@ -260,10 +273,10 @@ public final class RoutineService {
         navigator.beginTick(ticks,pathStarts,2_000_000);
         for(ActiveNpc npc:manager.activeNpcs()) {
             String id=npc.definition().id();
-            if(!npc.entity().isValid()){staticFloors.remove(id);continue;}
+            if(!npc.entity().isValid()){staticFloors.remove(id);if(blacksmiths!=null)blacksmiths.stop(id);continue;}
             if(failed.contains(id))continue;
             if(!enabled(id)) {
-                State held=states.get(id);if(held!=null)clearStuckHop(held);
+                State held=states.get(id);if(held!=null){clearStuckHop(held);stopBlacksmith(held);}
                 try{updateStaticFloor(npc);}
                 catch(RuntimeException ex) {
                     failed.add(id);staticFloors.remove(id);
@@ -314,7 +327,8 @@ public final class RoutineService {
     private void update(ActiveNpc npc) {
         String id=npc.definition().id(); State s=states.computeIfAbsent(id,k -> {State n=new State(); n.npc=npc;return n;});
         s.lastMinute=RoutineSchedule.minute(npc.entity().getWorld().getFullTime());
-        s.nextUpdate=ticks+(s.paused?20:!s.dancing && (s.pose!=null || s.working)?passiveCadence:cadence);
+        boolean smithActive=blacksmiths!=null && blacksmiths.active(id);
+        s.nextUpdate=ticks+(s.paused?20:!s.dancing && !smithActive && (s.pose!=null || s.working)?passiveCadence:cadence);
         Location position=npc.entity().getLocation();
         double range=activationRange;
         // Nearby-player queries every second; no per-tick whole-world scans.
@@ -387,12 +401,14 @@ public final class RoutineService {
             // un intervalo largo de ayer podría impedir que el NPC hable hoy.
             clearGoalDialogue(id);
             clearStuckHop(s);
+            stopBlacksmith(s);
             s.goal=goal; s.point=0; s.nextDialogue=0;s.blockedDanceSeats.clear();
         }
-        if(plugin.reactions()!=null && plugin.reactions().busy(id)){clearStuckHop(s);gravity.reset(s.gravity);s.status="enfadado: mirando al jugador";s.travelSince=ticks;return;}
-        if(plugin.traits()!=null && plugin.traits().busy(id)) {clearStuckHop(s);gravity.reset(s.gravity);s.status="bebiendo cerveza ofrecida";s.travelSince=ticks;return;}
+        if(plugin.reactions()!=null && plugin.reactions().busy(id)){clearStuckHop(s);interruptBlacksmith(s);gravity.reset(s.gravity);s.status="enfadado: mirando al jugador";s.travelSince=ticks;return;}
+        if(plugin.traits()!=null && plugin.traits().busy(id)) {clearStuckHop(s);interruptBlacksmith(s);gravity.reset(s.gravity);s.status="bebiendo cerveza ofrecida";s.travelSince=ticks;return;}
         if(ticks>=s.nextDialogue) { s.nextDialogue=ticks+20; updateDialogue(npc,goal,System.nanoTime()); }
         if(s.dancing) {
+            stopBlacksmith(s);
             clearStuckHop(s);
             gravity.reset(s.gravity);
             var dance=dancers.tick(npc,ticks,cadence,goal.speed());
@@ -401,6 +417,7 @@ public final class RoutineService {
             position=npc.position();
         }
         if(s.pose!=null) {
+            stopBlacksmith(s);
             clearStuckHop(s);
             gravity.reset(s.gravity);
             if(!validFurniture(goal,s.destination,position.getWorld())) {
@@ -428,6 +445,8 @@ public final class RoutineService {
             if(!s.pose.sleeping)looks.tick(npc,s.look,ticks,s.pose.bodyYaw,true,s.pose.reading,s.pose.mealUntil>ticks);
             return;
         }
+        if(updateBlacksmith(s,goal))return;
+        position=npc.position();
         // Floor recovery may keep returning BLOCKED, or report lift/fall frames without
         // horizontal movement. Its early return must not hide a waiting walker's clock.
         // A started hop owns subsequent frames before gravity; idle workers remain excluded.
@@ -539,7 +558,7 @@ public final class RoutineService {
         if(result!=RoutineNavigator.Result.ARRIVED) return;
         clearStuckHop(s);
         switch(goal.type()) {
-            case WORK -> { s.working=true; if(plugin.music()!=null)plugin.music().working(npc); npc.anchor().setYaw(s.approach.getYaw()); npc.entity().setRotation(s.approach.getYaw(),0);s.status="trabajando"; }
+            case WORK -> { s.blacksmithReturning=false;s.working=true; if(plugin.music()!=null)plugin.music().working(npc); npc.anchor().setYaw(s.approach.getYaw()); npc.entity().setRotation(s.approach.getYaw(),0);s.status="trabajando"; }
             case WALK -> {
                 s.point++;
                 if(goal.target() && s.point>=goal.points().size()) {s.chain++;s.goal=null;s.point=0;}
@@ -566,6 +585,70 @@ public final class RoutineService {
                 }
             }
         }
+    }
+    private boolean isBlacksmithWork(State s) {
+        return s.goal!=null && s.goal.type()==RoutineGoal.Type.WORK
+                && s.npc.definition().mode()==NpcDefinition.Mode.SHOP
+                && s.npc.definition().shopWork().category()==ShopWorkDefinition.Category.BLACKSMITH;
+    }
+    private void stopBlacksmith(State s) {
+        if(blacksmiths!=null)blacksmiths.stop(s.npc.definition().id());
+        s.blacksmithReturning=false;s.blacksmithTrade=false;s.nextBlacksmithAttempt=0;
+    }
+    /** Reactions and drinks restore equipment before another controller borrows it. */
+    private void interruptBlacksmith(State s) {
+        if(blacksmiths==null || !blacksmiths.active(s.npc.definition().id()))return;
+        blacksmiths.stop(s.npc.definition().id());
+        s.blacksmithReturning=true;s.blacksmithTrade=false;
+        s.nextBlacksmithAttempt=ticks+blacksmithRetryTicks;
+    }
+    private void returnBlacksmithToPost(State s) {
+        if(blacksmiths!=null)blacksmiths.stop(s.npc.definition().id());
+        clearStuckHop(s);looks.clear(s.npc,s.look);
+        s.working=false;s.blacksmithReturning=true;s.blacksmithTrade=false;
+        s.nextBlacksmithAttempt=ticks+blacksmithRetryTicks;
+        navigator.cancel(s.npc.definition().id());
+        resetTravelProgress(s,s.npc.position());s.nextUpdate=ticks+cadence;
+        s.status="herrero: volviendo al puesto de trabajo";
+    }
+    /** The workshop borrows movement only after the normal WORK arrival. */
+    private boolean updateBlacksmith(State s,RoutineGoal goal) {
+        if(blacksmiths==null || !isBlacksmithWork(s))return false;
+        ActiveNpc npc=s.npc;String id=npc.definition().id();
+        boolean active=blacksmiths.active(id);
+        if(!s.working || s.approach==null)return false;
+        if(plugin.shops()!=null && plugin.shops().hasOpenSession(id)) {
+            if(active){blacksmiths.stop(id);clearStuckHop(s);looks.clear(npc,s.look);}
+            s.blacksmithTrade=true;s.nextUpdate=ticks+passiveCadence;
+            s.status="herrero: atendiendo compra";return true;
+        }
+        if(s.blacksmithTrade) {
+            returnBlacksmithToPost(s);return false;
+        }
+        if(!active) {
+            Location at=npc.position();
+            if(s.blacksmithReturning || at.getWorld()!=s.approach.getWorld() || at.distanceSquared(s.approach)>=.36) {
+                returnBlacksmithToPost(s);return false;
+            }
+            if(ticks<s.nextBlacksmithAttempt)return false;
+            looks.clear(npc,s.look);clearStuckHop(s);
+        } else if(blacksmiths.traveling(id)) {
+            // A traveling smith still owns WORK/shop access, but needs the same forced
+            // recovery hops and gravity as any other walker.
+            if(blacksmiths.travelExpired(id,ticks)) {returnBlacksmithToPost(s);return false;}
+            if(stuckHop(s))return true;
+            if(recoverFloor(s))return true;
+        } else {
+            clearStuckHop(s);gravity.reset(s.gravity);
+        }
+        Location before=npc.position();
+        BlacksmithController.Result result=blacksmiths.tick(npc,s.approach,goal.speed(),ticks,cadence);
+        if(plugin.sounds()!=null)plugin.sounds().moved(npc,before,npc.position(),ticks);
+        if(result==BlacksmithController.Result.FALLBACK) {
+            returnBlacksmithToPost(s);return false;
+        }
+        if(blacksmiths.traveling(id))observeStuckMotion(s,npc.position());
+        s.nextUpdate=ticks+cadence;s.status=blacksmiths.status(id);return true;
     }
     private void resetTravelProgress(State s,Location at) {
         s.travelSince=ticks;s.travelProgress=at.clone();
@@ -633,6 +716,7 @@ public final class RoutineService {
     /** Returns true while floor recovery owns this update; reservations remain unchanged. */
     private boolean recoverFloor(State s) {
         ActiveNpc npc=s.npc;String id=npc.definition().id();
+        boolean smithTravel=blacksmiths!=null && blacksmiths.active(id);
         if(s.pose!=null || s.dancing || npc.entity().isInsideVehicle()
                 || plugin.reactions()!=null && plugin.reactions().busy(id)
                 || plugin.traits()!=null && plugin.traits().busy(id)
@@ -643,7 +727,7 @@ public final class RoutineService {
         if(result!=RoutineGravity.Result.STABLE) {
             if(!s.recoveringFloor) {
                 s.recoveringFloor=true;navigator.cancel(id);looks.clear(npc,s.look);
-                if(s.working) {
+                if(s.working && !smithTravel) {
                     s.working=false;plugin.shops().invalidateNpc(id);
                     if(plugin.music()!=null)plugin.music().remove(id);
                 }
@@ -661,6 +745,8 @@ public final class RoutineService {
         if(!s.recoveringHopFloor)resetTravelProgress(s,position);
         s.recoveringHopFloor=false;
         navigator.cancel(id);s.nextUpdate=ticks+cadence;
+        // Station movement has its own destination; preserve the established WORK post.
+        if(smithTravel)return false;
         if(s.destination!=null && s.goal!=null) {
             RoutineTerrain terrain=new RoutineTerrain(position.getWorld(),doors);
             boolean furniture=s.goal.type()==RoutineGoal.Type.SIT || s.goal.type()==RoutineGoal.Type.SLEEP;

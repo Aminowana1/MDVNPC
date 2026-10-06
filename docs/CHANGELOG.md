@@ -1,3 +1,21 @@
+# MDVNPC 1.11.13 — categorías de tienda y animación de Herrero
+
+- Se añade la categoría Herrero a las tiendas conservando `Mode.SHOP`,
+  los intercambios y la configuración anterior de NPC Vendedor.
+- Menú Vendedor/Herrero, acceso `/mdvnpc herrero <id>` y selección guiada de
+  fundición, caldero con agua y yunque después de fijar el punto normal de Trabajo.
+- Recorrido por las estaciones con Paper: fundición de RAW_IRON, enfriamiento
+  del lingote, yunque con MACE, enfriamiento de espada y otra sesión de yunque.
+  Cada sesión de yunque dura 120 segundos por defecto; los tiempos son configurables.
+- Sonidos, partículas y lanzamientos cosméticos mediante objetos visuales
+  no recogibles. No se producen recursos ni se consume agua del caldero.
+- Las coordenadas de fundición permanecen válidas cuando se elimina su bloque.
+  Si faltan estaciones o no puede acceder, vuelve al puesto normal y reintenta.
+- El comercio, las reacciones, las bebidas y los cambios de horario ceden la
+  animación a los sistemas correspondientes y limpian sus objetos visuales.
+- Se mantienen el navegador, el salto de recuperación y las rutinas existentes.
+  La prueba visual del recorrido en servidor sigue pendiente.
+
 # MDVNPC 1.11.12 — impulso de recuperación sin requisitos de apoyo
 
 - El fallback comienza sin comprobar apoyo, aterrizaje seguro ni arco completo.

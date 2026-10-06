@@ -34,6 +34,7 @@ public final class TraitEditor implements Listener {
     public void open(Player player,String npc,int page){
         if(!player.hasPermission("mdvnpc.admin"))return;
         if(plugin.prefixEditor()!=null)plugin.prefixEditor().cancel(player);
+        if(plugin.workEditor()!=null)plugin.workEditor().cancel(player);
         var def=plugin.definitions().get(npc);if(def==null){message(player,"&cEl NPC ya no existe.");return;}
         plugin.routineCommands().editor().cancelInput(player);
         Holder holder=new Holder(player,npc,page);

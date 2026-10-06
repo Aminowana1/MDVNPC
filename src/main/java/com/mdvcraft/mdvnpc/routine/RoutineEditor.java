@@ -41,6 +41,7 @@ public final class RoutineEditor implements Listener {
     public void openMain(Player player,String npc){openMain(player,npc,0);}
     public void openMain(Player player,String npc,int page){
         if(!validNpc(player,npc))return;
+        if(plugin.workEditor()!=null)plugin.workEditor().cancel(player);
         if(plugin.prefixEditor()!=null)plugin.prefixEditor().cancel(player);
         var plan=repo().snapshot().plans().get(npc); List<RoutineGoal> goals=plan==null?List.of():plan.goals();
         int pages=Math.max(1,(goals.size()+44)/45); page=Math.max(0,Math.min(page,pages-1));

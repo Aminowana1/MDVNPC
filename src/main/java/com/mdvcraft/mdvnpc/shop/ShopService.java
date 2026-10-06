@@ -58,6 +58,10 @@ public final class ShopService implements Listener {
     }
     public void load() throws Exception { repository.load(); }
     public void deleteShop(String npc) throws Exception { repository.delete(npc); invalidateNpc(npc); }
+    /** Work animations pause without changing the merchant's native transaction logic. */
+    public boolean hasOpenSession(String npc) {
+        return merchants.values().stream().anyMatch(session->session.npc().equals(npc));
+    }
 
     public void openShop(Player player, ActiveNpc npc) {
         if (!plugin.canInteract(npc)) return;

@@ -2,6 +2,7 @@ package com.mdvcraft.mdvnpc.config;
 
 import com.mdvcraft.mdvnpc.model.NpcDefinition;
 import com.mdvcraft.mdvnpc.model.NpcDefinition.*;
+import com.mdvcraft.mdvnpc.work.ShopWorkDefinition;
 import org.bukkit.configuration.ConfigurationSection;
 import java.util.*;
 
@@ -61,7 +62,9 @@ public final class NpcParser {
                                 number(s,"trait.beer-cooldown-seconds",20,1,86400),
                                 s.contains("trait.beer-dialogues")?s.getStringList("trait.beer-dialogues"):Traits.defaults().beerLines()),
                         new Speech(s.contains("speech.prefix")?prefix(s):null,
-                                s.contains("speech.anger-lines")?s.getStringList("speech.anger-lines"):null)));
+                                s.contains("speech.anger-lines")?s.getStringList("speech.anger-lines"):null),
+                        new ShopWorkDefinition(ShopWorkDefinition.Category.parse(s.getString("shop.category","vendor")),
+                                station(s,"smeltery"),station(s,"cauldron"),station(s,"anvil"))));
             } catch (RuntimeException ex) { throw new IllegalArgumentException("NPC " + id + ": " + ex.getMessage(), ex); }
         }
         return Collections.unmodifiableMap(result);
@@ -70,6 +73,22 @@ public final class NpcParser {
         Object value=section.get("speech.prefix");
         if(!(value instanceof String text))throw new IllegalArgumentException("speech.prefix debe ser texto");
         return text;
+    }
+    private static ShopWorkDefinition.Station station(ConfigurationSection s,String key) {
+        String path="shop.blacksmith.stations."+key;
+        if(!s.contains(path))return null;
+        ConfigurationSection station=s.getConfigurationSection(path);
+        if(station==null)throw new IllegalArgumentException(path+" debe ser una sección");
+        if(station.getKeys(false).isEmpty())return null;
+        String world=station.getString("world","");UUID worldId=uuid(station.getString("world-uuid",""));
+        return new ShopWorkDefinition.Station(worldId,world,coordinate(station,"x",-29999984,29999984),
+                coordinate(station,"y",-2048,2048),coordinate(station,"z",-29999984,29999984));
+    }
+    private static int coordinate(ConfigurationSection s,String key,int min,int max) {
+        if(!s.contains(key))throw new IllegalArgumentException("Falta coordenada "+s.getCurrentPath()+"."+key);
+        double value=number(s,key,0,min,max);
+        if(value!=Math.rint(value))throw new IllegalArgumentException(s.getCurrentPath()+"."+key+" debe ser un bloque entero");
+        return (int)value;
     }
     public static void validateId(String id) {
         if (!id.matches("[a-z0-9_-]{1,48}")) throw new IllegalArgumentException("ID: 1..48 letras minúsculas, números, _ o -");

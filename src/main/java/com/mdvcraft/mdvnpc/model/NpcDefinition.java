@@ -2,10 +2,18 @@ package com.mdvcraft.mdvnpc.model;
 
 import java.util.List;
 import java.util.UUID;
+import com.mdvcraft.mdvnpc.work.ShopWorkDefinition;
 
 public record NpcDefinition(String id, boolean enabled, String name, boolean nameVisible,
                             Position position, Skin skin, Look look, Dialogue dialogue,
-                            Interaction interaction, Mode mode, TradeDialogue tradeDialogue, Traits traits, Speech speech) {
+                            Interaction interaction, Mode mode, TradeDialogue tradeDialogue, Traits traits, Speech speech,
+                            ShopWorkDefinition shopWork) {
+    public NpcDefinition { shopWork = shopWork == null ? ShopWorkDefinition.defaults() : shopWork; }
+    public NpcDefinition(String id,boolean enabled,String name,boolean nameVisible,Position position,Skin skin,
+                         Look look,Dialogue dialogue,Interaction interaction,Mode mode,TradeDialogue tradeDialogue,
+                         Traits traits,Speech speech) {
+        this(id,enabled,name,nameVisible,position,skin,look,dialogue,interaction,mode,tradeDialogue,traits,speech,ShopWorkDefinition.defaults());
+    }
     public NpcDefinition(String id,boolean enabled,String name,boolean nameVisible,Position position,Skin skin,
                          Look look,Dialogue dialogue,Interaction interaction,Mode mode,TradeDialogue tradeDialogue,Traits traits) {
         this(id,enabled,name,nameVisible,position,skin,look,dialogue,interaction,mode,tradeDialogue,traits,Speech.defaults());
