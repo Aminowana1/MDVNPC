@@ -1,3 +1,13 @@
+# MDVNPC 1.11.15 — corrección de arranque
+
+- El constructor público de `FishermanController` sustituye
+  `RandomGenerator.getDefault()` por `new Random()`. Evita depender de un
+  proveedor opcional del algoritmo `L32X64MixRandom` para activar el plugin.
+- Se mantiene la elección aleatoria de puntos, la animación del pescador,
+  la reacción a golpes en el bote y el sonido del herrero.
+- Se añade una prueba del constructor público con la fábrica anterior
+  bloqueada. La validación reproduce el error en Java 21 sin `jdk.random`.
+
 # MDVNPC 1.11.14 — Pescador y clink de Herrero
 
 - Se añade la categoría Pescador conservando `Mode.SHOP`, intercambios y

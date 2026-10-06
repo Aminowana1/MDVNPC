@@ -38,6 +38,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.random.RandomGenerator;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -151,6 +152,19 @@ class FishermanControllerTest {
     private long reachBoatPoint(long time) {
         while(!controller.status("fisher").equals("pescando en bote") && time<200)tick(++time);
         assertEquals("pescando en bote",controller.status("fisher"));return time;
+    }
+
+    @Test void publicConstructorWorksWhenTheDefaultAlgorithmProviderIsUnavailable() {
+        try(var provider=mockStatic(RandomGenerator.class)) {
+            provider.when(RandomGenerator::getDefault).thenThrow(new IllegalArgumentException(
+                    "No implementation of the random number generator algorithm L32X64MixRandom is available"));
+            controller=assertDoesNotThrow(()->new FishermanController(plugin,navigator,
+                    (active,to)->{position.set(to.clone());return true;},
+                    (active,to)->{vehicle.set(to);return true;}));
+            assertEquals(FishermanController.Result.RUNNING,tick(0));
+            assertEquals("pescando en la orilla",controller.status("fisher"));
+            provider.verifyNoInteractions();
+        }
     }
 
     @Test void startsOnlyAfterReachingOrdinaryWorkPost() {

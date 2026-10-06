@@ -1,4 +1,11 @@
-# MDVNPC 1.11.14
+# MDVNPC 1.11.15
+
+Corrige el fallo de arranque de 1.11.14 cuando Java no puede proporcionar el
+algoritmo `L32X64MixRandom`. El pescador usa ahora `java.util.Random`, disponible
+en el módulo básico de Java. La elección de puntos sigue siendo aleatoria y
+se conserva la configuración existente. Consulta [la guía](GUIA-1.11.15.md).
+
+## Actualización 1.11.14
 
 Las tiendas admiten la categoría **Pescador**. Durante Trabajo el NPC pesca
 desde un punto de tierra elegido al azar, camina al muelle, sale en un bote

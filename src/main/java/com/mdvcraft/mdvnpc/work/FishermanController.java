@@ -29,6 +29,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.function.BiPredicate;
 import java.util.function.Function;
 import java.util.random.RandomGenerator;
@@ -68,7 +69,8 @@ public final class FishermanController {
 
     public FishermanController(MdvNpcPlugin plugin,RoutineNavigator navigator,
                                BiPredicate<ActiveNpc,Location> teleport,BiPredicate<ActiveNpc,Entity> mount) {
-        this(plugin,navigator,new DoorController(plugin),teleport,mount,ItemStack::new,RandomGenerator.getDefault());
+        // java.util.Random is in java.base and needs no optional algorithm provider.
+        this(plugin,navigator,new DoorController(plugin),teleport,mount,ItemStack::new,new Random());
     }
     FishermanController(MdvNpcPlugin plugin,RoutineNavigator navigator,DoorController doors,
                         BiPredicate<ActiveNpc,Location> teleport,BiPredicate<ActiveNpc,Entity> mount,
