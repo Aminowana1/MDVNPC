@@ -3,6 +3,7 @@ package com.mdvcraft.mdvnpc.config;
 import com.mdvcraft.mdvnpc.model.NpcDefinition;
 import com.mdvcraft.mdvnpc.model.NpcDefinition.*;
 import com.mdvcraft.mdvnpc.work.ShopWorkDefinition;
+import com.mdvcraft.mdvnpc.work.FishingDefinition;
 import org.bukkit.configuration.ConfigurationSection;
 import java.util.*;
 
@@ -64,7 +65,7 @@ public final class NpcParser {
                         new Speech(s.contains("speech.prefix")?prefix(s):null,
                                 s.contains("speech.anger-lines")?s.getStringList("speech.anger-lines"):null),
                         new ShopWorkDefinition(ShopWorkDefinition.Category.parse(s.getString("shop.category","vendor")),
-                                station(s,"smeltery"),station(s,"cauldron"),station(s,"anvil"))));
+                                station(s,"smeltery"),station(s,"cauldron"),station(s,"anvil"),fishing(s))));
             } catch (RuntimeException ex) { throw new IllegalArgumentException("NPC " + id + ": " + ex.getMessage(), ex); }
         }
         return Collections.unmodifiableMap(result);
@@ -83,6 +84,42 @@ public final class NpcParser {
         String world=station.getString("world","");UUID worldId=uuid(station.getString("world-uuid",""));
         return new ShopWorkDefinition.Station(worldId,world,coordinate(station,"x",-29999984,29999984),
                 coordinate(station,"y",-2048,2048),coordinate(station,"z",-29999984,29999984));
+    }
+    private static FishingDefinition fishing(ConfigurationSection s) {
+        String base="shop.fisherman";
+        if(s.contains(base) && s.getConfigurationSection(base)==null)throw new IllegalArgumentException(base+" debe ser una sección");
+        return new FishingDefinition(fishingPoints(s,base+".shore-points"),fishingDock(s,base+".dock"),fishingPoints(s,base+".boat-points"));
+    }
+    private static List<FishingDefinition.Point> fishingPoints(ConfigurationSection s,String path) {
+        if(!s.contains(path))return List.of();
+        Object value=s.get(path);
+        if(!(value instanceof List<?> rows))throw new IllegalArgumentException(path+" debe ser una lista de puntos");
+        if(rows.size()>FishingDefinition.MAX_POINTS)throw new IllegalArgumentException(path+": máximo "+FishingDefinition.MAX_POINTS+" puntos");
+        List<FishingDefinition.Point> points=new ArrayList<>();
+        for(int i=0;i<rows.size();i++) {
+            if(!(rows.get(i) instanceof Map<?,?> row))throw new IllegalArgumentException(path+"["+i+"] debe ser un punto");
+            points.add(fishingPoint(row,path+"["+i+"]"));
+        }
+        return points;
+    }
+    private static FishingDefinition.Point fishingDock(ConfigurationSection s,String path) {
+        if(!s.contains(path))return null;
+        ConfigurationSection row=s.getConfigurationSection(path);
+        if(row==null)throw new IllegalArgumentException(path+" debe ser una sección");
+        return row.getKeys(false).isEmpty()?null:fishingPoint(row.getValues(false),path);
+    }
+    private static FishingDefinition.Point fishingPoint(Map<?,?> row,String path) {
+        Object worldValue=row.get("world"),idValue=row.get("world-uuid");
+        if(worldValue!=null && !(worldValue instanceof String) || idValue!=null && !(idValue instanceof String))
+            throw new IllegalArgumentException(path+": el mundo y UUID deben ser texto");
+        return new FishingDefinition.Point(uuid(Objects.toString(idValue,"")),Objects.toString(worldValue,""),
+                requiredPointNumber(row,"x",path),requiredPointNumber(row,"y",path),requiredPointNumber(row,"z",path),
+                (float)requiredPointNumber(row,"yaw",path));
+    }
+    private static double requiredPointNumber(Map<?,?> row,String key,String path) {
+        if(!(row.get(key) instanceof Number value) || !Double.isFinite(value.doubleValue()))
+            throw new IllegalArgumentException(path+"."+key+" debe ser numérico y finito");
+        return value.doubleValue();
     }
     private static int coordinate(ConfigurationSection s,String key,int min,int max) {
         if(!s.contains(key))throw new IllegalArgumentException("Falta coordenada "+s.getCurrentPath()+"."+key);

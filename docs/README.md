@@ -1,4 +1,20 @@
-# MDVNPC 1.11.13
+# MDVNPC 1.11.14
+
+Las tiendas admiten la categoría **Pescador**. Durante Trabajo el NPC pesca
+desde un punto de tierra elegido al azar, camina al muelle, sale en un bote
+nativo hasta un punto de agua, pesca allí y regresa para bajar y repetir.
+Los puntos guardan la dirección de la mirada al marcarlos y permiten varias
+opciones de tierra y de bote. Conserva la tienda y usa su puesto normal si
+no puede ejecutar la animación. Configúralo con `/mdvnpc pescador <id>`
+después de fijar el punto base de Trabajo.
+Un golpe mientras está en el bote pausa la actividad durante la reacción;
+el NPC permanece montado y después continúa la pesca o navegación.
+
+El Herrero reproduce un `clink` metálico corto únicamente junto a cada
+gesto de golpe del yunque. Consulta [la guía de Pescador y sonido](GUIA-1.11.14.md).
+La comprobación visual dentro del servidor continúa pendiente.
+
+## Actualización 1.11.13
 
 Las tiendas admiten la categoría **Herrero** con estaciones configurables de
 fundición, caldero con agua y yunque. Durante su goal Trabajo el NPC recorre las

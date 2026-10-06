@@ -122,8 +122,9 @@ public final class BlacksmithController {
             }
             if(!navigator.activeHop(id) && !supported(state.npc.position()))return fallback(id);
             faceStation(state);
-            effects(state, tick);
-            if (tick - state.stageStarted >= duration(state.stage)) {
+            boolean ending=tick-state.stageStarted>=duration(state.stage);
+            if(!ending || state.stage!=Stage.ANVIL_FIRST && state.stage!=Stage.ANVIL_SECOND)effects(state,tick);
+            if (ending) {
                 cleanupFlights(state);
                 state.stage = switch (state.stage) {
                     case SMELT -> Stage.QUENCH_INGOT;
@@ -295,7 +296,8 @@ public final class BlacksmithController {
             state.nextEffect=tick+(anvil?20:12);
             if(anvil) {
                 state.npc.entity().swingMainHand();
-                world.playSound(state.station,Sound.BLOCK_ANVIL_USE,.45f,1.05f);
+                // A short metallic clink is emitted only with the actual hammer swing.
+                world.playSound(state.station,Sound.BLOCK_CHAIN_HIT,.4f,1.6f);
                 world.spawnParticle(Particle.CRIT,state.station.clone().add(0,.4,0),5,.15,.05,.15,.05);
             } else if(state.stage==Stage.SMELT) {
                 world.playSound(state.station,Sound.BLOCK_FURNACE_FIRE_CRACKLE,.4f,1.05f);

@@ -11,6 +11,7 @@ import me.libraryaddict.disguise.disguisetypes.PlayerDisguise;
 import me.libraryaddict.disguise.disguisetypes.watchers.PlayerWatcher;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.Levelled;
@@ -154,6 +155,26 @@ class BlacksmithControllerTest {
         tick(5165);assertEquals("trabajando en fundición",controller.status("smith"));
         assertTrue(displayMaterials.containsAll(List.of(Material.RAW_IRON,Material.IRON_INGOT,Material.IRON_SWORD)));
         verify(entity,atLeast(2)).swingMainHand();
+    }
+
+    @Test void metallicClinkSoundsOnlyAtHammerSwingsAndNeverWhenLeavingAnvil() {
+        tick(0);tick(160);tick(161);tick(261);tick(262);
+        verify(world).playSound(any(Location.class),eq(Sound.BLOCK_CHAIN_HIT),eq(.4f),eq(1.6f));
+        clearInvocations(entity,world);
+        tick(270);tick(281);
+        verify(entity,never()).swingMainHand();
+        verify(world,never()).playSound(any(Location.class),eq(Sound.BLOCK_CHAIN_HIT),anyFloat(),anyFloat());
+        tick(282);
+        verify(entity).swingMainHand();
+        verify(world).playSound(any(Location.class),eq(Sound.BLOCK_CHAIN_HIT),eq(.4f),eq(1.6f));
+        clearInvocations(entity,world);
+        tick(2662);
+        assertEquals("caminando a caldero",controller.status("smith"));
+        verify(entity,never()).swingMainHand();
+        verify(world,never()).playSound(any(Location.class),any(Sound.class),anyFloat(),anyFloat());
+        tick(2663);
+        verify(world,never()).playSound(any(Location.class),eq(Sound.BLOCK_CHAIN_HIT),anyFloat(),anyFloat());
+        verify(world,never()).playSound(any(Location.class),eq(Sound.BLOCK_ANVIL_USE),anyFloat(),anyFloat());
     }
 
     @Test void smelteryAcceptsAirAndApproachKeepsOneWholeBlockGap() {

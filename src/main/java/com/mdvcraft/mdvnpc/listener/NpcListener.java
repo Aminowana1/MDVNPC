@@ -8,7 +8,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.*;
 import org.bukkit.event.entity.*;
 import org.bukkit.event.player.*;
-import org.bukkit.event.vehicle.VehicleEnterEvent;
+import org.bukkit.event.vehicle.*;
 import org.bukkit.event.world.*;
 import org.bukkit.inventory.EquipmentSlot;
 import io.papermc.paper.event.player.PrePlayerAttackEntityEvent;
@@ -21,6 +21,7 @@ public final class NpcListener implements Listener {
     public void interactAt(PlayerInteractAtEntityEvent event) { interact(event); }
     @EventHandler(priority = EventPriority.HIGHEST)
     public void interact(PlayerInteractEntityEvent event) {
+        if(plugin.routines().isBoat(event.getRightClicked())) {event.setCancelled(true);return;}
         var manager = plugin.manager();
         if (!manager.owned(event.getRightClicked())) return;
         boolean wasCancelled = event.isCancelled();
@@ -55,12 +56,13 @@ public final class NpcListener implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST)
     public void damage(EntityDamageEvent event) {
         var manager = plugin.manager();
-        if (!manager.owned(event.getEntity()) && !plugin.routines().isSeat(event.getEntity())) return;
+        if (!manager.owned(event.getEntity()) && !plugin.routines().isSeat(event.getEntity()) && !plugin.routines().isBoat(event.getEntity())) return;
         event.setCancelled(true);
     }
     // Fires before damage checks, including attacks on invulnerable NPCs.
     @EventHandler(priority = EventPriority.HIGHEST)
     public void attack(PrePlayerAttackEntityEvent event) {
+        if(plugin.routines().isBoat(event.getAttacked())) {event.setCancelled(true);return;}
         var manager = plugin.manager();
         if (!manager.owned(event.getAttacked())) return;
         boolean cancelled = event.isCancelled();
@@ -78,19 +80,37 @@ public final class NpcListener implements Listener {
     public void teleport(EntityTeleportEvent event) { if (plugin.manager().owned(event.getEntity()) && !plugin.routines().internal(event.getEntity())) event.setCancelled(true); }
     @EventHandler(priority = EventPriority.HIGHEST)
     public void move(EntityMoveEvent event) {
-        if (event.hasChangedPosition() && plugin.manager().owned(event.getEntity()) && !plugin.routines().internal(event.getEntity()) && !plugin.routines().isSeat(event.getEntity().getVehicle() == null ? event.getEntity() : event.getEntity().getVehicle())) event.setCancelled(true);
+        if (event.hasChangedPosition() && plugin.manager().owned(event.getEntity()) && !plugin.routines().internal(event.getEntity())
+                && !plugin.routines().inFishingBoat(event.getEntity())
+                && !plugin.routines().isSeat(event.getEntity().getVehicle() == null ? event.getEntity() : event.getEntity().getVehicle())) event.setCancelled(true);
         if (plugin.routines().isSeat(event.getEntity()) && event.hasChangedPosition()) event.setCancelled(true);
     }
     @EventHandler(priority = EventPriority.HIGHEST)
-    public void burn(EntityCombustEvent event) { if (plugin.manager().owned(event.getEntity())) event.setCancelled(true); }
+    public void burn(EntityCombustEvent event) { if (plugin.manager().owned(event.getEntity()) || plugin.routines().isBoat(event.getEntity())) event.setCancelled(true); }
     @EventHandler(priority = EventPriority.HIGHEST)
     public void transform(EntityTransformEvent event) { if (plugin.manager().owned(event.getEntity())) event.setCancelled(true); }
     @EventHandler(priority = EventPriority.HIGHEST)
-    public void vehicle(VehicleEnterEvent event) { if (plugin.manager().owned(event.getEntered()) && !plugin.routines().mounting(event.getEntered())) event.setCancelled(true); }
+    public void vehicle(VehicleEnterEvent event) {
+        if(plugin.routines().isBoat(event.getVehicle()) && !plugin.routines().canMountFishingBoat(event.getVehicle(),event.getEntered()))event.setCancelled(true);
+        if(plugin.manager().owned(event.getEntered()) && !plugin.routines().mounting(event.getEntered()))event.setCancelled(true);
+    }
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void vehicleExit(VehicleExitEvent event) {
+        if(plugin.routines().isBoat(event.getVehicle()) && !plugin.routines().mounting(event.getExited()))event.setCancelled(true);
+    }
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void vehicleDamage(VehicleDamageEvent event) {if(plugin.routines().isBoat(event.getVehicle()))event.setCancelled(true);}
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void vehicleDestroy(VehicleDestroyEvent event) {if(plugin.routines().isBoat(event.getVehicle()))event.setCancelled(true);}
     @EventHandler(priority = EventPriority.HIGHEST)
     public void mount(org.bukkit.event.entity.EntityMountEvent event) {
         if (plugin.manager().owned(event.getEntity()) && !plugin.routines().mounting(event.getEntity())) event.setCancelled(true);
         if (plugin.routines().isSeat(event.getMount()) && !plugin.routines().mounting(event.getEntity())) event.setCancelled(true);
+        if (plugin.routines().isBoat(event.getMount()) && !plugin.routines().canMountFishingBoat(event.getMount(),event.getEntity())) event.setCancelled(true);
+    }
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void dismount(org.bukkit.event.entity.EntityDismountEvent event) {
+        if(plugin.routines().isBoat(event.getDismounted()) && !plugin.routines().mounting(event.getEntity()))event.setCancelled(true);
     }
     @EventHandler(priority = EventPriority.HIGHEST)
     public void armorStand(PlayerArmorStandManipulateEvent event) { if (plugin.routines().isSeat(event.getRightClicked())) event.setCancelled(true); }

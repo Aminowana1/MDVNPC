@@ -46,7 +46,7 @@ public final class NpcEditor implements Listener {
         h.inventory.setItem(15,item(Material.WRITABLE_BOOK,"&dPrefijo de los diálogos","&7Personaliza cómo habla este NPC.","&eClic para abrir"));
         h.inventory.setItem(16,item(def.nameVisible()?Material.ENDER_EYE:Material.ENDER_PEARL,"&eNombre visible",def.nameVisible()?"&aActivado":"&7Desactivado","&eClic para cambiar"));
         h.inventory.setItem(19,item(def.enabled()?Material.LIME_DYE:Material.GRAY_DYE,def.enabled()?"&aNPC activado":"&7NPC desactivado","&eClic para cambiar"));
-        if(def.mode()==NpcDefinition.Mode.SHOP)h.inventory.setItem(20,item(Material.ANVIL,"&6Categoría y estaciones","&7Vendedor o Herrero.","&eClic para configurar"));
+        if(def.mode()==NpcDefinition.Mode.SHOP)h.inventory.setItem(20,item(Material.ANVIL,"&6Categoría y estaciones","&7Vendedor, Herrero o Pescador.","&eClic para configurar"));
         h.inventory.setItem(22,item(Material.ARROW,"&eVolver a las rutinas"));p.openInventory(h.inventory);
     }
     private void openJob(Player p,String id){

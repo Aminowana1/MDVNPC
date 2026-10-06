@@ -1,3 +1,36 @@
+# MDVNPC 1.11.14 — Pescador y clink de Herrero
+
+- Se añade la categoría Pescador conservando `Mode.SHOP`, intercambios y
+  horario de Trabajo. El puesto base se configura antes de los puntos de pesca.
+- Menú Vendedor/Pescador/Herrero y acceso `/mdvnpc pescador <id>`.
+  Configuración guiada de punto de tierra, muelle y punto de bote, con listas
+  de hasta 32 puntos de tierra y 32 de bote y eliminación individual.
+- Los puntos guardan la posición y dirección de mirada al seleccionarlos.
+  Los puntos de bote se marcan en la superficie del agua mediante una consulta
+  de mirada de hasta 16 bloques, incluido clic derecho al aire.
+- Ciclo con elección aleatoria: tierra durante 45 segundos, camino al muelle,
+  bote nativo hasta el punto de agua, pesca durante 45 segundos y regreso al
+  muelle para salir, retirar el bote y repetir. Tiempos, distancia de lanzamiento,
+  velocidad, plazo de viaje y reintento configurables.
+- Caña en mano, boya mediante `ItemDisplay` y sedal de partículas cosméticas.
+  No se generan capturas ni recursos reales.
+- La caminata mantiene el navegador de Paper. El bote usa búsqueda acuática
+  acotada a 96 bloques y 4096 nodos, colisiones de casco/pasajero y sólo chunks
+  cargados; contempla el centro de canales de dos bloques y rechaza pasos
+  demasiado estrechos o con agua desconectada.
+- El comercio pausa la animación sin desplazar al NPC, incluso montado en el
+  bote. El fallo de acceso o agua cede a la atención en el puesto base.
+- Los golpes mientras el NPC está en el bote conservan su montaje y pausan
+  la actividad durante la reacción; después reanuda pesca o navegación en el
+  mismo bote. Golpes en tierra y bebidas conservan el regreso habitual.
+  Cambios de horario, recarga y retirada liberan efectos y bote.
+- La comprobación del espacio del pasajero reserva 2.6 bloques de altura
+  desde el bote para evitar techos que intercepten la parte alta del NPC.
+- El Herrero sustituye el sonido del martilleo por `BLOCK_CHAIN_HIT`, un clink
+  corto ligado a cada gesto. No añade sonidos al finalizar la sesión.
+- La comprobación visual de los efectos y el bote dentro del servidor queda
+  pendiente. Consulta `GUIA-1.11.14.md` para configuración y límites.
+
 # MDVNPC 1.11.13 — categorías de tienda y animación de Herrero
 
 - Se añade la categoría Herrero a las tiendas conservando `Mode.SHOP`,

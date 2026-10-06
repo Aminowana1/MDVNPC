@@ -122,6 +122,7 @@ messages:
   action-denied: '&cNo tienes permiso para interactuar con este NPC.'
   help:
     - '&e/mdvnpc herrero <id> &7- Categoría de tienda y estaciones del herrero.'
+    - '&e/mdvnpc pescador <id> &7- Categoría de tienda, puntos de pesca y muelle.'
     - "&e/mdvnpc rasgo <id> [ninguno|alcoholico|lector|gloton|inquieto|ruidoso]"
     - '&e/mdvnpc list &7- Ver los NPC.'
     - '&e/mdvnpc status [id] &7- Ver activos o estado de rutina/música de un NPC.'
@@ -187,4 +188,13 @@ blacksmith:
   anvil-seconds: 120 # duración de cada sesión de martilleo con MACE
   travel-timeout-seconds: 30 # si una estación es inaccesible, vuelve al puesto normal
   retry-seconds: 30 # espera en el puesto antes de volver a probar estaciones
+
+# Animación de tienda Pescador durante Trabajo. Guarda la mirada al marcar puntos.
+fisherman:
+  shore-seconds: 45 # pesca desde el punto de tierra elegido al azar
+  boat-seconds: 45 # pesca desde el punto de agua elegido al azar
+  cast-distance: 4.5 # distancia horizontal de la boya en la dirección guardada (2..8)
+  travel-timeout-seconds: 60 # límite para llegar a un punto o volver al muelle
+  boat-speed: 3.0 # bloques por segundo, sobre rutas transitables de agua
+  retry-seconds: 30 # espera en el puesto normal cuando no puede completar la animación
 

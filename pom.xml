@@ -5,7 +5,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>com.mdvcraft</groupId>
   <artifactId>MDVNPC</artifactId>
-  <version>1.11.13</version>
+  <version>1.11.14</version>
   <name>MDVNPC</name>
   <description>NPC, tiendas y rutinas para MDVCRAFT</description>
   <properties>
@@ -134,3 +134,4 @@
     </plugins>
   </build>
 </project>
+

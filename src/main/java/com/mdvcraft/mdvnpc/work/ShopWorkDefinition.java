@@ -6,17 +6,19 @@ import java.util.Locale;
 import java.util.UUID;
 
 /** Optional work visuals for a shop; trading remains Mode.SHOP. */
-public record ShopWorkDefinition(Category category, Station smeltery, Station cauldron, Station anvil) {
-    public ShopWorkDefinition { category = category == null ? Category.VENDOR : category; }
+public record ShopWorkDefinition(Category category, Station smeltery, Station cauldron, Station anvil, FishingDefinition fishing) {
+    public ShopWorkDefinition { category = category == null ? Category.VENDOR : category; fishing = fishing == null ? FishingDefinition.defaults() : fishing; }
+    public ShopWorkDefinition(Category category, Station smeltery, Station cauldron, Station anvil) { this(category,smeltery,cauldron,anvil,FishingDefinition.defaults()); }
     public static ShopWorkDefinition defaults() { return new ShopWorkDefinition(Category.VENDOR,null,null,null); }
-    public boolean complete() { return smeltery != null && cauldron != null && anvil != null; }
+    public boolean complete() { return category == Category.FISHERMAN ? fishing.complete() : smeltery != null && cauldron != null && anvil != null; }
     public enum Category {
-        VENDOR, BLACKSMITH;
+        VENDOR, BLACKSMITH, FISHERMAN;
         public static Category parse(String text) {
             return switch(text == null ? "vendor" : text.trim().toLowerCase(Locale.ROOT)) {
                 case "vendor", "vendedor", "tienda" -> VENDOR;
                 case "blacksmith", "herrero" -> BLACKSMITH;
-                default -> throw new IllegalArgumentException("shop.category: usar vendor/vendedor o blacksmith/herrero");
+                case "fisherman", "pescador" -> FISHERMAN;
+                default -> throw new IllegalArgumentException("shop.category: usar vendor/vendedor, blacksmith/herrero o fisherman/pescador");
             };
         }
     }

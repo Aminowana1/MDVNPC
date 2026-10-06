@@ -9,7 +9,7 @@ import org.bukkit.entity.Player;
 import java.util.*;
 
 public final class NpcCommand implements CommandExecutor, TabCompleter {
-    private static final List<String> COMMANDS = List.of("edit", "editor", "menu", "trabajo", "herrero", "help", "list", "status", "create", "movehere", "delete", "rename", "skin", "enable", "mode", "shop", "reload", "routine", "rutina", "rutinas", "clock", "rasgo", "trait");
+    private static final List<String> COMMANDS = List.of("edit", "editor", "menu", "trabajo", "herrero", "pescador", "help", "list", "status", "create", "movehere", "delete", "rename", "skin", "enable", "mode", "shop", "reload", "routine", "rutina", "rutinas", "clock", "rasgo", "trait");
     private final MdvNpcPlugin plugin;
     public NpcCommand(MdvNpcPlugin plugin) { this.plugin = plugin; }
     @Override public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
@@ -25,9 +25,9 @@ public final class NpcCommand implements CommandExecutor, TabCompleter {
                     plugin.npcEditor().open(player,args[1]);
                 }
                 case "routine", "rutina", "rutinas" -> plugin.routineCommands().command(sender, args);
-                case "herrero" -> {
+                case "herrero", "pescador" -> {
                     if(!(sender instanceof Player player)){msg.send(sender,"player-only");return true;}
-                    if(args.length!=2)throw new IllegalArgumentException("/mdvnpc herrero <id> - categoría de tienda y estaciones");
+                    if(args.length!=2)throw new IllegalArgumentException("/mdvnpc "+sub+" <id> - categoría de tienda y estaciones");
                     NpcParser.validateId(args[1]);
                     if(!plugin.definitions().containsKey(args[1]))throw new IllegalArgumentException("NPC no encontrado: "+args[1]);
                     plugin.workEditor().open(player,args[1]);
@@ -181,7 +181,7 @@ public final class NpcCommand implements CommandExecutor, TabCompleter {
             return options.stream().filter(v -> v.toLowerCase(Locale.ROOT).startsWith(prefix)).sorted().toList();
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("clock")) return org.bukkit.Bukkit.getWorlds().stream().map(org.bukkit.World::getName).filter(n -> n.startsWith(args[1])).toList();
-        Collection<String> choices = args.length == 1 ? COMMANDS : args.length == 2 && Set.of("status", "edit", "editor", "menu", "herrero", "movehere", "delete", "rename", "skin", "enable", "mode", "shop", "rasgo", "trait").contains(args[0].toLowerCase(Locale.ROOT))
+        Collection<String> choices = args.length == 1 ? COMMANDS : args.length == 2 && Set.of("status", "edit", "editor", "menu", "herrero", "pescador", "movehere", "delete", "rename", "skin", "enable", "mode", "shop", "rasgo", "trait").contains(args[0].toLowerCase(Locale.ROOT))
                 ? plugin.definitions().keySet() : args.length == 3 && Set.of("rasgo","trait").contains(args[0].toLowerCase(Locale.ROOT)) ? List.of("ninguno","alcoholico","lector","gloton","inquieto","ruidoso","fiestero") : args.length == 3 && args[0].equalsIgnoreCase("enable") ? List.of("true", "false") : args.length == 3 && args[0].equalsIgnoreCase("mode") ? List.of("normal", "shop") : List.of();
         String prefix = args.length == 0 ? "" : args[args.length - 1].toLowerCase(Locale.ROOT);
         return choices.stream().filter(s -> s.toLowerCase(Locale.ROOT).startsWith(prefix)).sorted().toList();

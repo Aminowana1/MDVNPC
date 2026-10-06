@@ -219,9 +219,11 @@ public final class RoutineCommands implements Listener {
         say(p,(s.optionSelection?"Opción "+(s.option+1)+" del goal ":"Goal ")+s.order+" guardado para "+s.npc+".");
         var configured=plugin.definitions().get(s.npc);
         if(s.type==RoutineGoal.Type.WORK && configured!=null && configured.mode()==com.mdvcraft.mdvnpc.model.NpcDefinition.Mode.SHOP
-                && configured.shopWork().category()==com.mdvcraft.mdvnpc.work.ShopWorkDefinition.Category.BLACKSMITH
+                && configured.shopWork().category()!=com.mdvcraft.mdvnpc.work.ShopWorkDefinition.Category.VENDOR
                 && !configured.shopWork().complete() && plugin.workEditor()!=null) {
-            say(p,"Puesto del herrero guardado. Ahora marca fundición, caldero con agua y yunque.");
+            say(p,configured.shopWork().category()==com.mdvcraft.mdvnpc.work.ShopWorkDefinition.Category.BLACKSMITH
+                    ?"Puesto del herrero guardado. Ahora marca fundición, caldero con agua y yunque."
+                    :"Puesto del pescador guardado. Ahora marca los puntos de pesca, el muelle y la pesca en bote.");
             Bukkit.getScheduler().runTask(plugin,()->{if(p.isOnline())plugin.workEditor().openStations(p,s.npc);});
         }else if(s.reopenEditor) Bukkit.getScheduler().runTask(plugin,()->editor.openChoice(p,s.npc,s.order,s.optionSelection?s.option:0));
     }
