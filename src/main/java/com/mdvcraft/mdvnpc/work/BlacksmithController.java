@@ -252,6 +252,10 @@ public final class BlacksmithController {
         var settings = plugin.settings();
         return Math.max(minimum,Math.min(maximum,settings==null?fallback:settings.messages().getInt("blacksmith."+key,fallback)));
     }
+    private double decimal(String key,double fallback,double minimum,double maximum) {
+        var settings=plugin.settings();double value=settings==null?fallback:settings.messages().getDouble("blacksmith."+key,fallback);
+        return Double.isFinite(value)?Math.max(minimum,Math.min(maximum,value)):fallback;
+    }
     private boolean supported(Location position) {
         RoutineTerrain terrain=new RoutineTerrain(position.getWorld(),geometryDoors);
         try(var update=terrain.beginUpdate()) {
@@ -296,8 +300,10 @@ public final class BlacksmithController {
             state.nextEffect=tick+(anvil?20:12);
             if(anvil) {
                 state.npc.entity().swingMainHand();
-                // A short metallic clink is emitted only with the actual hammer swing.
-                world.playSound(state.station,Sound.BLOCK_CHAIN_HIT,.4f,1.6f);
+                // Each hammer swing uses the vanilla anvil-placement sound; volume/pitch are configurable.
+                world.playSound(state.station,Sound.BLOCK_ANVIL_PLACE,
+                        (float)decimal("anvil-hit-volume",.6,0,4),
+                        (float)decimal("anvil-hit-pitch",1,0.5,2));
                 world.spawnParticle(Particle.CRIT,state.station.clone().add(0,.4,0),5,.15,.05,.15,.05);
             } else if(state.stage==Stage.SMELT) {
                 world.playSound(state.station,Sound.BLOCK_FURNACE_FIRE_CRACKLE,.4f,1.05f);

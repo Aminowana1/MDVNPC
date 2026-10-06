@@ -7,22 +7,16 @@ import com.mdvcraft.mdvnpc.routine.RoutineNavigator;
 import com.mdvcraft.mdvnpc.routine.RoutineTerrain;
 import com.mdvcraft.mdvnpc.runtime.ActiveNpc;
 import io.papermc.paper.entity.TeleportFlag;
-import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.entity.Boat;
-import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
-import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.boat.OakBoat;
 import org.bukkit.inventory.EntityEquipment;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
-import org.joml.Quaternionf;
-import org.joml.Vector3f;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -38,6 +32,13 @@ import java.util.random.RandomGenerator;
 public final class FishermanController {
     public enum Result { RUNNING, FALLBACK }
     private enum Stage { SHORE_WALK, SHORE_FISH, DOCK_WALK, BOAT_OUT, BOAT_FISH, BOAT_BACK }
+    interface BobberVisual {
+        boolean move(Location location);
+        void remove();
+    }
+    @FunctionalInterface interface BobberFactory {
+        BobberVisual spawn(ActiveNpc npc, Location start);
+    }
     private static final Vector STILL=new Vector();
     private static final int CAST_TICKS=16, RECAST_TICKS=300, NO_PROGRESS_TICKS=160;
     private final MdvNpcPlugin plugin;
@@ -47,6 +48,7 @@ public final class FishermanController {
     private final BiPredicate<ActiveNpc,Entity> mount;
     private final Function<Material,ItemStack> items;
     private final RandomGenerator random;
+    private final BobberFactory bobbers;
     private final Map<String,State> states=new HashMap<>();
 
     private static final class State {
@@ -58,7 +60,7 @@ public final class FishermanController {
         int shoreIndex,routeIndex;
         Stage stage=Stage.SHORE_WALK;
         Boat boat;
-        ItemDisplay bobber;
+        BobberVisual bobber;
         long travelStarted,lastProgress,stageStarted,nextEffect,castStarted,nextCast,lastTick;
         long suspendedAt;
         boolean suspended;
@@ -70,13 +72,18 @@ public final class FishermanController {
     public FishermanController(MdvNpcPlugin plugin,RoutineNavigator navigator,
                                BiPredicate<ActiveNpc,Location> teleport,BiPredicate<ActiveNpc,Entity> mount) {
         // java.util.Random is in java.base and needs no optional algorithm provider.
-        this(plugin,navigator,new DoorController(plugin),teleport,mount,ItemStack::new,new Random());
+        this(plugin,navigator,new DoorController(plugin),teleport,mount,ItemStack::new,new Random(),VanillaFishingBobber::new);
     }
     FishermanController(MdvNpcPlugin plugin,RoutineNavigator navigator,DoorController doors,
                         BiPredicate<ActiveNpc,Location> teleport,BiPredicate<ActiveNpc,Entity> mount,
                         Function<Material,ItemStack> items,RandomGenerator random) {
+        this(plugin,navigator,doors,teleport,mount,items,random,VanillaFishingBobber::new);
+    }
+    FishermanController(MdvNpcPlugin plugin,RoutineNavigator navigator,DoorController doors,
+                        BiPredicate<ActiveNpc,Location> teleport,BiPredicate<ActiveNpc,Entity> mount,
+                        Function<Material,ItemStack> items,RandomGenerator random,BobberFactory bobbers) {
         this.plugin=plugin;this.navigator=navigator;this.doors=doors;this.teleport=teleport;
-        this.mount=mount;this.items=items;this.random=random;
+        this.mount=mount;this.items=items;this.random=random;this.bobbers=bobbers;
     }
     public boolean active(String id) {return states.containsKey(id);}
     public boolean walking(String id) {State state=states.get(id);return state!=null && walking(state.stage);}
@@ -374,20 +381,13 @@ public final class FishermanController {
             if(!new BoatNavigator(state.castStart.getWorld()).castClear(state.castStart,state.castEnd))
                 throw new IllegalStateException("Hay un obstáculo en el lance");
             state.castStarted=tick;state.nextCast=tick+RECAST_TICKS;
-            ItemDisplay display=state.castStart.getWorld().spawn(state.castStart,ItemDisplay.class,entity->{
-                state.bobber=entity;entity.setItemStack(items.apply(Material.WHITE_CONCRETE));
-                entity.setItemDisplayTransform(ItemDisplay.ItemDisplayTransform.FIXED);
-                entity.setGravity(false);entity.setPersistent(false);entity.setInvulnerable(true);entity.setSilent(true);
-                entity.setBillboard(Display.Billboard.FIXED);entity.setTeleportDuration(1);entity.setInterpolationDuration(1);
-                entity.setViewRange(.75f);
-                entity.setTransformation(new Transformation(new Vector3f(),new Quaternionf(),new Vector3f(.13f,.18f,.13f),new Quaternionf()));
-            });
-            if(display==null || !display.isValid())throw new IllegalStateException("No se pudo crear el flotador visual");
-            state.bobber=display;state.npc.entity().swingMainHand();
+            state.bobber=bobbers.spawn(state.npc,state.castStart);
+            if(state.bobber==null)throw new IllegalStateException("No se pudo crear el anzuelo vanilla");
+            state.npc.entity().swingMainHand();
             state.castStart.getWorld().playSound(state.castStart,Sound.ENTITY_FISHING_BOBBER_THROW,.35f,1);
         }
-        if(state.bobber==null || !state.bobber.isValid() || !BoatNavigator.loaded(state.castEnd))
-            throw new IllegalStateException("Flotador no disponible");
+        if(state.bobber==null || !BoatNavigator.loaded(state.castEnd))
+            throw new IllegalStateException("Anzuelo no disponible");
         Location liveTarget=castTarget(state.target);
         if(liveTarget==null || liveTarget.distanceSquared(state.castEnd)>.0009
                 || (tick-state.castStarted<=CAST_TICKS || tick>=state.nextEffect)
@@ -396,20 +396,11 @@ public final class FishermanController {
         double fraction=Math.min(1,Math.max(0,(tick-state.castStarted)/(double)CAST_TICKS));
         Location bobber=state.castStart.clone().add(state.castEnd.toVector().subtract(state.castStart.toVector()).multiply(fraction));
         bobber.add(0,4*.55*fraction*(1-fraction)+(fraction==1?.025*Math.sin(tick*.15):0),0);
-        if(!BoatNavigator.loaded(bobber) || !state.bobber.teleport(bobber))throw new IllegalStateException("Lance interrumpido");
+        if(!BoatNavigator.loaded(bobber) || !state.bobber.move(bobber))throw new IllegalStateException("Lance interrumpido");
         if(tick>=state.nextEffect) {
             state.nextEffect=tick+10;
-            Location hand=state.npc.position().clone().add(horizontal(state.target.getYaw()).multiply(.35)).add(0,1.25,0);
-            // A hook entity requires a Player owner; this inventory-free visual line works for every NPC disguise.
-            for(int i=1;i<=12;i++) {
-                double part=i/12d;
-                Location line=hand.clone().add(bobber.toVector().subtract(hand.toVector()).multiply(part));
-                line.add(0,-.25*4*part*(1-part),0);
-                if(BoatNavigator.loaded(line))line.getWorld().spawnParticle(Particle.DUST,line,1,0,0,0,0,new Particle.DustOptions(Color.fromRGB(65,65,65),.30f));
-            }
             if(fraction==1) {
                 bobber.getWorld().spawnParticle(Particle.BUBBLE_POP,bobber,2,.08,.01,.08,0);
-                bobber.getWorld().spawnParticle(Particle.DUST,bobber.clone().add(0,.04,0),1,0,0,0,0,new Particle.DustOptions(Color.RED,.6f));
                 if(tick%40<10)bobber.getWorld().playSound(bobber,Sound.ENTITY_FISHING_BOBBER_SPLASH,.2f,1.1f);
             }
         }

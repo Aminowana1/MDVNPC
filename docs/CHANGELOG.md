@@ -1,3 +1,19 @@
+# MDVNPC 1.11.16 — yunque configurable y pesca vanilla
+
+- Cada martillazo del Herrero en la estación de yunque usa ahora
+  `BLOCK_ANVIL_PLACE`, el sonido vanilla de colocar un yunque, en lugar de
+  `BLOCK_CHAIN_HIT`.
+- Se añaden `blacksmith.anvil-hit-volume` y `blacksmith.anvil-hit-pitch` con
+  valores por defecto `0.6` y `1.0`; las configuraciones antiguas siguen
+  funcionando mediante los defaults del JAR.
+- El Pescador deja de crear una boya `ItemDisplay` y un sedal de partículas.
+  Envía un `FISHING_BOBBER` vanilla al cliente con el ID del NPC como dueño,
+  por lo que Minecraft dibuja el anzuelo y el sedal normal desde la caña.
+- El lanzamiento, arco, splash, recasteo, pesca desde tierra/bote, pausas por
+  comercio/reacción y limpieza al abandonar la rutina se conservan.
+- Se actualizan las pruebas fuente del Herrero y Pescador para los nuevos
+  efectos visuales y parámetros.
+
 # MDVNPC 1.11.15 — corrección de arranque
 
 - El constructor público de `FishermanController` sustituye

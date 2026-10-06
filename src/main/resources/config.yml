@@ -186,6 +186,8 @@ blacksmith:
   smelt-seconds: 8 # fundición de varios RAW_IRON visuales
   quench-seconds: 5 # enfriamiento del lingote o espada en el caldero
   anvil-seconds: 120 # duración de cada sesión de martilleo con MACE
+  anvil-hit-volume: 0.6 # volumen de BLOCK_ANVIL_PLACE en cada martillazo (0..4)
+  anvil-hit-pitch: 1.0 # pitch del golpe de yunque vanilla (0.5..2)
   travel-timeout-seconds: 30 # si una estación es inaccesible, vuelve al puesto normal
   retry-seconds: 30 # espera en el puesto antes de volver a probar estaciones
 

@@ -17,7 +17,6 @@ import org.bukkit.block.Block;
 import org.bukkit.block.data.Levelled;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Entity;
-import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.Villager;
 import org.bukkit.entity.boat.OakBoat;
 import org.bukkit.inventory.EntityEquipment;
@@ -67,7 +66,7 @@ class FishermanControllerTest {
     private final Map<Key,Block> blocks=new HashMap<>();
     private final List<OakBoat> boats=new ArrayList<>();
     private final List<AtomicReference<Location>> boatLocations=new ArrayList<>();
-    private final List<ItemDisplay> displays=new ArrayList<>();
+    private final List<FishermanController.BobberVisual> bobbers=new ArrayList<>();
     private final List<Location> bobberPositions=new ArrayList<>();
 
     @BeforeEach void setup() {
@@ -110,11 +109,6 @@ class FishermanControllerTest {
             if(!moving)return RoutineNavigator.Result.WAITING;
             position.set(((Location)call.getArgument(1)).clone());return RoutineNavigator.Result.ARRIVED;
         });
-        when(world.spawn(any(Location.class),eq(ItemDisplay.class),any(Consumer.class))).thenAnswer(call->{
-            ItemDisplay display=mock(ItemDisplay.class);when(display.isValid()).thenReturn(true);displays.add(display);
-            when(display.teleport(any(Location.class))).thenAnswer(move->{bobberPositions.add(((Location)move.getArgument(0)).clone());return true;});
-            ((Consumer<ItemDisplay>)call.getArgument(2)).accept(display);return display;
-        });
         when(world.spawn(any(Location.class),eq(OakBoat.class),any(Consumer.class))).thenAnswer(call->{
             OakBoat boat=mock(OakBoat.class);boats.add(boat);
             AtomicReference<Location> at=new AtomicReference<>(((Location)call.getArgument(0)).clone());boatLocations.add(at);
@@ -126,8 +120,13 @@ class FishermanControllerTest {
             });
             ((Consumer<OakBoat>)call.getArgument(2)).accept(boat);return boat;
         });
+        FishermanController.BobberFactory bobberFactory=(active,start)->{
+            FishermanController.BobberVisual visual=mock(FishermanController.BobberVisual.class);bobbers.add(visual);
+            when(visual.move(any(Location.class))).thenAnswer(move->{bobberPositions.add(((Location)move.getArgument(0)).clone());return true;});
+            return visual;
+        };
         controller=new FishermanController(plugin,navigator,mock(DoorController.class),(active,to)->{position.set(to.clone());return true;},
-                (active,to)->{vehicle.set(to);if(to!=null)position.set(to.getLocation().clone().add(0,.45,0));return true;},ItemStack::new,new Random(1));
+                (active,to)->{vehicle.set(to);if(to!=null)position.set(to.getLocation().clone().add(0,.45,0));return true;},ItemStack::new,new Random(1),bobberFactory);
     }
     @AfterEach void cleanup() {try{controller.clear();}finally{MockBukkit.unmock();}}
     private FishingDefinition.Point point(double x,double z,float yaw) {return new FishingDefinition.Point(world.getUID(),"world",x,64,z,yaw);}
@@ -174,7 +173,7 @@ class FishermanControllerTest {
     @Test void missingStationConfigurationLeavesShopUntouched() {
         npc=new ActiveNpc(definition(npc.definition(),new ShopWorkDefinition(ShopWorkDefinition.Category.FISHERMAN,null,null,null)),workPost,entity,npc.disguise());
         assertEquals(FishermanController.Result.FALLBACK,tick(0));assertEquals(Material.STICK,hand.get().getType());
-        assertTrue(displays.isEmpty());assertTrue(boats.isEmpty());
+        assertTrue(bobbers.isEmpty());assertTrue(boats.isEmpty());
     }
     @Test void shoreUsesPaperAndSavedYawCastsFourAndHalfBlocks() {
         assertEquals(FishermanController.Result.RUNNING,tick(0));tick(1);tick(17);
@@ -182,7 +181,7 @@ class FishermanControllerTest {
         assertEquals(Material.FISHING_ROD,hand.get().getType());
         verify(navigator).move(eq(npc),argThat(location->location.getX()==-1.5 && location.getZ()==.5),eq(.2),eq(0L),eq(2));
         Location bobber=bobberPositions.getLast();assertEquals(3,bobber.getX(),1e-6);assertEquals(.5,bobber.getZ(),1e-6);
-        assertEquals(0,chance.get());verify(displays.getFirst()).setPersistent(false);
+        assertEquals(0,chance.get());assertEquals(1,bobbers.size());
     }
     @Test void completeCycleUsesRealBoatAndReturnsToDockBeforeDeletingIt() {
         long time=reachBoatPoint(launch());assertTrue(controller.boating("fisher"));
@@ -211,14 +210,14 @@ class FishermanControllerTest {
         assertEquals(FishermanController.Result.FALLBACK,tick(60));
     }
     @Test void destroyedShoreFloorCleansBobberAndFallsBack() {
-        tick(0);tick(1);ItemDisplay bobber=displays.getFirst();
+        tick(0);tick(1);FishermanController.BobberVisual bobber=bobbers.getFirst();
         blocks.put(new Key(-2,63,0),block(new Key(-2,63,0),Material.AIR));
         assertEquals(FishermanController.Result.FALLBACK,tick(2));verify(bobber).remove();
         assertEquals(Material.STICK,hand.get().getType());
     }
     @Test void invalidDockWaterDoesNotStartEvenShoreAnimation() {
         allWaterBlocked=true;assertEquals(FishermanController.Result.FALLBACK,tick(0));
-        assertTrue(boats.isEmpty());assertTrue(displays.isEmpty());
+        assertTrue(boats.isEmpty());assertTrue(bobbers.isEmpty());
     }
     @Test void unreachableBoatPointDoesNotSpawnBoat() {
         var fishing=new FishingDefinition(List.of(point(-1.5,.5,-90)),point(-.5,.5,-90),List.of(point(200.5,.5,0)));
@@ -227,7 +226,7 @@ class FishermanControllerTest {
         assertEquals(FishermanController.Result.FALLBACK,tick(21));assertTrue(boats.isEmpty());
     }
     @Test void stopWhileMountedExitsAtSafeDockAndCleansAllCosmetics() {
-        long time=reachBoatPoint(launch());tick(++time);ItemDisplay bobber=displays.getLast();
+        long time=reachBoatPoint(launch());tick(++time);FishermanController.BobberVisual bobber=bobbers.getLast();
         controller.stop("fisher");assertNull(vehicle.get());verify(boats.getFirst()).remove();verify(bobber).remove();
         assertEquals(-.5,position.get().getX());assertEquals(64,position.get().getY());assertFalse(controller.active("fisher"));
         assertEquals(Material.STICK,hand.get().getType());assertEquals(Material.PAPER,entityHand.get().getType());
@@ -256,7 +255,7 @@ class FishermanControllerTest {
         assertEquals(FishermanController.Result.FALLBACK,tick(1));assertSame(foreign,vehicle.get());
     }
     @Test void merchantPauseKeepsBoatAndNpcWherePlayerOpenedTrade() {
-        long time=reachBoatPoint(launch());tick(++time);ItemDisplay bobber=displays.getLast();
+        long time=reachBoatPoint(launch());tick(++time);FishermanController.BobberVisual bobber=bobbers.getLast();
         Location before=position.get().clone();OakBoat boat=boats.getFirst();
         assertTrue(controller.pause("fisher"));assertEquals(before.getX(),position.get().getX());
         assertEquals(before.getZ(),position.get().getZ());assertSame(boat,vehicle.get());
@@ -266,7 +265,7 @@ class FishermanControllerTest {
     }
     @Test void newWallBlocksCastAndRemovesPartiallyCreatedVisuals() {
         tick(0);blocks.put(new Key(1,65,0),block(new Key(1,65,0),Material.STONE));
-        assertEquals(FishermanController.Result.FALLBACK,tick(1));assertTrue(displays.isEmpty());
+        assertEquals(FishermanController.Result.FALLBACK,tick(1));assertTrue(bobbers.isEmpty());
         assertFalse(controller.active("fisher"));assertEquals(Material.STICK,hand.get().getType());
     }
     @Test void smallDiagonalPushIntoBankFallsBackInsteadOfCorrectingThroughLand() {
@@ -279,7 +278,7 @@ class FishermanControllerTest {
     }
     @Test void hitReactionKeepsBoatAndResumesFishingAtSamePoint() {
         long time=reachBoatPoint(launch());tick(++time);OakBoat boat=boats.getFirst();
-        Location at=position.get().clone();ItemDisplay bobber=displays.getLast();int before=displays.size();
+        Location at=position.get().clone();FishermanController.BobberVisual bobber=bobbers.getLast();int before=bobbers.size();
         assertTrue(controller.suspend("fisher",time));verify(bobber).remove();
         Location reaction=position.get().clone();reaction.setYaw(80);reaction.setPitch(-10);position.set(reaction);
         hand.set(new ItemStack(Material.DIAMOND));entityHand.set(new ItemStack(Material.DIAMOND));
@@ -289,7 +288,7 @@ class FishermanControllerTest {
         assertEquals("pescando en bote",controller.status("fisher"));verify(boat,never()).remove();
         assertTrue(controller.resume("fisher",time+200));tick(time+200);
         assertEquals("pescando en bote",controller.status("fisher"));assertSame(boat,vehicle.get());
-        assertEquals(Material.FISHING_ROD,hand.get().getType());assertEquals(before+1,displays.size());
+        assertEquals(Material.FISHING_ROD,hand.get().getType());assertEquals(before+1,bobbers.size());
         assertEquals(at.getX(),position.get().getX());assertEquals(at.getZ(),position.get().getZ());
     }
     @Test void sailingDeadlineExcludesReactionPauseDuration() {

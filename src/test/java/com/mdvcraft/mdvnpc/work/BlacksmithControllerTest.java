@@ -157,24 +157,31 @@ class BlacksmithControllerTest {
         verify(entity,atLeast(2)).swingMainHand();
     }
 
-    @Test void metallicClinkSoundsOnlyAtHammerSwingsAndNeverWhenLeavingAnvil() {
+    @Test void anvilPlaceSoundsOnlyAtHammerSwingsAndNeverWhenLeavingAnvil() {
         tick(0);tick(160);tick(161);tick(261);tick(262);
-        verify(world).playSound(any(Location.class),eq(Sound.BLOCK_CHAIN_HIT),eq(.4f),eq(1.6f));
+        verify(world).playSound(any(Location.class),eq(Sound.BLOCK_ANVIL_PLACE),eq(.6f),eq(1f));
         clearInvocations(entity,world);
         tick(270);tick(281);
         verify(entity,never()).swingMainHand();
-        verify(world,never()).playSound(any(Location.class),eq(Sound.BLOCK_CHAIN_HIT),anyFloat(),anyFloat());
+        verify(world,never()).playSound(any(Location.class),eq(Sound.BLOCK_ANVIL_PLACE),anyFloat(),anyFloat());
         tick(282);
         verify(entity).swingMainHand();
-        verify(world).playSound(any(Location.class),eq(Sound.BLOCK_CHAIN_HIT),eq(.4f),eq(1.6f));
+        verify(world).playSound(any(Location.class),eq(Sound.BLOCK_ANVIL_PLACE),eq(.6f),eq(1f));
         clearInvocations(entity,world);
         tick(2662);
         assertEquals("caminando a caldero",controller.status("smith"));
         verify(entity,never()).swingMainHand();
         verify(world,never()).playSound(any(Location.class),any(Sound.class),anyFloat(),anyFloat());
         tick(2663);
-        verify(world,never()).playSound(any(Location.class),eq(Sound.BLOCK_CHAIN_HIT),anyFloat(),anyFloat());
+        verify(world,never()).playSound(any(Location.class),eq(Sound.BLOCK_ANVIL_PLACE),anyFloat(),anyFloat());
         verify(world,never()).playSound(any(Location.class),eq(Sound.BLOCK_ANVIL_USE),anyFloat(),anyFloat());
+    }
+
+
+    @Test void anvilHitVolumeAndPitchAreConfigurable() {
+        config.set("blacksmith.anvil-hit-volume",1.25);config.set("blacksmith.anvil-hit-pitch",.75);
+        tick(0);tick(160);tick(161);tick(261);tick(262);
+        verify(world).playSound(any(Location.class),eq(Sound.BLOCK_ANVIL_PLACE),eq(1.25f),eq(.75f));
     }
 
     @Test void smelteryAcceptsAirAndApproachKeepsOneWholeBlockGap() {
