@@ -150,6 +150,7 @@ public final class NpcManager {
             ActiveNpc npc = new ActiveNpc(definition, anchor, entity, disguise);
             active.put(definition.id(), npc);
             byEntity.put(entity.getUniqueId(), npc);
+            NpcVisibilityService.track(plugin, entity);
             spawnRetry.remove(definition.id());
         } catch (RuntimeException | LinkageError ex) {
             if (entity != null) entity.remove();

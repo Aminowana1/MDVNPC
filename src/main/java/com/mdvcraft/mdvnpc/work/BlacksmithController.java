@@ -341,6 +341,7 @@ public final class BlacksmithController {
             entity.setTransformation(new Transformation(new Vector3f(),new Quaternionf(),new Vector3f(.4f),new Quaternionf()));
         });
         if(display==null || !display.isValid())throw new IllegalStateException("No se pudo crear el objeto visual del herrero");
+        com.mdvcraft.mdvnpc.runtime.NpcVisibilityService.track(plugin,display);
         if(state.flights.stream().noneMatch(flight->flight.display()==display))
             state.flights.add(new Flight(display,start,end,tick,material,smelting));
         state.npc.entity().swingMainHand();

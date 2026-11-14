@@ -63,6 +63,7 @@ public final class RoutineVisuals {
                 stand.getPersistentDataContainer().set(marker,PersistentDataType.STRING,npc.definition().id());
             });
             if(!p.seat.isValid()) {removeSeat(p);return null;}
+            com.mdvcraft.mdvnpc.runtime.NpcVisibilityService.track(plugin,p.seat);
             // Paper's persistent invisibility also protects the shared entity metadata flag.
             // Reapply after spawn listeners have run, before exposing a mounted passenger.
             p.seat.setInvisible(true);repairSeat(p);

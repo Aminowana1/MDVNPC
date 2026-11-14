@@ -197,6 +197,24 @@ public final class CompanionService implements MdvNpcApi {
         return settings.maxActive();
     }
 
+    // La ocultación de NPC normales vive en NpcVisibilityService (del plugin, sobrevive a reload);
+    // aquí solo se expone a través de la misma API registrada.
+
+    @Override
+    public boolean hideNpcs(Plugin owner, Player viewer) {
+        return plugin.visibility().hide(owner, viewer);
+    }
+
+    @Override
+    public boolean showNpcs(Plugin owner, Player viewer) {
+        return plugin.visibility().show(owner, viewer);
+    }
+
+    @Override
+    public boolean isHidingNpcs(Player viewer) {
+        return plugin.visibility().isHidden(viewer);
+    }
+
     // ------------------------------------------------------------------ uso interno
 
     MdvNpcPlugin plugin() {

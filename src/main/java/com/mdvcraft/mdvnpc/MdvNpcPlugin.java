@@ -42,6 +42,7 @@ public final class MdvNpcPlugin extends JavaPlugin {
     private com.mdvcraft.mdvnpc.routine.RoutineCommands routineCommands;
     private com.mdvcraft.mdvnpc.skin.SkinCacheService skins;
     private com.mdvcraft.mdvnpc.companion.CompanionService companions;
+    private com.mdvcraft.mdvnpc.runtime.NpcVisibilityService visibility;
     private final Messages messages = new Messages(this::settings);
     private Map<String, NpcDefinition> definitions = Map.of();
 
@@ -52,6 +53,9 @@ public final class MdvNpcPlugin extends JavaPlugin {
             if (!java.nio.file.Files.isDirectory(com.mdvcraft.mdvnpc.storage.NpcPaths.root(data))
                     && !java.nio.file.Files.exists(data.resolve("npcs.yml"))
                     && !java.nio.file.Files.exists(data.resolve("npcs.yml.legacy-backup"))) saveResource("npcs.yml", false);
+            // Before any NPC spawns: every NPC entity is registered here so other plugins can hide them per player.
+            visibility = new com.mdvcraft.mdvnpc.runtime.NpcVisibilityService(this);
+            com.mdvcraft.mdvnpc.runtime.PlayerFilter.hiddenViewers(visibility::isHidden);
             repository = new NpcRepository(data);
             skins = new com.mdvcraft.mdvnpc.skin.SkinCacheService(this);
             sounds = new com.mdvcraft.mdvnpc.trait.NpcSounds(this);
@@ -75,6 +79,7 @@ public final class MdvNpcPlugin extends JavaPlugin {
             getServer().getPluginManager().registerEvents(workEditor, this);
             getServer().getPluginManager().registerEvents(shops, this);
             getServer().getPluginManager().registerEvents(new NpcListener(this), this);
+            getServer().getPluginManager().registerEvents(new com.mdvcraft.mdvnpc.runtime.NpcVisibilityListener(this, visibility), this);
             getServer().getPluginManager().registerEvents(new com.mdvcraft.mdvnpc.routine.NetheriteNodeListener(routines),this);
             // Acompañantes temporales (API para otros plugins): independientes de npcs.yml y de las rutinas.
             companions = new com.mdvcraft.mdvnpc.companion.CompanionService(this);
@@ -134,7 +139,10 @@ public final class MdvNpcPlugin extends JavaPlugin {
         if (traits != null) traits.close();
         if (sounds != null) sounds.clear();
         if (skins != null) skins.close();
+        if (visibility != null) visibility.close();
+        com.mdvcraft.mdvnpc.runtime.PlayerFilter.hiddenViewers(null);
     }
+    public com.mdvcraft.mdvnpc.runtime.NpcVisibilityService visibility() { return visibility; }
     public Settings settings() { return settings; }
     public com.mdvcraft.mdvnpc.skin.SkinCacheService skins() { return skins; }
     public com.mdvcraft.mdvnpc.companion.CompanionService companions() { return companions; }

@@ -169,7 +169,9 @@ public final class MusicService {
             }
             for(Member member:session.members) {
                 Location p=positions.get(member.npc.definition().id());
-                member.audience=List.copyOf(p.getWorld().getNearbyPlayers(p,audioRadius));
+                // Players from whom NPC are hidden neither hear the music nor see its notes.
+                member.audience=p.getWorld().getNearbyPlayers(p,audioRadius).stream()
+                        .filter(player->!com.mdvcraft.mdvnpc.runtime.PlayerFilter.hidden(player)).toList();
             }
             next.put(key,session);
         }

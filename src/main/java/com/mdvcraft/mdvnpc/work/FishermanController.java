@@ -279,6 +279,7 @@ public final class FishermanController {
         });
         if(boat==null || !boat.isValid())return false;
         state.boat=boat;
+        com.mdvcraft.mdvnpc.runtime.NpcVisibilityService.track(plugin,boat);
         if(!mount.test(state.npc,boat) || state.npc.entity().getVehicle()!=boat)return false;
         state.stage=Stage.BOAT_OUT;state.boatRoute=route;state.routeIndex=0;
         state.travelStarted=tick;state.dock.getWorld().playSound(state.dock,Sound.ENTITY_BOAT_PADDLE_WATER,.35f,1);

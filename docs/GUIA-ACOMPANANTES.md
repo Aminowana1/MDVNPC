@@ -1,4 +1,4 @@
-# Acompañantes temporales (API de MDVNPC 1.13.0)
+# Acompañantes temporales (API de MDVNPC 1.13.0+)
 
 Otros plugins pueden crear **acompañantes**: NPC temporales con skin de jugador
 que siguen, guían o caminan hasta un punto, hacen gestos y hablan por chat.
@@ -87,6 +87,23 @@ o guía, o al visor más cercano.
   El click vanilla siempre se cancela (no recibe daño ni abre comercio).
 - `CompanionRemoveEvent`: se eliminó; `reason()` es `REMOVED`, `VIEWERS_LEFT`,
   `OWNER_DISABLED`, `SHUTDOWN` o `LOST`.
+
+## Ocultar los NPC normales a un jugador (1.14.0)
+
+```java
+npcs.hideNpcs(this, player);   // deja de ver todos los NPC de npcs.yml
+npcs.showNpcs(this, player);   // vuelve a verlos (si ningún otro plugin los oculta)
+npcs.isHidingNpcs(player);
+```
+
+- Oculta el NPC y sus entidades auxiliares (asiento, bote, objetos del herrero,
+  anzuelo). Mientras están ocultos, esos NPC no le hablan, no lo miran, no
+  reaccionan, no abren tiendas y no le suena su música.
+- Se mantiene aunque el NPC reaparezca, cambie de chunk/mundo o se haga
+  `/mdvnpc reload`.
+- Se olvida al desconectarse el jugador y al deshabilitarse tu plugin:
+  **vuelve a llamarlo cuando el jugador reconecte**.
+- Los acompañantes (incluidos los tuyos) no se ven afectados.
 
 ## Probar en el juego: `/mdvnpc companion`
 

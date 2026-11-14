@@ -1,3 +1,15 @@
+# MDVNPC 1.14.0 — ocultar NPC por jugador
+
+- `MdvNpcApi` gana `hideNpcs(owner, viewer)`, `showNpcs(owner, viewer)` e
+  `isHidingNpcs(viewer)`. Ocultan a un jugador todos los NPC normales y sus
+  entidades auxiliares (asiento, bote, objetos del herrero, anzuelo).
+- Mientras están ocultos, esos NPC no le hablan, no lo miran, no reaccionan, no
+  abren tiendas y no le suena su música.
+- Se mantiene aunque el NPC reaparezca o se haga `/mdvnpc reload`. Se olvida al
+  desconectarse el jugador o al deshabilitarse el plugin que la pidió.
+- Los acompañantes no se ven afectados.
+- Detalles: `docs/CAMBIOS-1.14.0.md`.
+
 # MDVNPC 1.13.1 — comando de prueba de acompañantes
 
 - Nuevo `/mdvnpc companion` (solo `mdvnpc.admin`) para probar la API en el
