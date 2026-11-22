@@ -24,7 +24,10 @@ public final class SkinCacheService {
     private BukkitTask task;
     public SkinCacheService(MdvNpcPlugin plugin) throws Exception {
         this.plugin = plugin;
-        store = new SkinStore(plugin.getDataFolder().toPath()); store.load();
+        store = new SkinStore(plugin.getDataFolder().toPath());
+        try { store.load(); }
+        catch (Exception ex) { plugin.getLogger().log(Level.WARNING, "skins.yml antiguo ilegible; se conserva y las skins se volverán a resolver", ex); }
+        store.problems().forEach(problem -> plugin.getLogger().warning("Caché de skin ignorada, se regenerará: " + problem));
     }
     public NpcDefinition.Skin resolve(NpcDefinition definition) { return store.resolve(definition.id(), definition.skin()); }
     public void watch(NpcDefinition definition, Supplier<UserProfile> profile) {

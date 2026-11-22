@@ -15,10 +15,11 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /** Inventory-driven routine editor. World point selection is delegated to RoutineCommands. */
 public final class RoutineEditor implements Listener {
-    private enum Screen { MAIN, GOAL, ADD, DIALOGUE, WALK_MODE, OPTIONS }
+    private enum Screen { MAIN, GOAL, ADD, DIALOGUE, WALK_MODE, OPTIONS, CONFIRM_DELETE }
     private enum InputKind { TIME, SPEED, RADIUS, MODE_TIME, DIALOG_INTERVAL, DIALOG_DELAY, DIALOG_RANGE, DIALOG_LINES }
     private static final class Holder implements InventoryHolder {
         final String npc; final Screen screen; final int page,goal,option; Inventory inventory;
+        RoutineGoal confirming; // What the administrator saw when asked to confirm.
         Holder(String npc,Screen screen,int page,int goal){this(npc,screen,page,goal,0);}
         Holder(String npc,Screen screen,int page,int goal,int option){this.npc=npc;this.screen=screen;this.page=page;this.goal=goal;this.option=option;}
         @Override public Inventory getInventory(){return inventory;}
@@ -148,6 +149,8 @@ public final class RoutineEditor implements Listener {
     public void inventory(InventoryClickEvent event){
         if(!(event.getInventory().getHolder() instanceof Holder h))return; event.setCancelled(true);
         if(!(event.getWhoClicked() instanceof Player p) || event.getClickedInventory()!=event.getInventory())return;
+        // DOUBLE_CLICK, keys and drops would act on whatever menu the first click opened.
+        switch(event.getClick()){case LEFT,RIGHT,SHIFT_LEFT,SHIFT_RIGHT -> {} default -> {return;}}
         if(!validNpc(p,h.npc))return;
         try {
             switch(h.screen){
@@ -157,6 +160,7 @@ public final class RoutineEditor implements Listener {
                 case DIALOGUE -> clickDialogue(p,h,event.getRawSlot());
                 case WALK_MODE -> clickWalkMode(p,h,event.getRawSlot());
                 case OPTIONS -> clickOptions(p,h,event.getRawSlot());
+                case CONFIRM_DELETE -> clickConfirmDelete(p,h,event.getRawSlot());
             }
         } catch(Exception ex){say(p,"&cNo se pudo editar: &f"+(ex.getMessage()==null?ex.getClass().getSimpleName():ex.getMessage()));}
     }
@@ -169,7 +173,7 @@ public final class RoutineEditor implements Listener {
         if(slot>=0 && slot<45 && index<goals.size()){openGoal(p,h.npc,goals.get(index).order());return;}
         if(slot==45 && h.page>0){openMain(p,h.npc,h.page-1);return;}
         if(slot==53){openMain(p,h.npc,h.page+1);return;}
-        if(slot==47){boolean enabled=plan==null || !plan.enabled();repo().edit(y->y.set("npcs."+h.npc+".enabled",enabled));reload();openMain(p,h.npc,h.page);return;}
+        if(slot==47){boolean enabled=plan==null || !plan.enabled();plugin.shops().prepareReload();repo().edit(y->y.set("npcs."+h.npc+".enabled",enabled));reload();openMain(p,h.npc,h.page);return;}
         if(slot==49){openAdd(p,h.npc);return;}
         if(slot==46){Bukkit.getScheduler().runTask(plugin,()->{if(p.isOnline() && p.getOpenInventory().getTopInventory()==h.inventory && validNpc(p,h.npc))plugin.npcEditor().open(p,h.npc);});return;}
         if(slot==52){
@@ -194,15 +198,31 @@ public final class RoutineEditor implements Listener {
             case 13 -> { if(g.type()==RoutineGoal.Type.WALK)openWalkMode(p,h.npc,h.goal,h.option); }
             case 14 -> { if(g.type()==RoutineGoal.Type.WALK && g.mode()==RoutineGoal.WalkMode.RANDOM)input(p,h,InputKind.RADIUS,null,"&eEscribe el radio &f1..128&e, o &fcancelar&e."); }
             case 15 -> openDialogue(p,h.npc,h.goal,h.option);
-            case 16 -> {
-                if(h.option>0){save(p,h.npc,goal(h.npc,h.goal).withoutChoice(h.option),()->openOptions(p,h.npc,h.goal));}
-                else{repo().edit(y->y.set("npcs."+h.npc+".goals."+h.goal,null));reload();say(p,"&aGoal eliminado.");openMain(p,h.npc);}
-            }
+            case 16 -> openConfirmDelete(p,h.npc,h.goal,h.option);
             case 18 -> openOptions(p,h.npc,h.goal);
             case 19 -> {RoutineGoal root=goal(h.npc,h.goal);save(p,h.npc,root.withWorkInteraction(!root.workInteraction()),()->openChoice(p,h.npc,h.goal,h.option));}
             case 20 -> openAdd(p,h.npc,h.goal,h.option);
             case 22 -> {if(h.option>0)openOptions(p,h.npc,h.goal);else openMain(p,h.npc);}
         }
+    }
+    // Neither button is on slot 16, so repeating the click that opened this menu does nothing.
+    private void openConfirmDelete(Player player,String npc,int order,int option){
+        RoutineGoal root=goal(npc,order);if(root==null){openMain(player,npc);return;}
+        Holder h=new Holder(npc,Screen.CONFIRM_DELETE,0,order,option);h.confirming=root;
+        Inventory inv=Bukkit.createInventory(h,27,c(option==0?"&4¿Eliminar goal #"+order+"?":"&4¿Eliminar opción "+(option+1)+"?"));h.inventory=inv;
+        inv.setItem(4,goalItem(option==0?root:root.choice(option),root));
+        inv.setItem(11,item(Material.BARRIER,"&cSí, eliminar",List.of(option==0?"&7El horario y todas sus opciones.":"&7Solo esta opción.","&cNo se puede deshacer desde el menú.")));
+        inv.setItem(15,item(Material.ARROW,"&eCancelar",List.of()));
+        player.openInventory(inv);
+    }
+    private void clickConfirmDelete(Player p,Holder h,int slot)throws Exception{
+        if(slot==15){openChoice(p,h.npc,h.goal,h.option);return;}
+        if(slot!=11)return;
+        RoutineGoal root=goal(h.npc,h.goal);
+        if(!Objects.equals(root,h.confirming)){say(p,"&cEl goal cambió mientras confirmabas. No se eliminó nada.");openMain(p,h.npc);return;}
+        if(h.option>0){save(p,h.npc,root.withoutChoice(h.option),()->openOptions(p,h.npc,h.goal));return;}
+        plugin.shops().prepareReload();
+        repo().edit(y->y.set("npcs."+h.npc+".goals."+h.goal,null));reload();say(p,"&aGoal eliminado.");openMain(p,h.npc);
     }
     private void clickAdd(Player p,Holder h,int slot){
         if(slot==22){if(h.goal==0)openMain(p,h.npc);else openOptions(p,h.npc,h.goal);return;}

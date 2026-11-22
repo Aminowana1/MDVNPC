@@ -31,6 +31,12 @@ public final class ShopService implements Listener {
     private final Map<MessageKey, PlayerPurchaseEvent> pendingMessages = new HashMap<>();
     private long generation;
     private final Map<String, Long> revisions = new HashMap<>();
+    private record RollKey(UUID player, ShopItem item) {}
+    private static final int MAX_ROLLS = 20_000;
+    // Random MMOItems stats must not change by reopening or reconnecting, so quit() keeps these.
+    private final Map<RollKey, ItemStack> rolls = new LinkedHashMap<>() {
+        @Override protected boolean removeEldestEntry(Map.Entry<RollKey, ItemStack> eldest) { return size() > MAX_ROLLS; }
+    };
     private record Session(String npc, Merchant merchant, ActiveNpc active, long revision, List<MerchantRecipe> recipes) {}
 
     private static final class EditorHolder implements InventoryHolder {
@@ -56,7 +62,9 @@ public final class ShopService implements Listener {
         repository = new ShopRepository(plugin.getDataFolder().toPath());
         bridge = new MmoItemBridge(plugin.getLogger());
     }
-    public void load() throws Exception { repository.load(); }
+    /** A reload also refreshes the generated MMOItems, after editing their templates. */
+    public void load() throws Exception { repository.load(); rolls.clear(); }
+    public List<String> problems() { return repository.problems(); }
     public void deleteShop(String npc) throws Exception { repository.delete(npc); invalidateNpc(npc); }
     /** Work animations pause without changing the merchant's native transaction logic. */
     public boolean hasOpenSession(String npc) {
@@ -78,7 +86,8 @@ public final class ShopService implements Listener {
         });
     }
     private void openShopAfterClick(Player player, ActiveNpc npc) {
-        if (!player.isOnline() || plugin.manager().find(npc.entity()) != npc || !plugin.canInteract(npc)) return;
+        if (!com.mdvcraft.mdvnpc.runtime.PlayerFilter.accepts(player, plugin.settings())
+                || plugin.manager().find(npc.entity()) != npc || !plugin.canInteract(npc)) return;
         var def = npc.definition();
         if (def.mode() != Mode.SHOP || !def.enabled() || !npc.entity().isValid() ||
                 player.getWorld() != npc.position().getWorld()) return;
@@ -91,7 +100,7 @@ public final class ShopService implements Listener {
         List<MerchantRecipe> recipes = new ArrayList<>();
         Map<ShopItem, ItemStack> resolved = new HashMap<>();
         for (var offer : repository.offers(def.id()).values()) {
-            ItemStack result = resolveForOpening(offer.result(), resolved), cost1 = resolveForOpening(offer.cost1(), resolved);
+            ItemStack result = resultForOpening(player.getUniqueId(), offer.result(), resolved), cost1 = resolveForOpening(offer.cost1(), resolved);
             ItemStack cost2 = offer.cost2() == null ? null : resolveForOpening(offer.cost2(), resolved);
             if (result == null || cost1 == null || offer.cost2() != null && cost2 == null) continue;
             MerchantRecipe recipe = new MerchantRecipe(result, 0, 999999, false, 0, 0f);
@@ -115,6 +124,13 @@ public final class ShopService implements Listener {
         if (!resolved.containsKey(item)) resolved.put(item, item.resolve(bridge));
         ItemStack stack = resolved.get(item);
         return stack == null ? null : stack.clone();
+    }
+
+    private ItemStack resultForOpening(UUID player, ShopItem item, Map<ShopItem, ItemStack> resolved) {
+        ItemStack generated = resolveForOpening(item, resolved);
+        // Still resolved every time, so a removed template or a disabled MMOItems stops being sold.
+        if (generated == null || item.kind() == ShopItem.Kind.SNAPSHOT) return generated;
+        return rolls.computeIfAbsent(new RollKey(player, item), key -> generated.clone()).clone();
     }
 
     public void openEditor(Player player, String npc) {
@@ -297,10 +313,12 @@ public final class ShopService implements Listener {
                 && (!interaction.lineOfSight() || player.hasLineOfSight(active.entity()))
                 && (interaction.permission().isBlank() || player.hasPermission(interaction.permission()));
     }
-    private MerchantRecipe expected(Session session, MerchantInventory inventory) {
-        int index = inventory.getSelectedRecipeIndex();
-        if (index >= 0 && index < session.recipes().size()) return session.recipes().get(index);
-        return session.recipes().stream().filter(r -> TradeGuard.same(r, inventory.getSelectedRecipe())).findFirst().orElse(null);
+    /**
+     * The snapshot of the recipe being traded. The selected index cannot be used: with the default
+     * hint 0 the game activates whichever offer matches the items placed by hand.
+     */
+    private static MerchantRecipe expected(Session session, MerchantRecipe traded) {
+        return session.recipes().stream().filter(r -> TradeGuard.same(r, traded)).findFirst().orElse(null);
     }
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void guardClick(InventoryClickEvent event) {
@@ -310,7 +328,7 @@ public final class ShopService implements Listener {
                 || inventory.getMerchant() != session.merchant()) return;
         if (!allowed(player, session)) { event.setCancelled(true); closeLater(player, session); return; }
         if (event.getRawSlot() != 2) return;
-        MerchantRecipe recipe = expected(session, inventory);
+        MerchantRecipe recipe = expected(session, inventory.getSelectedRecipe());
         boolean ordinary = event.getClick() == ClickType.LEFT || event.getClick() == ClickType.RIGHT
                 || event.getClick() == ClickType.SHIFT_LEFT || event.getClick() == ClickType.SHIFT_RIGHT;
         if (!ordinary || !TradeGuard.same(recipe, inventory.getSelectedRecipe())
@@ -322,7 +340,7 @@ public final class ShopService implements Listener {
         Session session = merchants.get(player.getUniqueId());
         if (session == null || !(player.getOpenInventory().getTopInventory() instanceof MerchantInventory inventory)
                 || inventory.getMerchant() != session.merchant()) return;
-        MerchantRecipe recipe = expected(session, inventory);
+        MerchantRecipe recipe = expected(session, event.getTrade());
         if (!allowed(player, session) || !TradeGuard.same(recipe, event.getTrade())
                 || !TradeGuard.inputs(recipe, inventory.getItem(0), inventory.getItem(1))) {
             event.setCancelled(true); return;
@@ -337,6 +355,8 @@ public final class ShopService implements Listener {
         if (session == null || !(player.getOpenInventory().getTopInventory() instanceof MerchantInventory inventory) ||
                 inventory.getMerchant() != session.merchant()) return;
         NpcDefinition npc = plugin.definitions().get(session.npc());
+        ItemStack bought = event.getTrade().getResult();
+        rolls.entrySet().removeIf(roll -> roll.getKey().player().equals(player.getUniqueId()) && roll.getValue().equals(bought));
         if (npc != null && npc.mode() == Mode.SHOP) {
             MessageKey key = new MessageKey(player.getUniqueId(), npc.id());
             if (pendingMessages.put(key, event) != null) return;
@@ -365,9 +385,13 @@ public final class ShopService implements Listener {
     }
     public void closeAll() {
         generation++;
-        for (UUID id : List.copyOf(editors.keySet())) {
-            Player player = Bukkit.getPlayer(id);
-            if (player != null) player.closeInventory();
+        for (var entry : List.copyOf(editors.entrySet())) {
+            Player player = Bukkit.getPlayer(entry.getKey());
+            if (player == null) continue;
+            // Never rely on close(): Bukkit skips our listeners once the plugin is disabling.
+            if (!save(player, entry.getValue())) recover(player, entry.getValue());
+            editors.remove(entry.getKey());
+            player.closeInventory();
         }
         for (UUID id : List.copyOf(merchants.keySet())) {
             Player player = Bukkit.getPlayer(id);

@@ -131,29 +131,59 @@ final class BoatNavigator {
         return true;
     }
     List<Location> route(Location start,Location target) {
-        // Geometry is stable within this synchronous query; never retain snapshots between ticks.
-        Map<Cell,Block> previous=queryBlocks;queryBlocks=new HashMap<>();
-        try{return search(start,target);}finally{queryBlocks=previous;}
+        Search search=search(start,target);search.advance(MAX_NODES);return search.route();
     }
-    private List<Location> search(Location start,Location target) {
-        if(!valid(start) || !valid(target) || Math.abs(start.getY()-target.getY())>.01)return List.of();
-        // Half-block nodes can follow the centre of a two-block-wide water channel.
-        Tile first=new Tile((int)Math.round(start.getX()*2),(int)Math.round(start.getZ()*2));
-        Tile last=new Tile((int)Math.round(target.getX()*2),(int)Math.round(target.getZ()*2));
-        if(Math.max(Math.abs(first.x-last.x),Math.abs(first.z-last.z))>MAX_RANGE*2)return List.of();
-        Location firstCentre=centre(first,start.getY()),lastCentre=centre(last,start.getY());
-        if(!segment(start,firstCentre) || !segment(lastCentre,target))return List.of();
-        Map<Tile,Double> best=new HashMap<>();Map<Tile,Tile> parents=new HashMap<>();
-        Map<Tile,Boolean> checked=new HashMap<>();PriorityQueue<Open> open=new PriorityQueue<>();
-        best.put(first,0d);open.add(new Open(first,0,heuristic(first,last)));
-        int visited=0;
-        while(!open.isEmpty() && visited++<MAX_NODES) {
-            Open current=open.remove();
-            if(current.distance>best.getOrDefault(current.tile,Double.POSITIVE_INFINITY))continue;
+    Search search(Location start,Location target) {return new Search(start,target);}
+
+    /** The same bounded A*, resumable so that one tick never pays for the whole search. */
+    final class Search {
+        private final Location start,target;
+        private final Map<Tile,Double> best=new HashMap<>();
+        private final Map<Tile,Tile> parents=new HashMap<>();
+        private final Map<Tile,Boolean> checked=new HashMap<>();
+        private final PriorityQueue<Open> open=new PriorityQueue<>();
+        private Tile first,last;
+        private List<Location> route=List.of();
+        private boolean done;
+        private int visited;
+
+        private Search(Location start,Location target) {
+            this.start=start.clone();this.target=target.clone();
+            Map<Cell,Block> previous=queryBlocks;queryBlocks=new HashMap<>();
+            try{done=!begin();}finally{queryBlocks=previous;}
+        }
+        private boolean begin() {
+            if(!valid(start) || !valid(target) || Math.abs(start.getY()-target.getY())>.01)return false;
+            // Half-block nodes can follow the centre of a two-block-wide water channel.
+            first=new Tile((int)Math.round(start.getX()*2),(int)Math.round(start.getZ()*2));
+            last=new Tile((int)Math.round(target.getX()*2),(int)Math.round(target.getZ()*2));
+            if(Math.max(Math.abs(first.x-last.x),Math.abs(first.z-last.z))>MAX_RANGE*2)return false;
+            Location firstCentre=centre(first,start.getY()),lastCentre=centre(last,start.getY());
+            if(!segment(start,firstCentre) || !segment(lastCentre,target))return false;
+            best.put(first,0d);open.add(new Open(first,0,heuristic(first,last)));return true;
+        }
+        boolean done() {return done;}
+        List<Location> route() {return route;}
+        /** @return nodes expanded by this call */
+        int advance(int budget) {
+            // Geometry is stable within one synchronous call; never retain block snapshots between ticks.
+            Map<Cell,Block> previous=queryBlocks;queryBlocks=new HashMap<>();
+            int used=0;
+            try {
+                while(!done && used<budget) {
+                    if(open.isEmpty() || visited>=MAX_NODES) {done=true;break;}
+                    visited++;used++;expand(open.remove());
+                }
+                if(!done && visited>=MAX_NODES)done=true;
+                return used;
+            } finally{queryBlocks=previous;}
+        }
+        private void expand(Open current) {
+            if(current.distance>best.getOrDefault(current.tile,Double.POSITIVE_INFINITY))return;
             if(current.tile.equals(last)) {
                 ArrayList<Location> result=new ArrayList<>();Tile tile=last;
                 while(tile!=null) {result.add(centre(tile,start.getY()));tile=parents.get(tile);}
-                Collections.reverse(result);result.add(target.clone());return List.copyOf(result);
+                Collections.reverse(result);result.add(target.clone());route=List.copyOf(result);done=true;return;
             }
             for(int[] delta:new int[][]{{1,0},{-1,0},{0,1},{0,-1}}) {
                 Tile next=new Tile(current.tile.x+delta[0],current.tile.z+delta[1]);
@@ -166,7 +196,6 @@ final class BoatNavigator {
                 open.add(new Open(next,distance,distance+heuristic(next,last)));
             }
         }
-        return List.of();
     }
     private Location centre(Tile tile,double y) {return new Location(world,tile.x*.5,y,tile.z*.5);}
     private static double heuristic(Tile first,Tile last) {return .5*(Math.abs(first.x-last.x)+Math.abs(first.z-last.z));}

@@ -78,7 +78,10 @@ public final class NpcCommand implements CommandExecutor, TabCompleter {
                         if(npc.mode().musician())sender.sendMessage("Música: "+plugin.music().status(args[1]));
                     }
                 }
-                case "reload" -> { plugin.reloadNpcs(); msg.send(sender, "reloaded", "count", "" + plugin.definitions().size()); }
+                case "reload" -> {
+                    plugin.reloadNpcs(); msg.send(sender, "reloaded", "count", "" + plugin.definitions().size());
+                    for (String problem : plugin.loadProblems()) msg.send(sender, "error", "error", problem);
+                }
                 case "shop" -> {
                     if (!(sender instanceof Player player)) { msg.send(sender, "player-only"); return true; }
                     if (args.length < 2 || !plugin.definitions().containsKey(args[1])) { msg.help(sender); return true; }
@@ -105,6 +108,7 @@ public final class NpcCommand implements CommandExecutor, TabCompleter {
                             && plugin.manager().resolveWorld(plugin.definitions().get(id)) != destination.getWorld())
                         throw new IllegalArgumentException("Desactiva y reconfigura la rutina antes de cambiar el NPC de mundo");
                     plugin.shops().prepareReload(); // Validate/flush editors before changing NPC files.
+                    if (sub.equals("delete")) plugin.routines().repository().requireEditable(id); // Deleting spans several files.
                     plugin.repository().edit(yaml -> {
                         String p = "npcs." + id;
                         switch (sub) {

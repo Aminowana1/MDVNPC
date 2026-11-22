@@ -39,7 +39,7 @@ public final class TraitService {
                 drinks.remove(id);
                 Location at=d.npc().position();at.getWorld().playSound(at,Sound.ENTITY_PLAYER_BURP,.6f,.9f);
                 Player player=Bukkit.getPlayer(d.player());var lines=d.npc().definition().traits().beerLines();
-                if(player!=null && player.isOnline() && player.getWorld()==at.getWorld()
+                if(player!=null && com.mdvcraft.mdvnpc.runtime.PlayerFilter.accepts(player,plugin.settings()) && player.getWorld()==at.getWorld()
                         && player.getLocation().distanceSquared(at)<=64 && !lines.isEmpty())
                     plugin.sounds().say(d.npc(),player,lines.get(ThreadLocalRandom.current().nextInt(lines.size())));
             } catch(RuntimeException ex){fail(id,ex);}
@@ -73,7 +73,8 @@ public final class TraitService {
                 || !npc.entity().hasLineOfSight(item))return null;
         UUID thrower=item.getThrower();if(thrower==null || item.getOwner()!=null && !item.getOwner().equals(thrower))return null;
         Player player=Bukkit.getPlayer(thrower);
-        return player!=null && player.isOnline() && !player.isDead() && player.getGameMode()!=GameMode.SPECTATOR
+        return player!=null && com.mdvcraft.mdvnpc.runtime.PlayerFilter.accepts(player,plugin.settings())
+                && player.getGameMode()!=GameMode.SPECTATOR
                 && player.getWorld()==item.getWorld() && player.getLocation().distanceSquared(npc.position())<=64?player:null;
     }
     private boolean beer(ItemStack stack) {

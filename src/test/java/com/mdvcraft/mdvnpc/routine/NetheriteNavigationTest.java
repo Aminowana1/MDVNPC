@@ -68,6 +68,7 @@ class NetheriteNavigationTest {
         when(chunk.getX()).thenReturn(0);
         when(chunk.getZ()).thenReturn(0);
         when(chunk.getChunkSnapshot()).thenReturn(snapshot);
+        when(snapshot.getHighestBlockYAt(anyInt(), anyInt())).thenReturn(71);
         when(chunk.getChunkSnapshot(anyBoolean(), anyBoolean(), anyBoolean())).thenReturn(snapshot);
         when(world.getChunkAt(anyInt(), anyInt())).thenAnswer(call -> {
             assertEquals(0, (int) call.getArgument(0), "must not load another chunk");
@@ -216,6 +217,18 @@ class NetheriteNavigationTest {
         assertTrue(visited(at(6, 65, 3)), "the second marker is one floor block higher");
         assertTrue(visited(at(9, 66, 3)), "a second legal climb reaches the top marker");
         assertEquals(66, position.getY(), .0001);
+        verify(finder, never()).findPath(any(Location.class));
+    }
+
+    @Test void nodeRoutesUseTheConfiguredClimb() {
+        navigator.configureHeights(2, 2.3, 2.3);
+        configure(8, 6, 8192);
+        for (int x = 6; x < 16; x++) for (int z = 0; z < 16; z++) for (int y = 64; y <= 65; y++)
+            overrides.put(new Cell(x, y, z), Material.STONE);
+        marker(3, 62, 5);
+        marker(8, 64, 5);
+        walk(at(10, 66, 2));
+        assertTrue(visited(at(8, 66, 5)), "a two-block climb allowed by the configuration joins the markers");
         verify(finder, never()).findPath(any(Location.class));
     }
 

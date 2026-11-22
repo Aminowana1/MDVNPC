@@ -28,6 +28,8 @@ class BeerOfferTest {
         bukkit=mockStatic(Bukkit.class,CALLS_REAL_METHODS);events=mock(PluginManager.class);bukkit.when(Bukkit::getPluginManager).thenReturn(events);
         var plugin=mock(MdvNpcPlugin.class);when(plugin.getLogger()).thenReturn(Logger.getAnonymousLogger());
         routines=mock(RoutineService.class);when(plugin.routines()).thenReturn(routines);
+        var config=new YamlConfiguration();config.set("ignore-invisible-players",false);
+        when(plugin.settings()).thenReturn(com.mdvcraft.mdvnpc.config.Settings.parse(config));
         music=mock(MusicService.class);when(plugin.music()).thenReturn(music);
         var yaml=new YamlConfiguration();yaml.set("npcs.manolito.location.world","world");yaml.set("npcs.manolito.trait.type","alcoholico");
         World world=mock(World.class);Villager entity=mock(Villager.class);

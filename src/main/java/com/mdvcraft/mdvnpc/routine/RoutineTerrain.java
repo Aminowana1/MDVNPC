@@ -165,13 +165,15 @@ public final class RoutineTerrain implements BoundedPathfinder.Grid {
         double y = height(n);
         return y > n.y()-1 + 1e-7 && y <= n.y() + .01 && fits(n.x()+.5,y,n.z()+.5, true);
     }
-    @Override public boolean edge(Node from, Node to) {
+    @Override public boolean edge(Node from, Node to) { return edge(from,to,1.50,2.30); }
+    /** The same crossing check with the configured vertical limits. */
+    boolean edge(Node from, Node to, double climb, double drop) {
         double a = height(from), b = height(to), delta=b-a;
         // Match RoutineNavigator's controlled movement envelope. Ascents and descents are
         // intentionally asymmetric: villagers may step/climb up 1.5 blocks and drop onto a
         // verified safe landing up to 2.3 blocks below. Clearance is checked at the higher
         // crossing height and again on the actual lower landing.
-        if(delta>1.50+EPSILON || delta<-(2.30+EPSILON))return false;
+        if(delta>climb+EPSILON || delta<-(drop+EPSILON))return false;
         double high=Math.max(a,b);
         return fits(from.x()+.5,high,from.z()+.5,true)
                 && fits(to.x()+.5,high,to.z()+.5,true)

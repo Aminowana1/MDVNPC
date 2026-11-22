@@ -125,22 +125,29 @@ public final class RoutineService {
         blacksmithRetryTicks=20L*Math.max(1,Math.min(600,cfg.getInt("blacksmith.retry-seconds",30)));
         fishermen=new FishermanController(plugin,navigator,this::teleport,this::mount);
         fishermanRetryTicks=20L*Math.max(1,Math.min(600,cfg.getInt("fisherman.retry-seconds",30)));
-        clocks.configure(repository.snapshot().clocks());
+        updateClocks(()->clocks.configure(repository.snapshot().clocks()));
         task=Bukkit.getScheduler().runTaskTimer(plugin,this::tick,cadence,cadence);
     }
     public void stop() {
         if(task!=null) {task.cancel();task=null;}
         for(String id:List.copyOf(states.keySet())) remove(id);
         if(navigator!=null) navigator.clear(); doors.close();
-        if(dancers!=null)dancers.clear();if(blacksmiths!=null)blacksmiths.clear();if(fishermen!=null)fishermen.clear();choices.clear();windows.clear();
+        if(dancers!=null)dancers.clear();if(blacksmiths!=null)blacksmiths.clear();if(fishermen!=null)fishermen.clear();windows.clear();
         dialogueStates.clear(); unavailableStates.clear();staticFloors.clear();
     }
-    public void close() { stop(); clocks.close(); }
+    public void close() { stop(); choices.clear(); clocks.close(); }
     public void invalidateNodes(World world,int blockX,int blockZ) {
         if(navigator!=null)navigator.invalidateNodes(world,blockX,blockZ);
         if(plugin.companions()!=null)plugin.companions().invalidateNodes(world,blockX,blockZ);
     }
-    public void worldLoaded() { clocks.sync(); }
+    public void worldLoaded() { updateClocks(clocks::sync); }
+    /** An optional clock must never prevent the NPC from starting. */
+    private void updateClocks(Runnable update) {
+        try { update.run(); }
+        catch(IllegalStateException ex) {
+            plugin.getLogger().log(java.util.logging.Level.SEVERE,"No se pudo aplicar un reloj de mundo; los NPC siguen funcionando",ex);
+        }
+    }
     public boolean enabled(String id) { var plan=repository.snapshot().plans().get(id); return plan!=null && plan.enabled() && !plan.goals().isEmpty(); }
     public List<RoutineGoal.Point> points(String id) {
         var plan=repository.snapshot().plans().get(id);

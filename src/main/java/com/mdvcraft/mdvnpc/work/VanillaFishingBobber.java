@@ -53,8 +53,8 @@ final class VanillaFishingBobber implements FishermanController.BobberVisual {
             syncViewers();
             return true;
         } catch (RuntimeException | LinkageError error) {
-            remove();
-            return false;
+            try { remove(); } catch (IllegalStateException cleanup) { error.addSuppressed(cleanup); }
+            throw new IllegalStateException("No se pudo enviar el anzuelo a los jugadores", error);
         }
     }
 
@@ -102,7 +102,8 @@ final class VanillaFishingBobber implements FishermanController.BobberVisual {
                 Player player = Bukkit.getPlayer(id);
                 if (player != null && player.isOnline()) sendDestroy(player);
             }
-        } catch (RuntimeException | LinkageError ignored) {
+        } catch (RuntimeException | LinkageError error) {
+            throw new IllegalStateException("No se pudo retirar el anzuelo de los jugadores", error);
         } finally {
             viewers.clear();
         }

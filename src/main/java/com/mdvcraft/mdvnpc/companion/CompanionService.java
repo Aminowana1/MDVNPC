@@ -221,6 +221,17 @@ public final class CompanionService implements MdvNpcApi {
         return plugin;
     }
 
+    /** The same point at the height where feet really rest, as arrival is checked to 1e-4. */
+    org.bukkit.Location onFloor(org.bukkit.Location target) {
+        var terrain = new com.mdvcraft.mdvnpc.routine.RoutineTerrain(target.getWorld(), doors);
+        var floor = terrain.near(target);
+        if (floor == null)
+            return target;
+        var result = target.clone();
+        result.setY(terrain.height(floor));
+        return result;
+    }
+
     RoutineNavigator navigator() {
         return navigator;
     }

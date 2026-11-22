@@ -64,6 +64,8 @@ public final class RoutineNavigator {
     private static final int MINIMUM_HOP_TICKS = 12;
     private static final double HOP_SWEEP_INTERVAL = .08;
     private static final double HOP_POSITION_TOLERANCE_SQUARED = .05*.05;
+    /** Node planning is optional guidance: after this wait the trip uses Paper's pathfinder. */
+    private static final int NODE_PLANNING_TICKS = 200;
     private final DoorController doors;
     private final BiPredicate<ActiveNpc, Location> teleport;
     private final Map<String, Travel> travels = new LinkedHashMap<>();
@@ -99,6 +101,7 @@ public final class RoutineNavigator {
         NetheriteNodeIndex.Scan nodeScan;
         NetheriteNodeRouter nodeRouter;
         boolean nodesTried, nodePath;
+        long nodePlanningSince;
         List<Node> routeMarkers=List.of();
         final Map<Node,Node> markerSources=new HashMap<>();
         int markerIndex;
@@ -421,8 +424,13 @@ public final class RoutineNavigator {
                     || !travel.terrain.loaded(destination.getBlockX(), destination.getBlockZ())) {
                 chunkFailure(travel, tick); return Result.WAITING;
             }
-            if (startsLeft <= 0 || spentNanos >= maximumNanos) return Result.WAITING;
-            startsLeft--;
+            // Node planning has its own budgets, so continuing it must not starve new departures.
+            boolean planning = nodesEnabled && !travel.nodesTried && travel.nodeScan != null;
+            if (planning && tick - travel.nodePlanningSince >= NODE_PLANNING_TICKS) {
+                travel.nodesTried = true; planning = false;
+            }
+            if (!planning && startsLeft <= 0 || spentNanos >= maximumNanos) return Result.WAITING;
+            if (!planning) startsLeft--;
             long started = System.nanoTime();
             try {
                 Location start = prepareStart(travel, current, tick, speed, cadence);
@@ -432,8 +440,13 @@ public final class RoutineNavigator {
                 current = start;
                 PathPlan guided=null;
                 if(nodesEnabled && !travel.nodesTried) {
+                    if(travel.nodeScan==null)travel.nodePlanningSince=tick;
                     guided=findNodePath(travel,start);
                     if(!travel.nodesTried)return Result.WAITING;
+                }
+                if(planning && guided==null) {
+                    if(startsLeft<=0)return Result.WAITING;
+                    startsLeft--;
                 }
                 SearchOutcome outcome = guided==null ? findPaperPath(travel, start)
                         : new SearchOutcome(guided,SearchFailure.NONE);
@@ -915,10 +928,11 @@ public final class RoutineNavigator {
             if(markers.isEmpty() || start==null || goal==null) {travel.nodesTried=true;return null;}
             BoundedPathfinder.Grid grid=new BoundedPathfinder.Grid() {
                 public boolean stand(Node n) {return travel.terrain.stand(n);}
+                public int maxRise() {return Math.max(2,(int)Math.ceil(MAX_CLIMB_HEIGHT));}
+                public int maxDrop() {return Math.max(3,(int)Math.ceil(MAX_DROP_HEIGHT));}
                 public boolean edge(Node a,Node b) {
                     double from=travel.terrain.height(a),to=travel.terrain.height(b),delta=to-from;
-                    return delta<=MAX_CLIMB_HEIGHT+1e-7 && delta>=-MAX_DROP_HEIGHT-1e-7
-                            && travel.terrain.edge(a,b)
+                    return travel.terrain.edge(a,b,MAX_CLIMB_HEIGHT,MAX_DROP_HEIGHT)
                             && (delta<=0 || travel.terrain.fenceClearAtBase(b.x()+.5,from,b.z()+.5));
                 }
             };

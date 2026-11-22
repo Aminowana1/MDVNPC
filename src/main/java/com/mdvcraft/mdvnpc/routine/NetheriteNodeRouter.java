@@ -109,6 +109,8 @@ public final class NetheriteNodeRouter {
                         && grid.stand(n);
             }
             @Override public boolean edge(Node a, Node b) { return grid.edge(a, b); }
+            @Override public int maxRise() { return grid.maxRise(); }
+            @Override public int maxDrop() { return grid.maxDrop(); }
         };
         pending = new BoundedPathfinder(local, from, to, localMaxNodes);
     }

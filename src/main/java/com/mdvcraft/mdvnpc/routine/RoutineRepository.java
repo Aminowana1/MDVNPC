@@ -2,6 +2,7 @@ package com.mdvcraft.mdvnpc.routine;
 
 import com.mdvcraft.mdvnpc.config.NpcParser;
 import com.mdvcraft.mdvnpc.storage.AtomicFile;
+import com.mdvcraft.mdvnpc.storage.NpcFolders;
 import com.mdvcraft.mdvnpc.storage.NpcPaths;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -20,24 +21,48 @@ public final class RoutineRepository {
     private final Path npcRoot;
     private final Path clocksFile;
     private Snapshot snapshot = new Snapshot(Map.of(), Map.of());
+    private List<String> problems = List.of();
+    /** Routine files skipped by the last read; those NPC keep their last valid plan. */
+    public List<String> problems() { return problems; }
+    private Snapshot keepLastGood(Snapshot loaded, Map<String, String> damaged) {
+        if (damaged.isEmpty()) return loaded;
+        Map<String, Plan> plans = new LinkedHashMap<>(loaded.plans());
+        for (String id : damaged.keySet())
+            if (snapshot.plans().containsKey(id)) plans.put(id, snapshot.plans().get(id));
+        return new Snapshot(Collections.unmodifiableMap(plans), loaded.clocks());
+    }
     public RoutineRepository(Path folder) {
         this.folder = folder;
         this.npcRoot = NpcPaths.root(folder);
         this.clocksFile = folder.resolve("clocks.yml");
     }
     public Snapshot read() throws Exception {
-        Files.createDirectories(npcRoot); migrateLegacy(); return parse(aggregate());
+        Files.createDirectories(npcRoot); migrateLegacy();
+        Map<String, String> damaged = new LinkedHashMap<>();
+        Snapshot loaded = parse(aggregate(damaged));
+        problems = List.copyOf(damaged.values());
+        return keepLastGood(loaded, damaged);
     }
     public void install(Snapshot snapshot) { this.snapshot = snapshot; }
     public Snapshot snapshot() { return snapshot; }
     public void edit(Consumer<YamlConfiguration> edit) throws Exception {
         Files.createDirectories(npcRoot); migrateLegacy();
-        YamlConfiguration yaml = aggregate();
+        Map<String, String> damaged = new LinkedHashMap<>();
+        YamlConfiguration yaml = aggregate(damaged);
         Snapshot before = parse(yaml);
+        NpcFolders.hold(yaml, damaged);
         edit.accept(yaml);
+        NpcFolders.release(yaml, damaged);
         Snapshot next = parse(yaml);
         persist(yaml, before, next);
-        snapshot = next;
+        snapshot = keepLastGood(next, damaged);
+    }
+    /** Fails if this NPC's file is damaged, so a multi-file operation can stop before its first write. */
+    public void requireEditable(String npc) throws Exception {
+        Map<String, String> damaged = new LinkedHashMap<>();
+        aggregate(damaged);
+        if (damaged.containsKey(npc))
+            throw new IllegalArgumentException("Corrige el archivo antes de editar este NPC. " + damaged.get(npc));
     }
     public void put(String npc, RoutineGoal goal) throws Exception {
         edit(y -> {
@@ -107,17 +132,14 @@ public final class RoutineRepository {
         }
     }
 
-    private YamlConfiguration aggregate() throws Exception {
+    private YamlConfiguration aggregate(Map<String, String> damaged) throws Exception {
         YamlConfiguration y = new YamlConfiguration(); y.createSection("npcs");
-        if (Files.isDirectory(npcRoot)) try (var dirs = Files.list(npcRoot)) {
-            for (Path dir : dirs.filter(Files::isDirectory).sorted().toList()) {
-                String id = dir.getFileName().toString(); NpcParser.validateId(id);
-                Path file = dir.resolve("routines.yml"); if (!Files.exists(file)) continue;
-                YamlConfiguration local = load(file); var section = local.getConfigurationSection("npcs." + id);
-                if (section == null) throw new IllegalArgumentException("Falta npcs." + id + " en " + file);
-                copy(section, y, "npcs." + id);
-            }
-        }
+        damaged.putAll(NpcFolders.readEach(npcRoot, "routines.yml", (id, file) -> {
+            YamlConfiguration local = load(file); var section = local.getConfigurationSection("npcs." + id);
+            if (section == null) throw new IllegalArgumentException("Falta npcs." + id + " en " + file);
+            YamlConfiguration own = new YamlConfiguration(); copy(section, own, "npcs." + id); parse(own);
+            copy(section, y, "npcs." + id);
+        }));
         if (Files.exists(clocksFile)) {
             YamlConfiguration clocks = load(clocksFile); var section = clocks.getConfigurationSection("clocks");
             if (section != null) copy(section, y, "clocks");

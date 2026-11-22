@@ -159,7 +159,7 @@ public final class CompanionCommand {
             throw new IllegalArgumentException("/mdvnpc companion " + args[1] + " <x> <y> <z> (admite ~)");
         Location base = player.getLocation();
         return new Location(base.getWorld(), coordinate(args[2], base.getX()),
-                coordinate(args[3], base.getY()), coordinate(args[4], base.getZ()));
+                height(args[3], base.getY()), coordinate(args[4], base.getZ()));
     }
 
     static double coordinate(String value, double base) {
@@ -168,6 +168,11 @@ public final class CompanionCommand {
         double parsed = number(value, "coordenada");
         // Enteros sin decimales = centro del bloque, como hace el juego.
         return value.contains(".") ? parsed : parsed + .5;
+    }
+
+    /** The game only centres X and Z: an integer Y is already the floor. */
+    static double height(String value, double base) {
+        return value.startsWith("~") ? coordinate(value, base) : number(value, "coordenada");
     }
 
     private static double number(String value, String what) {

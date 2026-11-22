@@ -56,6 +56,7 @@ final class CompanionRuntime implements Companion {
 
     // moveTo / lead
     private Location destination;
+    private boolean destinationOnFloor;
     private double speed;
     private UUID leadFollower;
     private boolean leadPaused;
@@ -206,13 +207,14 @@ final class CompanionRuntime implements Companion {
         Objects.requireNonNull(target, "target");
         if (!isValid())
             return;
-        halt(MoveResult.CANCELLED);
+        CompletableFuture<MoveResult> previous = detach();
         state = CompanionState.FOLLOWING;
         followTarget = target.getUniqueId();
         followDistance = CompanionSettings.clamp(distance, 1.5, 8);
         followGoal = null;
         followDestination = null;
         resetProgress();
+        complete(previous, MoveResult.CANCELLED);
     }
 
     @Override
@@ -238,15 +240,18 @@ final class CompanionRuntime implements Companion {
             throw new IllegalArgumentException("El destino no tiene mundo");
         if (!isValid())
             return CompletableFuture.completedFuture(MoveResult.REMOVED);
-        halt(MoveResult.CANCELLED);
+        CompletableFuture<MoveResult> previous = detach();
         CompletableFuture<MoveResult> created = new CompletableFuture<>();
         future = created;
         destination = target.clone();
+        destinationOnFloor = false;
         speed = CompanionSettings.clamp(blocksPerSecond, .5, 8);
         leadFollower = follower;
         leadPaused = false;
         state = follower == null ? CompanionState.MOVING : CompanionState.LEADING;
         resetProgress();
+        // Last: its callbacks may give a newer order, which must replace this one and not be lost.
+        complete(previous, MoveResult.CANCELLED);
         return created;
     }
 
@@ -271,6 +276,16 @@ final class CompanionRuntime implements Companion {
 
     /** Cancela cualquier orden de movimiento y deja al acompañante quieto. */
     private void halt(MoveResult result) {
+        complete(detach(), result);
+    }
+
+    private static void complete(@Nullable CompletableFuture<MoveResult> pending, MoveResult result) {
+        if (pending != null)
+            pending.complete(result);
+    }
+
+    /** Clears the current order without running its callbacks. */
+    private @Nullable CompletableFuture<MoveResult> detach() {
         if (npc != null)
             service.navigator().cancel(navId());
         CompletableFuture<MoveResult> pending = future;
@@ -283,8 +298,7 @@ final class CompanionRuntime implements Companion {
         followDestination = null;
         if (state != CompanionState.REMOVED)
             state = CompanionState.IDLE;
-        if (pending != null)
-            pending.complete(result);
+        return pending;
     }
 
     /** Termina un moveTo/lead (el callback puede dar otra orden: no se toca nada después). */
@@ -454,6 +468,10 @@ final class CompanionRuntime implements Companion {
                 return;
             }
             leadPaused = false;
+        }
+        if (!destinationOnFloor && CompanionService.loaded(destination)) {
+            destinationOnFloor = true;
+            destination = service.onFloor(destination);
         }
         RoutineNavigator.Result result = walk(destination, speed, ticks, settings);
         if (result == RoutineNavigator.Result.ARRIVED) {

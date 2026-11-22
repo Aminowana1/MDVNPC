@@ -33,7 +33,9 @@ class NetheriteNodeIndexTest {
         when(world.isChunkLoaded(anyInt(), anyInt())).thenReturn(false);
         when(world.isChunkLoaded(0, 0)).thenReturn(true);
         when(world.getChunkAt(0, 0)).thenReturn(chunk);
-        when(chunk.getChunkSnapshot(false, false, false)).thenReturn(snapshot);
+        // The height map must be requested: CraftBukkit has none unless includeMaxBlockY is set.
+        when(chunk.getChunkSnapshot(true, false, false)).thenReturn(snapshot);
+        when(snapshot.getHighestBlockYAt(anyInt(), anyInt())).thenReturn(15);
         when(snapshot.contains(any(BlockData.class))).thenAnswer(call -> !buried.isEmpty());
         when(snapshot.getBlockType(anyInt(), anyInt(), anyInt())).thenAnswer(call ->
                 buried.contains(new Node(call.getArgument(0), call.getArgument(1), call.getArgument(2)))

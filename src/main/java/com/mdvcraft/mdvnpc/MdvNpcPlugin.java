@@ -13,6 +13,8 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.configuration.file.YamlConfiguration;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.logging.Level;
@@ -37,6 +39,7 @@ public final class MdvNpcPlugin extends JavaPlugin {
     private Settings settings;
     private NpcRepository repository;
     private NpcManager manager;
+    private com.mdvcraft.mdvnpc.runtime.InteractionService interactions;
     private ShopService shops;
     private com.mdvcraft.mdvnpc.routine.RoutineService routines;
     private com.mdvcraft.mdvnpc.routine.RoutineCommands routineCommands;
@@ -57,6 +60,7 @@ public final class MdvNpcPlugin extends JavaPlugin {
             visibility = new com.mdvcraft.mdvnpc.runtime.NpcVisibilityService(this);
             com.mdvcraft.mdvnpc.runtime.PlayerFilter.hiddenViewers(visibility::isHidden);
             repository = new NpcRepository(data);
+            interactions = new com.mdvcraft.mdvnpc.runtime.InteractionService(messages, getLogger(), data.resolve("cooldowns.dat"));
             skins = new com.mdvcraft.mdvnpc.skin.SkinCacheService(this);
             sounds = new com.mdvcraft.mdvnpc.trait.NpcSounds(this);
             traits = new com.mdvcraft.mdvnpc.trait.TraitService(this);
@@ -109,20 +113,44 @@ public final class MdvNpcPlugin extends JavaPlugin {
         }
         shops.prepareReload();
         shops.load(); // Validate everything before touching active NPCs.
+        for (String problem : loadProblems())
+            getLogger().severe("Archivo de NPC ignorado; se conserva su última versión válida, si la hay. " + problem);
         if(npcEditor!=null)npcEditor.closeAll();
         if(workEditor!=null)workEditor.closeAll();
+        var previousSettings = settings;
+        var previousDefinitions = definitions;
+        var previousRoutines = routines.repository().snapshot();
+        try {
+            stopRuntime();
+            activate(snapshot.settings(), snapshot.npcs(), routineSnapshot);
+        } catch (RuntimeException | LinkageError failure) {
+            if (previousSettings == null) throw failure; // First start: nothing to go back to.
+            try {
+                stopRuntime();
+                activate(previousSettings, previousDefinitions, previousRoutines);
+            } catch (RuntimeException | LinkageError restore) {
+                failure.addSuppressed(restore);
+            }
+            getLogger().log(Level.SEVERE, "La recarga falló; se intentó restaurar la configuración anterior", failure);
+            throw failure;
+        }
+        if (companions != null) companions.reconfigure();
+    }
+    private void stopRuntime() {
         music.stop();
         routines.stop();
         if (manager != null) manager.stop();
-        settings = snapshot.settings();
-        definitions = snapshot.npcs();
+    }
+    private void activate(Settings nextSettings, Map<String, NpcDefinition> nextDefinitions,
+                          com.mdvcraft.mdvnpc.routine.RoutineRepository.Snapshot nextRoutines) {
+        settings = nextSettings;
+        definitions = nextDefinitions;
         traits.reloaded();
         reactions.reloaded();
-        manager = new NpcManager(this);
-        routines.repository().install(routineSnapshot);
+        manager = new NpcManager(this, interactions);
+        routines.repository().install(nextRoutines);
         routines.start();
         manager.start(definitions);
-        if (companions != null) companions.reconfigure();
     }
     @Override public void onDisable() {
         if (companions != null) companions.close();
@@ -139,8 +167,17 @@ public final class MdvNpcPlugin extends JavaPlugin {
         if (traits != null) traits.close();
         if (sounds != null) sounds.clear();
         if (skins != null) skins.close();
+        if (interactions != null) interactions.close();
         if (visibility != null) visibility.close();
         com.mdvcraft.mdvnpc.runtime.PlayerFilter.hiddenViewers(null);
+    }
+    /** Files skipped by the last reload, for the log and for whoever ran it. */
+    public List<String> loadProblems() {
+        List<String> all = new ArrayList<>();
+        if (repository != null) all.addAll(repository.problems());
+        if (routines != null) all.addAll(routines.repository().problems());
+        if (shops != null) all.addAll(shops.problems());
+        return all;
     }
     public com.mdvcraft.mdvnpc.runtime.NpcVisibilityService visibility() { return visibility; }
     public Settings settings() { return settings; }

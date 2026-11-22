@@ -9,6 +9,7 @@ import org.bukkit.block.data.BlockData;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -29,7 +30,8 @@ public final class NetheriteNodeIndex {
     private long revision;
     private long discardedRevision;
 
-    public NetheriteNodeIndex() { this(256, 5_000); }
+    // Our listener reports marker edits; the expiry only covers silent edits (WorldEdit, /setblock).
+    public NetheriteNodeIndex() { this(256, 30_000); }
     public NetheriteNodeIndex(int maxCachedChunks, long cacheMillis) {
         this.maxCachedChunks = Math.max(1, Math.min(1024, maxCachedChunks));
         cacheNanos = Math.max(0, Math.min(60_000, cacheMillis)) * 1_000_000L;
@@ -58,8 +60,10 @@ public final class NetheriteNodeIndex {
         private final World world;
         private final List<ChunkKey> chunks = new ArrayList<>();
         private final LinkedHashSet<Node> markers = new LinkedHashSet<>();
+        private final Map<ChunkKey, List<Node>> scanned = new HashMap<>();
         private final int minimumHeight, maximumHeight;
-        private int chunkIndex, cursor;
+        private int chunkIndex, column, y, top;
+        private boolean columnStarted;
         private boolean done, truncated;
         private ChunkKey scanning;
         private ChunkSnapshot snapshot;
@@ -102,24 +106,22 @@ public final class NetheriteNodeIndex {
             int used = 0, snapshots = 0;
             if (!done && scanRevision != revision) {
                 // A placement/removal can happen while this snapshot is spread across ticks.
-                // Restart the job against the current cache rather than repopulate stale data.
-                if (dirty()) {
-                    chunkIndex = 0; cursor = 0; snapshot = null;
-                    chunkMarkers.clear(); markers.clear();
-                }
+                // Read again only the chunks that changed; the others keep their progress.
+                if (dirty()) discardChanged();
                 scanRevision = revision;
             }
             while (!done && used < Math.max(0, budget)) {
                 if (snapshot == null) {
                     if (chunkIndex >= chunks.size()) { done = true; break; }
                     ChunkKey next = chunks.get(chunkIndex);
+                    if (scanned.containsKey(next)) { chunkIndex++; continue; }
                     // Check even a cached chunk: cached data cannot make an unloaded route live.
                     if (!world.isChunkLoaded(next.x, next.z)) {
-                        cache.remove(next); chunkIndex++; used++; continue;
+                        cache.remove(next); scanned.put(next, List.of()); chunkIndex++; used++; continue;
                     }
                     CachedChunk cached = cache.get(next);
                     if (cached != null && System.nanoTime() < cached.expires) {
-                        add(cached.markers); chunkIndex++; used++; continue;
+                        scanned.put(next, cached.markers); add(cached.markers); chunkIndex++; used++; continue;
                     }
                     if (snapshots >= SNAPSHOTS_PER_ADVANCE) break;
                     snapshots++; used++;
@@ -128,40 +130,62 @@ public final class NetheriteNodeIndex {
                     org.bukkit.Chunk chunk=world.getChunkAt(next.x,next.z);
                     if(chunk==null) {truncated=true;done=true;break;}
                     try {
-                        snapshot = chunk.getChunkSnapshot(false, false, false);
+                        snapshot = chunk.getChunkSnapshot(true, false, false);
                     } catch(UnsupportedOperationException unsupported) {
                         truncated=true;done=true;break;
                     }
                     if(snapshot==null) {truncated=true;done=true;break;}
-                    chunkMarkers.clear(); cursor = 0;
+                    chunkMarkers.clear(); column = 0; columnStarted = false;
                     if (markerData == null) markerData = Material.NETHERITE_BLOCK.createBlockData();
                     if (!snapshot.contains(markerData)) finishChunk();
                     continue;
                 }
                 // A chunk can unload between advance calls; discard its unfinished snapshot.
                 if (!world.isChunkLoaded(scanning.x, scanning.z)) {
-                    snapshot = null; chunkMarkers.clear(); chunkIndex++; used++; continue;
+                    scanned.put(scanning, List.of());
+                    snapshot = null; chunkMarkers.clear(); chunkIndex = 0; used++; continue;
                 }
-                int height = maximumHeight - minimumHeight;
-                int column = cursor / height;
-                int y = minimumHeight + cursor % height;
                 int x = column & 15, z = column >> 4;
+                if (!columnStarted) {
+                    // Nothing can be buried above the highest block, so skip that sky.
+                    top = Math.min(maximumHeight - 1, snapshot.getHighestBlockYAt(x, z));
+                    y = minimumHeight; columnStarted = true;
+                }
+                if (y > top) { // An empty (void) column still costs one read of the height map.
+                    used++; nextColumn(); continue;
+                }
                 if (snapshot.getBlockType(x, y, z) == Material.NETHERITE_BLOCK && y + 2 < maximumHeight)
                     chunkMarkers.add(new Node((scanning.x << 4) + x, y + 2, (scanning.z << 4) + z));
-                used++; cursor++;
+                used++;
                 if (chunkMarkers.size() > MAX_MARKERS) {
                     truncated = true; done = true; markers.clear(); snapshot = null;
-                } else if (cursor == height * 256) finishChunk();
+                } else if (++y > top) nextColumn();
             }
             if (!done && snapshot == null && chunkIndex >= chunks.size()) done = true;
             return used;
         }
 
+        private void nextColumn() {
+            columnStarted = false;
+            if (++column == 256) finishChunk();
+        }
+        private void discardChanged() {
+            boolean all = scanRevision < discardedRevision;
+            scanned.keySet().removeIf(chunk -> all || invalidations.getOrDefault(chunk, 0L) > scanRevision);
+            if (snapshot != null && (all || invalidations.getOrDefault(scanning, 0L) > scanRevision)) {
+                snapshot = null; chunkMarkers.clear();
+            }
+            markers.clear();
+            scanned.values().forEach(this::add);
+            if (snapshot == null) chunkIndex = 0;
+        }
         private void finishChunk() {
             List<Node> found = List.copyOf(chunkMarkers);
             cache.put(scanning, new CachedChunk(System.nanoTime() + cacheNanos, found));
             while (cache.size() > maxCachedChunks) cache.remove(cache.keySet().iterator().next());
-            add(found); snapshot = null; chunkMarkers.clear(); chunkIndex++;
+            scanned.put(scanning, found);
+            // From the start: an edit may have reopened a chunk behind this one.
+            add(found); snapshot = null; chunkMarkers.clear(); chunkIndex = 0;
         }
         private void add(List<Node> found) {
             for (Node marker : found) {

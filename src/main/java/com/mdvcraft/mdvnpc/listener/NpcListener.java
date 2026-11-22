@@ -13,12 +13,27 @@ import org.bukkit.event.world.*;
 import org.bukkit.inventory.EquipmentSlot;
 import io.papermc.paper.event.player.PrePlayerAttackEntityEvent;
 import io.papermc.paper.event.entity.EntityMoveEvent;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 
 public final class NpcListener implements Listener {
     private final MdvNpcPlugin plugin;
+    // A click arrives as InteractAt and then Interact. Only the second one acts, so that
+    // a cancellation of either event by another plugin is respected.
+    private final Map<UUID, UUID> deniedAt = new HashMap<>();
     public NpcListener(MdvNpcPlugin plugin) { this.plugin = plugin; }
     @EventHandler(priority = EventPriority.HIGHEST)
-    public void interactAt(PlayerInteractAtEntityEvent event) { interact(event); }
+    public void interactAt(PlayerInteractAtEntityEvent event) {
+        var entity = event.getRightClicked();
+        if (plugin.routines().isBoat(entity)) { event.setCancelled(true); return; }
+        if (!plugin.manager().owned(entity)) return;
+        if (event.getHand() == EquipmentSlot.HAND) {
+            if (event.isCancelled()) deniedAt.put(event.getPlayer().getUniqueId(), entity.getUniqueId());
+            else deniedAt.remove(event.getPlayer().getUniqueId());
+        }
+        event.setCancelled(true);
+    }
     @EventHandler(priority = EventPriority.HIGHEST)
     public void interact(PlayerInteractEntityEvent event) {
         if(plugin.routines().isBoat(event.getRightClicked())) {event.setCancelled(true);return;}
@@ -27,6 +42,8 @@ public final class NpcListener implements Listener {
         boolean wasCancelled = event.isCancelled();
         event.setCancelled(true); // Never open the base villager's trading interface.
         if (event.getHand() != EquipmentSlot.HAND) return;
+        UUID denied = deniedAt.remove(event.getPlayer().getUniqueId());
+        if (denied != null && denied.equals(event.getRightClicked().getUniqueId())) wasCancelled = true;
         var npc = manager.find(event.getRightClicked());
         if (npc == null) return;
         var clicker = event.getPlayer();
@@ -137,6 +154,7 @@ public final class NpcListener implements Listener {
     public void worldLoad(WorldLoadEvent event) { plugin.manager().worldLoaded(); }
     @EventHandler
     public void quit(PlayerQuitEvent event) {
+        deniedAt.remove(event.getPlayer().getUniqueId());
         plugin.manager().forget(event.getPlayer().getUniqueId());
         plugin.routines().forget(event.getPlayer().getUniqueId());
     }
