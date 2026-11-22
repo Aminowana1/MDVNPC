@@ -421,7 +421,10 @@ public final class CompanionService implements MdvNpcApi {
         boolean movement = ticks % settings.cadence() == 0;
         if (movement)
             navigator.beginTick(ticks, 4, 2_000_000);
-        for (CompanionRuntime companion : new ArrayList<>(byId.values())) {
+        List<CompanionRuntime> companions = new ArrayList<>(byId.values());
+        if (movement)
+            companions = movementOrder(companions, ticks / settings.cadence());
+        for (CompanionRuntime companion : companions) {
             if (!byId.containsKey(companion.id()))
                 continue;
             try {
@@ -432,6 +435,23 @@ public final class CompanionService implements MdvNpcApi {
                 remove(companion, CompanionRemoveEvent.Reason.LOST);
             }
         }
+    }
+
+    /**
+     * Orden en que se mueven los acompañantes en esta actualización. Las búsquedas de ruta
+     * comparten un presupuesto por actualización y se lo llevan los primeros en pedirlo: con
+     * un orden fijo, los últimos se quedarían siempre sin turno. Rotar el punto de partida
+     * reparte los turnos sin gastar más búsquedas.
+     */
+    static <T> List<T> movementOrder(List<T> companions, long update) {
+        int size = companions.size();
+        if (size < 2)
+            return companions;
+        int start = (int) Math.floorMod(update, (long) size);
+        List<T> order = new ArrayList<>(size);
+        order.addAll(companions.subList(start, size));
+        order.addAll(companions.subList(0, start));
+        return order;
     }
 
     private static void requireMainThread() {

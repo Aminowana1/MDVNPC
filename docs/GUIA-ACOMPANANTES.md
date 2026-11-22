@@ -69,7 +69,9 @@ Si `spawnCompanion` falla lanza `CompanionSpawnException` con un `reason()`:
 Cada orden nueva cancela la anterior: su future termina con `CANCELLED`.
 Otros resultados: `ARRIVED`, `FAILED` (sin ruta o atascado
 `stuck-fail-seconds`) y `REMOVED`. El movimiento usa el mismo navegador que las
-rutinas (puertas, escalones, nodos de netherita).
+rutinas (puertas, escalones). `moveTo` y `lead` siguen además los nodos de
+netherita; `follow` no, porque su destino cambia continuamente. Mientras `lead`
+calcula una ruta por nodos puede esperar quieto sin contar como atascado.
 
 Cuando está quieto mira al jugador indicado con `lookAt(player)`, o al que sigue
 o guía, o al visor más cercano.

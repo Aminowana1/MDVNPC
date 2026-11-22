@@ -1,3 +1,35 @@
+# MDVNPC 1.14.1 — correcciones de auditoría y pathfinding
+
+Sin cambios en la API ni en `config.yml`.
+
+Auditoría interna (16 fallos): guardado del editor de tienda al apagar,
+cooldowns que sobreviven a relog, reload y reinicio (`cooldowns.dat`), archivos
+dañados aislados por NPC, trueques validados por contenido, jugadores ocultos
+fuera de la cerveza y la tienda, clics que actúan una sola vez, reintento de
+aparición de NPC estáticos, reload que restaura el estado si falla y
+confirmación al borrar en el editor de rutinas, entre otros.
+
+Pathfinding:
+- Los viajes largos con nodos de netherita ya no los abandonan mientras el
+  cálculo avanza. Solo se pasa al navegador de Paper tras 10 s sin progreso
+  teniendo presupuesto, o tras 60 s en total.
+- `follow` no usa nodos: antes, con nodos cerca, el acompañante no caminaba y
+  reaparecía detrás del jugador. `lead` ya no falla ni recalcula desde cero
+  mientras calcula una ruta por nodos o espera al jugador.
+- La entrada a la red se elige por el coste del viaje completo. Un viaje corto
+  ya no da la vuelta a un nodo que queda detrás, y una red que obliga a andar
+  más del doble que un camino directo no se usa.
+- Las rutas por nodos ya no cruzan paneles finos en el borde entre bloques,
+  como una trampilla abierta. Si una ruta por nodos falla al caminarla, el
+  resto del viaje usa Paper en vez de repetirla sin fin.
+- Los NPC andan a la velocidad configurada. Antes se quedaban por debajo, con
+  un máximo de 5 bloques/s.
+- Ya no se quedan colgados en el borde al subir escalones de 1,5 o 2 bloques.
+- Con muchos acompañantes siguiendo a la vez, ninguno se queda sin turno para
+  buscar ruta.
+
+No probado en un servidor real.
+
 # MDVNPC 1.14.0 — ocultar NPC por jugador
 
 - `MdvNpcApi` gana `hideNpcs(owner, viewer)`, `showNpcs(owner, viewer)` e

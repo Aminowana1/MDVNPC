@@ -15,7 +15,7 @@ Y       bloque de netherita        ← marcador
 
 Dejá espacio para el cuerpo del NPC y usá suelo que pueda pisar. El marcador debe tener exactamente ese bloque de cobertura; si lo enterrás más profundo no señala la superficie.
 
-Como punto de partida, separá los nodos **entre 4 y 8 bloques** entre sí, con un camino transitable entre cada par. El máximo de conexión predeterminado es **12 bloques**, contando también la diferencia de altura. Colocá más nodos en esquinas, entradas, pasillos y escaleras. El NPC y el destino deben tener una conexión transitable a un nodo situado **hasta 16 bloques** de distancia. Se elige una entrada alcanzable; el nodo geométricamente más cercano puede estar detrás de una pared.
+Como punto de partida, separá los nodos **entre 4 y 8 bloques** entre sí, con un camino transitable entre cada par. El máximo de conexión predeterminado es **12 bloques**, contando también la diferencia de altura. Colocá más nodos en esquinas, entradas, pasillos y escaleras. El NPC y el destino deben tener una conexión transitable a un nodo situado **hasta 16 bloques** de distancia. Se elige la entrada alcanzable que da el mejor viaje completo, no la más cercana: salir del camino marcado cuenta un 50 % más, para no atajar sus esquinas. Si la red obliga a andar más del doble que un camino directo comprobado, ese viaje no usa nodos.
 
 Los nodos pueden estar a distintas alturas, incluso en puentes o pisos superpuestos. Para subir uno o dos bloques, construí escalones, losas o una escalera transitable y poné nodos a lo largo del recorrido. La diferencia de altura entre marcadores no crea un salto ni permite atravesar paredes, techos o huecos. Las comprobaciones de suelo, espacio libre y puertas siguen activas.
 
@@ -25,8 +25,9 @@ Los nodos pueden estar a distintas alturas, incluso en puentes o pisos superpues
 - Por defecto se consideran viajes con una separación de hasta **256 bloques por eje horizontal**, dentro del rectángulo entre origen y destino ampliado **24 bloques** a cada lado. Un desvío fuera de ese rectángulo necesita ajustar el margen.
 - El área explorada admite hasta **512 marcadores**. Si supera ese límite, se usa el navegador de Paper para ese viaje. Evitá grandes superficies enteras hechas de netherita bajo el suelo.
 - Cada conexión entre dos puntos se calcula en el rectángulo que los contiene, ampliado **4 bloques por lado y en altura**. Para rodear un edificio o subir una escalera larga, poné nodos intermedios en las esquinas y los descansos.
-- El escaneo y la búsqueda se reparten entre actualizaciones para limitar el trabajo del servidor. Una red recién descubierta puede requerir varias actualizaciones antes de empezar a caminar.
-- Si no hay una red utilizable, el NPC vuelve a intentar el recorrido con el navegador de Paper.
+- El escaneo y la búsqueda se reparten entre actualizaciones para limitar el trabajo del servidor. Una red recién descubierta puede requerir varias actualizaciones antes de empezar a caminar; en viajes largos, más de 10 segundos. La espera sólo se abandona si pasan 10 segundos sin avanzar teniendo presupuesto, o 60 segundos en total.
+- Si no hay una red utilizable, el NPC vuelve a intentar el recorrido con el navegador de Paper. También lo usa durante el resto del viaje si una ruta por nodos falla al caminarla.
+- Los acompañantes usan nodos en `moveTo` y `lead`, pero no en `follow`: un destino que se mueve reiniciaría el cálculo antes de terminarlo.
 - Colocar o romper bloques, explosiones, pistones y la carga o descarga de chunks invalidan los datos afectados. Los cambios realizados por herramientas que no emitan esos eventos también se recogen al vencer la caché.
 
 ## Configuración

@@ -70,6 +70,7 @@ public final class NetheriteNodeIndex {
         private final List<Node> chunkMarkers = new ArrayList<>();
         private BlockData markerData;
         private long scanRevision;
+        private int furthest;
 
         private Scan(World world, Location start, Location goal, int padding, int maxDistance) {
             this.world = world;
@@ -196,6 +197,11 @@ public final class NetheriteNodeIndex {
             }
         }
         public boolean done() { return done; }
+        /** Never decreases: reading again what an edit discarded is not new progress. */
+        int progress() {
+            furthest = Math.max(furthest, scanned.size() * 257 + (snapshot == null ? 0 : column));
+            return furthest;
+        }
         /** Partial discoveries are intentionally hidden until the complete bounded scan finishes. */
         public List<Node> result() { return done && !truncated && !dirty() ? List.copyOf(markers) : List.of(); }
         public boolean truncated() { return truncated; }

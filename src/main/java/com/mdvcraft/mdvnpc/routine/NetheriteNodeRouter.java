@@ -3,18 +3,14 @@ package com.mdvcraft.mdvnpc.routine;
 import com.mdvcraft.mdvnpc.routine.BoundedPathfinder.Grid;
 import com.mdvcraft.mdvnpc.routine.BoundedPathfinder.Node;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.Deque;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
-import java.util.Set;
 
 /** Incremental directed marker graph. Every connection is a complete, safe terrain path. */
 public final class NetheriteNodeRouter {
@@ -22,23 +18,25 @@ public final class NetheriteNodeRouter {
     private static final int MAX_PROBES = 8192;
     private static final int MAX_WORK = 131072;
     private static final int MAX_RESULT_POINTS = 16384;
-    private record Edge(Node from, Node to) {}
-    private record Entry(Node node, double cost) {}
-    private final List<Node> available, entries;
+    /** Reaching and leaving the network costs more, so a marked road is not cut short. */
+    private static final double OFF_ROAD_COST = 1.5;
+    /** Markers may be a detour, but not one longer than this many times a walkable direct path. */
+    private static final double MAX_DETOUR = 2;
+    /** Without a source the node's cost is known; with one it is a lower bound not yet walked. */
+    private record Entry(Node node, double cost, Node from) {}
+    private final List<Node> available;
     private final Grid grid;
     private final Node start, goal;
     private final int linkRange, endpointRange, localMaxNodes;
-    private final Set<Edge> failed = new HashSet<>();
     private final PriorityQueue<Entry> open = new PriorityQueue<>(Comparator.comparingDouble(Entry::cost));
     private final Map<Node, Double> costs = new HashMap<>();
     private final Map<Node, Node> parent = new HashMap<>();
     private final Map<Node, List<Node>> legs = new HashMap<>();
-    private final Deque<Node> outgoing = new ArrayDeque<>();
-    private Node entryMarker, expanding, pendingFrom, pendingTo;
-    private List<Node> entrance;
+    private Node pendingFrom, pendingTo;
     private BoundedPathfinder pending;
-    private int entryIndex, probes, work;
-    private boolean done, entering;
+    private List<Node> guided, guidedMarkers;
+    private int probes, work;
+    private boolean done;
     private List<Node> result, markerRoute = List.of();
 
     public NetheriteNodeRouter(List<Node> markers, Grid grid, Node start, Node goal,
@@ -49,10 +47,16 @@ public final class NetheriteNodeRouter {
         this.localMaxNodes = Math.max(16, Math.min(65536, localMaxNodes));
         available = markers == null ? List.of() : new ArrayList<>(new LinkedHashSet<>(markers));
         if (grid == null || start == null || goal == null || available.size() > MAX_MARKERS
-                || available.contains(null)) { entries = List.of(); done = true; return; }
-        entries = available.stream().filter(n -> nearby(start, n, this.endpointRange))
-                .sorted(Comparator.comparingDouble(n -> distance(start, n))).toList();
-        if (entries.isEmpty()) done = true;
+                || available.contains(null)) { done = true; return; }
+        costs.put(start, 0.0);
+        // Every entrance competes by the cost of the whole trip, not by its distance alone.
+        boolean onMarker = available.contains(start);
+        for (Node marker : available)
+            if (!marker.equals(start) && (nearby(start, marker, this.endpointRange)
+                    || onMarker && nearby(start, marker, this.linkRange)))
+                offer(start, marker);
+        if (onMarker && nearby(start, goal, this.endpointRange)) offer(start, goal);
+        if (open.isEmpty()) done = true;
     }
 
     /** The budget covers local A* expansions and graph bookkeeping, shared across all legs. */
@@ -65,36 +69,34 @@ public final class NetheriteNodeRouter {
                 used += spent; work += spent;
                 if (!pending.done()) break;
                 List<Node> path = pending.result(); pending = null;
-                if (path == null) failed.add(new Edge(pendingFrom, pendingTo));
-                accept(path);
+                if (guided != null) finish(path); else accept(path);
                 continue;
             }
             used++; work++;
-            if (entrance == null) {
-                if (entryIndex >= entries.size()) { done = true; break; }
-                entryMarker = entries.get(entryIndex++); entering = true;
-                connect(start, entryMarker);
-            } else if (!outgoing.isEmpty()) {
-                Node next = outgoing.removeFirst(); entering = false;
-                if (!failed.contains(new Edge(expanding, next))) connect(expanding, next);
-            } else {
-                Entry next = open.poll();
-                if (next == null) {
-                    // The nearest reachable marker can be isolated. Try the next entrance.
-                    entrance = null; continue;
-                }
-                if (next.cost != costs.getOrDefault(next.node, Double.POSITIVE_INFINITY)) continue;
-                expanding = next.node;
-                if (expanding.equals(goal)) { complete(goal, null); continue; }
-                if (nearby(expanding, goal, endpointRange)) outgoing.add(goal);
-                for (Node marker : available)
-                    if (!marker.equals(expanding) && !marker.equals(goal)
-                            && nearby(expanding, marker, linkRange)
-                            && costs.getOrDefault(marker, Double.POSITIVE_INFINITY) > next.cost + distance(expanding, marker))
-                        outgoing.add(marker);
+            Entry next = open.poll();
+            if (next == null) { done = true; break; }
+            double known = costs.getOrDefault(next.node, Double.POSITIVE_INFINITY);
+            if (next.from != null) {
+                // A connection is only walked while it can still improve the trip.
+                if (next.cost < known) connect(next.from, next.node);
+                continue;
             }
+            if (next.cost != known) continue;
+            if (next.node.equals(goal)) { complete(); continue; }
+            if (nearby(next.node, goal, endpointRange)) offer(next.node, goal);
+            for (Node marker : available)
+                if (!marker.equals(next.node) && !marker.equals(goal) && nearby(next.node, marker, linkRange))
+                    offer(next.node, marker);
         }
         return used;
+    }
+
+    private void offer(Node from, Node to) {
+        double bound = costs.get(from) + weight(from, to) * distance(from, to);
+        if (bound < costs.getOrDefault(to, Double.POSITIVE_INFINITY)) open.add(new Entry(to, bound, from));
+    }
+    private double weight(Node from, Node to) {
+        return from.equals(start) || to.equals(goal) ? OFF_ROAD_COST : 1;
     }
 
     private void connect(Node from, Node to) {
@@ -116,28 +118,31 @@ public final class NetheriteNodeRouter {
     }
 
     private void accept(List<Node> path) {
-        if (entering) {
-            if (path == null) return;
-            entrance = path; costs.clear(); parent.clear(); legs.clear(); open.clear(); outgoing.clear();
-            costs.put(entryMarker, 0.0); open.add(new Entry(entryMarker, 0));
-        } else if (path != null) {
-            double cost = costs.get(pendingFrom) + pathCost(path);
-            if (cost < costs.getOrDefault(pendingTo, Double.POSITIVE_INFINITY)) {
-                costs.put(pendingTo, cost); parent.put(pendingTo, pendingFrom);
-                legs.put(pendingTo, path); open.add(new Entry(pendingTo, cost));
-            }
+        if (path == null) return;
+        double cost = costs.get(pendingFrom) + weight(pendingFrom, pendingTo) * pathCost(path);
+        if (cost < costs.getOrDefault(pendingTo, Double.POSITIVE_INFINITY)) {
+            costs.put(pendingTo, cost); parent.put(pendingTo, pendingFrom);
+            legs.put(pendingTo, path); open.add(new Entry(pendingTo, cost, null));
         }
     }
 
-    private void complete(Node lastMarker, List<Node> exit) {
+    private void complete() {
         LinkedList<Node> chain = new LinkedList<>();
-        for (Node n = lastMarker; n != null; n = parent.get(n)) chain.addFirst(n);
-        ArrayList<Node> route = new ArrayList<>(entrance);
+        for (Node n = goal; n != null; n = parent.get(n)) chain.addFirst(n);
+        ArrayList<Node> route = new ArrayList<>(List.of(start));
         for (int i = 1; i < chain.size(); i++) append(route, legs.get(chain.get(i)));
-        if (exit != null) append(route, exit);
-        if (route.size() <= MAX_RESULT_POINTS) {
-            result = List.copyOf(route);
-            markerRoute = chain.stream().filter(available::contains).toList();
+        if (route.size() > MAX_RESULT_POINTS) { done = true; return; }
+        guided = List.copyOf(route);
+        guidedMarkers = chain.stream().filter(available::contains).toList();
+        // The straight line is a lower bound, so only a suspicious route pays for this search.
+        if (pathCost(guided) > MAX_DETOUR * distance(start, goal)) connect(start, goal);
+        else finish(null);
+    }
+
+    /** @param direct walkable local path without markers, or null when none was found */
+    private void finish(List<Node> direct) {
+        if (direct == null || pathCost(guided) <= MAX_DETOUR * pathCost(direct)) {
+            result = guided; markerRoute = guidedMarkers;
         }
         done = true;
     }
@@ -156,6 +161,7 @@ public final class NetheriteNodeRouter {
                 + Math.pow((double) a.z() - b.z(), 2));
     }
     public boolean done() { return done; }
+    int work() { return work; }
     /** Complete low-level path, including entry and final approach, or null when no route exists. */
     public List<Node> result() { return result; }
     public List<Node> markers() { return markerRoute; }

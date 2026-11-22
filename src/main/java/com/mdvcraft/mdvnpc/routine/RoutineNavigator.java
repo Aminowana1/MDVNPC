@@ -27,6 +27,10 @@ public final class RoutineNavigator {
     private static final int LOCAL_RETRY_TICKS = 4, PARTIAL_RETRY_TICKS = 4,
             CHUNK_RETRY_TICKS = 20, IMPOSSIBLE_RETRY_TICKS = 100;
     private static final int STUCK_TICKS = 36;
+    /** A followed player's goal moves every 1.5 blocks; its route is replaced only when
+     * these many waypoints remain or its end is this far from the new goal. */
+    private static final int STALE_ROUTE_TAIL = 3;
+    private static final double STALE_ROUTE_DRIFT_SQUARED = 3 * 3;
     private static final int PARTIAL_ENDPOINT_HISTORY = 12;
     private static final double PROGRESS_DISTANCE_SQUARED = .15 * .15;
     private static final double GOAL_PROGRESS_DISTANCE = .15;
@@ -64,8 +68,10 @@ public final class RoutineNavigator {
     private static final int MINIMUM_HOP_TICKS = 12;
     private static final double HOP_SWEEP_INTERVAL = .08;
     private static final double HOP_POSITION_TOLERANCE_SQUARED = .05*.05;
-    /** Node planning is optional guidance: after this wait the trip uses Paper's pathfinder. */
-    private static final int NODE_PLANNING_TICKS = 200;
+    /** Node planning is optional guidance: this long without progress hands the trip to Paper. */
+    private static final int NODE_STALL_TICKS = 200;
+    /** Queueing for the shared budget is not a stall, but it cannot last forever either. */
+    private static final int NODE_MAX_WAIT_TICKS = 1200;
     private final DoorController doors;
     private final BiPredicate<ActiveNpc, Location> teleport;
     private final Map<String, Travel> travels = new LinkedHashMap<>();
@@ -85,7 +91,12 @@ public final class RoutineNavigator {
     private static final class Travel {
         final ActiveNpc npc;
         final RoutineTerrain terrain;
-        final Location destination;
+        /** Changes in place only for an unguided trip whose goal moves (see {@link #retarget}). */
+        Location destination;
+        /** The path still leads to the previous destination: walk it until a search is free. */
+        boolean stalePath;
+        /** False for trips that must never wait for node planning. */
+        final boolean guided;
         List<Location> path;
         int index;
         long retry;
@@ -100,8 +111,11 @@ public final class RoutineNavigator {
         boolean doorDeniedDuringStep;
         NetheriteNodeIndex.Scan nodeScan;
         NetheriteNodeRouter nodeRouter;
-        boolean nodesTried, nodePath;
-        long nodePlanningSince;
+        boolean nodesTried, nodePath, nodesAbandoned;
+        /** Both counted only while the trip is being advanced, so a pause is neither. */
+        int planningStalledTicks, planningTicks;
+        boolean planningBlocked;
+        long planningProgress;
         List<Node> routeMarkers=List.of();
         final Map<Node,Node> markerSources=new HashMap<>();
         int markerIndex;
@@ -118,8 +132,11 @@ public final class RoutineNavigator {
         Location lastCommandPosition;
         Location lastProgressPosition;
         long lastProgressTick;
-        Travel(ActiveNpc npc, Location destination, DoorController doors, Location start, long tick) {
+        /** What walkingStep left unspent on reaching the centre of its waypoint. */
+        double unusedAllowance;
+        Travel(ActiveNpc npc, Location destination, DoorController doors, Location start, long tick, boolean guided) {
             this.npc = npc; this.destination = destination.clone();
+            this.guided = guided; nodesTried = !guided;
             terrain = new RoutineTerrain(destination.getWorld(), doors);
             // The only entrance or staircase can require a detour on any floor. Every trip
             // starts cheaply at 16, widening only after an unsuccessful or stagnant segment.
@@ -369,6 +386,13 @@ public final class RoutineNavigator {
     public void cancelHop(String id) {hops.remove(id);hopFailures.remove(id);}
 
     public Result move(ActiveNpc npc, Location destination, double speed, long tick, int cadence) {
+        return move(npc, destination, speed, tick, cadence, true);
+    }
+    /** For a moving destination: a node plan would restart before it could ever finish. */
+    public Result moveWithoutNodes(ActiveNpc npc, Location destination, double speed, long tick, int cadence) {
+        return move(npc, destination, speed, tick, cadence, false);
+    }
+    private Result move(ActiveNpc npc, Location destination, double speed, long tick, int cadence, boolean guided) {
         String id = npc.definition().id();
         Location current = npc.entity().getLocation();
         if (destination.getWorld() == null || current.getWorld() != destination.getWorld()) {
@@ -384,17 +408,49 @@ public final class RoutineNavigator {
         if (arrivedAt(current,destination)) { cancel(id); return Result.ARRIVED; }
         if (budgetTick != tick) beginTick(tick, maximumStarts, maximumNanos);
         Travel travel = travels.get(id);
-        if (travel == null || travel.npc != npc || travel.destination.getWorld() != destination.getWorld()
-                || travel.destination.distanceSquared(destination) > .01) {
-            cancel(id); travel = new Travel(npc, destination, doors, current, tick); travels.put(id, travel);
+        if (travel != null && !guided && !travel.guided && travel.npc == npc && travel.path != null
+                && travel.destination.getWorld() == destination.getWorld()
+                && travel.destination.distanceSquared(destination) > .01) {
+            retarget(travel, destination, current);
+        } else if (travel == null || travel.npc != npc || travel.destination.getWorld() != destination.getWorld()
+                || travel.guided != guided || travel.destination.distanceSquared(destination) > .01) {
+            cancel(id); travel = new Travel(npc, destination, doors, current, tick, guided); travels.put(id, travel);
         }
         try (RoutineTerrain.Update ignored = travel.terrain.beginUpdate()) {
             return advance(travel, current, speed, tick, cadence);
         }
     }
 
+    /**
+     * A followed player keeps moving the goal. Discarding the route each time would leave the
+     * follower standing until the shared allowance gives it another search, and with many
+     * followers the last ones in the update would hardly ever get one. The route in hand
+     * still heads the right way, so it is walked until a search can replace it.
+     */
+    private static void retarget(Travel travel, Location destination, Location current) {
+        travel.destination = destination.clone();
+        travel.stalePath = true;
+        travel.pathReachesFinal = false;
+        travel.partialEndpoints.clear(); travel.segmentsWithoutGoalProgress = 0;
+        travel.searchLevel = 0; travel.minimumSearchLevel = 0;
+        travel.bestGoalDistance = current.distance(destination);
+        travel.exhausted = false;
+    }
+
+    /** Replace a stale route once it nearly ends or no longer ends near the moving goal. */
+    private static boolean staleRouteSpent(Travel travel) {
+        return travel.path.size() - travel.index <= STALE_ROUTE_TAIL
+                || travel.path.getLast().distanceSquared(travel.destination) > STALE_ROUTE_DRIFT_SQUARED;
+    }
+
+    private boolean searchAvailable() {
+        return startsLeft > 0 && spentNanos < maximumNanos;
+    }
+
     private Result advance(Travel travel, Location current, double speed, long tick, int cadence) {
         travel.doorDeniedDuringStep=false;
+        if (travel.nodeScan != null && !travel.nodesTried && travel.planningTicks < NODE_MAX_WAIT_TICKS)
+            travel.planningTicks += Math.max(1, cadence);
         ActiveNpc npc = travel.npc;
         Location destination = travel.destination;
         // An external teleport/push invalidates the route's starting assumptions. Re-query
@@ -409,16 +465,25 @@ public final class RoutineNavigator {
             travel.lastCommandPosition = current.clone();
             travel.lastProgressPosition = current.clone(); travel.lastProgressTick = tick;
             travel.localFailures = 0; travel.exhausted = false;
+            travel.nodesAbandoned = false;
             resetNodePlanning(travel);
         }
         if(travel.nodePath && !validNextMarker(travel,current)) {
+            // An edited network is not a failed walk: what remains of it can be planned again.
+            resetNodePlanning(travel);
             localFailure(travel,tick);return Result.WAITING;
         }
         observeProgress(travel,current,tick);
         if (travel.path != null && tick-travel.lastProgressTick >= STUCK_TICKS) {
             localFailure(travel,tick); return Result.WAITING;
         }
+        // Never midway through a staged step: replanning there would drop the lift/descent.
+        if (travel.stalePath && travel.path != null && searchAvailable() && staleRouteSpent(travel)
+                && !Double.isFinite(travel.riserHeight) && !Double.isFinite(travel.dropHeight)) {
+            travel.path = null; travel.pending = true; travel.retry = tick;
+        }
         if (travel.path == null) {
+            travel.stalePath = false;
             if (tick < travel.retry) return Result.WAITING;
             if (!travel.terrain.loaded(current.getBlockX(), current.getBlockZ())
                     || !travel.terrain.loaded(destination.getBlockX(), destination.getBlockZ())) {
@@ -426,7 +491,7 @@ public final class RoutineNavigator {
             }
             // Node planning has its own budgets, so continuing it must not starve new departures.
             boolean planning = nodesEnabled && !travel.nodesTried && travel.nodeScan != null;
-            if (planning && tick - travel.nodePlanningSince >= NODE_PLANNING_TICKS) {
+            if (planning && planningExpired(travel)) {
                 travel.nodesTried = true; planning = false;
             }
             if (!planning && startsLeft <= 0 || spentNanos >= maximumNanos) return Result.WAITING;
@@ -440,9 +505,13 @@ public final class RoutineNavigator {
                 current = start;
                 PathPlan guided=null;
                 if(nodesEnabled && !travel.nodesTried) {
-                    if(travel.nodeScan==null)travel.nodePlanningSince=tick;
+                    boolean hadBudget=travel.nodeScan==null || (travel.nodeScan.done()
+                            ? nodeSearchLeft>=nodeSearchBudget/2 : nodeBlocksLeft>=nodeBlockBudget/2);
                     guided=findNodePath(travel,start);
-                    if(!travel.nodesTried)return Result.WAITING;
+                    if(!travel.nodesTried) {
+                        recordPlanningProgress(travel,hadBudget,cadence);
+                        return Result.WAITING;
+                    }
                 }
                 if(planning && guided==null) {
                     if(startsLeft<=0)return Result.WAITING;
@@ -508,9 +577,11 @@ public final class RoutineNavigator {
         if (travel.index >= travel.path.size()) {
             // A partial path is a valid segment of a long trip. Re-query from its endpoint;
             // the search level may already have widened if that segment represented a detour.
-            if (!travel.pathReachesFinal) rememberPartialEndpoint(travel);
+            // The end of a stale path is not a segment of this trip: search again at once.
+            if (!travel.pathReachesFinal && !travel.stalePath) rememberPartialEndpoint(travel);
             travel.riserWaypoint = null; travel.riserHeight = Double.NaN; travel.riserBaseY = Double.NaN; travel.dropHeight = Double.NaN;
-            travel.path = null; travel.pending = true; travel.retry = tick + PARTIAL_RETRY_TICKS;
+            travel.retry = travel.stalePath ? tick : tick + PARTIAL_RETRY_TICKS;
+            travel.path = null; travel.pending = true; travel.stalePath = false;
             return Result.WAITING;
         }
         Location next = travel.path.get(travel.index);
@@ -523,12 +594,46 @@ public final class RoutineNavigator {
         double distance = Math.max(.01, speed) * Math.max(1, cadence) / 20.0;
         Location step = walkingStep(travel,current,next,distance,tick);
         if(step==null) {localFailure(travel,tick);return Result.WAITING;}
+        step = carryStep(travel,current,step,tick);
         Vector delta = step.toVector().subtract(current.toVector());
         if (Math.abs(delta.getX()) + Math.abs(delta.getZ()) > .001)
             step.setDirection(new Vector(delta.getX(), 0, delta.getZ()));
         if (!applyStep(travel, current, step)) { localFailure(travel, tick); return Result.WAITING; }
         if(travel.doorDeniedDuringStep) { localFailure(travel,tick);return Result.WAITING; }
         return Result.MOVING;
+    }
+
+    /** A step ending exactly on a waypoint spends the rest of its allowance on the next one. */
+    private Location carryStep(Travel travel,Location from,Location reached,long tick) {
+        Location at=reached;
+        while(travel.unusedAllowance>1e-7 && !travel.doorDeniedDuringStep && travel.index+1<travel.path.size()
+                && reachedWaypoint(travel,at,travel.path.get(travel.index))) {
+            // A carried step can end too far from a marker for the next update to see it passed.
+            if(travel.nodePath && !validNextMarker(travel,at))break;
+            travel.index++;
+            Location next=travel.path.get(travel.index);
+            Node floor=new Node(next.getBlockX(),(int)Math.ceil(next.getY()-.02),next.getBlockZ());
+            if(!travel.terrain.stand(floor) || Math.abs(travel.terrain.height(floor)-next.getY())>.08)break;
+            Location further=walkingStep(travel,at,next,travel.unusedAllowance,tick);
+            // Turning back could end where the step began, which would look like a blocked walk.
+            if(further==null || from.distanceSquared(further)<=from.distanceSquared(at)
+                    || !straightMoveClear(travel,from,at,further))break;
+            at=further;
+        }
+        return at;
+    }
+
+    /** The client draws one straight move: at a turn or a step it must not cut through a block. */
+    private boolean straightMoveClear(Travel travel,Location from,Location corner,Location to) {
+        Vector first=corner.toVector().subtract(from.toVector()),whole=to.toVector().subtract(from.toVector());
+        if(first.getCrossProduct(whole).lengthSquared()<=1e-12)return true;
+        int samples=(int)Math.ceil(whole.length()/.1);
+        for(int i=1;i<samples;i++) {
+            double phase=(double)i/samples;
+            if(!travel.terrain.fits(from.getX()+whole.getX()*phase,from.getY()+whole.getY()*phase,
+                    from.getZ()+whole.getZ()*phase,false))return false;
+        }
+        return true;
     }
 
     private void observeProgress(Travel travel,Location current,long tick) {
@@ -596,6 +701,7 @@ public final class RoutineNavigator {
             travel.riserWaypoint = next;
         }
         Location at=current.clone();
+        travel.unusedAllowance=0;
         int limit=(int)Math.ceil(allowance/.08)+20;
         for(int i=0;i<limit && allowance>1e-7;i++) {
             double dx=next.getX()-at.getX(),dz=next.getZ()-at.getZ(),horizontal=Math.hypot(dx,dz);
@@ -607,7 +713,10 @@ public final class RoutineNavigator {
                 double support=replaySupport(travel,at,next,0,0);
                 if(!Double.isFinite(support))return lastClearStep(current,at);
                 double dy=support-at.getY();
-                if(Math.abs(dy)<=WAYPOINT_VERTICAL_EPSILON)break;
+                if(Math.abs(dy)<=WAYPOINT_VERTICAL_EPSILON) {
+                    travel.unusedAllowance=allowance;
+                    break;
+                }
                 if(dy>MAX_STEP_HEIGHT || dy < -MAX_DROP_HEIGHT)return lastClearStep(current,at);
                 Location vertical=at.clone().add(0,Math.copySign(Math.min(Math.abs(dy),Math.min(.08,allowance)),dy),0);
                 if(!walkable(travel,vertical,tick))return lastClearStep(current,at);
@@ -984,8 +1093,20 @@ public final class RoutineNavigator {
         }
         return true;
     }
+    private void recordPlanningProgress(Travel travel,boolean hadBudget,int cadence) {
+        travel.planningBlocked=false;
+        long progress=travel.nodeScan.progress()+(long)(travel.nodeRouter==null?0:travel.nodeRouter.work());
+        if(progress>travel.planningProgress) {
+            travel.planningProgress=progress;travel.planningStalledTicks=0;
+        } else if(hadBudget)travel.planningStalledTicks+=Math.max(1,cadence);
+    }
+    private static boolean planningExpired(Travel travel) {
+        return travel.planningStalledTicks>=NODE_STALL_TICKS || travel.planningTicks>=NODE_MAX_WAIT_TICKS;
+    }
     private void resetNodePlanning(Travel travel) {
-        travel.nodeScan=null;travel.nodeRouter=null;travel.nodesTried=false;travel.nodePath=false;
+        travel.nodeScan=null;travel.nodeRouter=null;travel.nodePath=false;
+        travel.nodesTried=!travel.guided || travel.nodesAbandoned;
+        travel.planningProgress=0;travel.planningStalledTicks=0;travel.planningTicks=0;travel.planningBlocked=false;
         travel.routeMarkers=List.of();travel.markerSources.clear();travel.markerIndex=0;
     }
 
@@ -1055,7 +1176,10 @@ public final class RoutineNavigator {
         }
     }
     private void localFailure(Travel travel,long tick) {
-        if(travel.nodePath)resetNodePlanning(travel);
+        if(travel.nodePath) {
+            // The same network would give the same route and the same failure, forever.
+            travel.nodesAbandoned=true;resetNodePlanning(travel);
+        }
         travel.path=null;travel.pending=true;travel.pathReachesFinal=false;travel.localFailures++;
         // Once a route is discarded it no longer owns an in-air Y transition. Releasing the
         // marker lets RoutineGravity settle the NPC instead of leaving it hovering/spinning.
@@ -1073,6 +1197,7 @@ public final class RoutineNavigator {
         travel.path=null;travel.pending=true;travel.pathReachesFinal=false;
         travel.riserWaypoint=null;travel.riserHeight=Double.NaN;travel.riserBaseY=Double.NaN;travel.dropHeight=Double.NaN;
         travel.retry=tick+CHUNK_RETRY_TICKS;
+        travel.planningBlocked=true;
     }
 
     public boolean exhausted(String npc) {
@@ -1081,6 +1206,12 @@ public final class RoutineNavigator {
     /** Computing an incremental graph is deliberate waiting, not a physically stuck walk. */
     public boolean planningNodes(String npc) {
         Travel travel=travels.get(npc);return nodesEnabled && travel!=null && !travel.nodesTried;
+    }
+    /** Narrower than {@link #planningNodes}: the plan has started and has not stalled. */
+    public boolean advancingNodes(String npc) {
+        Travel travel=travels.get(npc);
+        return nodesEnabled && travel!=null && travel.nodeScan!=null && !travel.nodesTried
+                && !travel.planningBlocked && !planningExpired(travel);
     }
     /** A staged lift remains owned by route replay during its short local retry. */
     public boolean controlsVerticalStep(String npc) {

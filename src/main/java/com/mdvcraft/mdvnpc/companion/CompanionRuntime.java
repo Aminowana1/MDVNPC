@@ -434,7 +434,9 @@ final class CompanionRuntime implements Companion {
             followGoal = goal;
             followDestination = standAt(player.getWorld(), goal[0], player.getBlockY(), goal[1], target);
         }
-        RoutineNavigator.Result result = walk(followDestination, FollowMath.speed(distance, settings), ticks, settings);
+        service.gravity().reset(gravityState);
+        RoutineNavigator.Result result = service.navigator().moveWithoutNodes(npc, followDestination,
+                FollowMath.speed(distance, settings), ticks, settings.cadence());
         trackProgress(ticks);
         boolean stuck = ticks - progressTick >= settings.stuckTeleportTicks();
         if (result == RoutineNavigator.Result.WAITING && (stuck || service.navigator().exhausted(navId()))
@@ -459,7 +461,8 @@ final class CompanionRuntime implements Companion {
                     || follower.getLocation().distance(at) > settings.leadMaxGap();
             if (far) {
                 // Esperar al jugador: se para, lo mira y la ruta se recalcula al reanudar.
-                if (!leadPaused)
+                // Un plan de nodos a medias se conserva: si no, cada pausa lo empezaría de cero.
+                if (!leadPaused && !service.navigator().advancingNodes(navId()))
                     service.navigator().cancel(navId());
                 leadPaused = true;
                 resetProgress();
@@ -482,6 +485,8 @@ final class CompanionRuntime implements Companion {
             return;
         }
         trackProgress(ticks);
+        if (service.navigator().advancingNodes(navId()))
+            resetProgress(); // planificar no es estar atascado
         if (service.navigator().exhausted(navId()) || ticks - progressTick >= settings.stuckFailTicks())
             finish(MoveResult.FAILED);
     }

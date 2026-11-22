@@ -175,7 +175,9 @@ public final class RoutineTerrain implements BoundedPathfinder.Grid {
         // crossing height and again on the actual lower landing.
         if(delta>climb+EPSILON || delta<-(drop+EPSILON))return false;
         double high=Math.max(a,b);
+        // The two centred bodies leave a gap where a thin panel can stand on the cell border.
         return fits(from.x()+.5,high,from.z()+.5,true)
+                && fits((from.x()+to.x())/2.0+.5,high,(from.z()+to.z())/2.0+.5,true)
                 && fits(to.x()+.5,high,to.z()+.5,true)
                 && fits(to.x()+.5,b,to.z()+.5,true);
     }
@@ -375,8 +377,11 @@ public final class RoutineTerrain implements BoundedPathfinder.Grid {
         return projectedBarrier(material,data) || thinClimbBarrier(material);
     }
     private boolean fits(double x,double y,double z,boolean planned,Node partialFloor,double partialTop) {
+        return fits(x,y,z,planned,partialFloor,partialTop,BODY_RADIUS);
+    }
+    private boolean fits(double x,double y,double z,boolean planned,Node partialFloor,double partialTop,double radius) {
         if(!coordinates(x,y,z) || y+.015<minimumHeight || y+1.95>maximumHeight)return false;
-        BoundingBox body = new BoundingBox(x-BODY_RADIUS,y+.015,z-BODY_RADIUS,x+BODY_RADIUS,y+1.95,z+BODY_RADIUS);
+        BoundingBox body = new BoundingBox(x-radius,y+.015,z-radius,x+radius,y+1.95,z+radius);
         // Fences and walls are 1.5 blocks high: their source block can be below the feet.
         // Clamp this extra row so the lowest valid floor never queries below the world.
         int firstY=Math.max(minimumHeight,(int)Math.floor(body.getMinY())-1);
@@ -511,7 +516,9 @@ public final class RoutineTerrain implements BoundedPathfinder.Grid {
             if(Double.isFinite(highest) && highest>=by+.5-EPSILON)break;
         }
         if(!Double.isFinite(highest))return new FallColumn(Double.NaN,!Double.isFinite(unsafeTop));
-        if(unsafeTop>=highest-EPSILON || Math.abs(highest-y)>EPSILON && !fits(x,highest,z,false))
+        if(unsafeTop>=highest-EPSILON || Math.abs(highest-y)>EPSILON
+                // The same tolerance as overFootprint: a ledge it ignored cannot veto the floor below it.
+                && !fits(x,highest,z,false,null,Double.NaN,BODY_RADIUS-EPSILON))
             return new FallColumn(Double.NaN,false);
         return new FallColumn(highest,true);
     }
