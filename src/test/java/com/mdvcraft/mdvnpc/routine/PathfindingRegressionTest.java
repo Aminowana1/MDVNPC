@@ -15,9 +15,17 @@ class PathfindingRegressionTest {
 
     @Test void longPlanningThatAdvancesKeepsTheNodes() {
         var trip = new FlatTripWorld(256);
-        for (int x = 6; x < 48; x += 6) trip.marker(x, 3);
-        long arrived = trip.walk(trip.at(48, 0), 4, 2, 4000);
-        assertTrue(arrived > 440, "this scan alone takes more than ten seconds; arrived at " + arrived);
+        // The widest height band and the smallest allowance make this scan last over ten seconds.
+        trip.navigator.configureNodes(true, 12, 16, 24, 256, 256, 256, 32);
+        for (int x = 6; x < 96; x += 6) trip.marker(x, 3);
+        long departed = -1, arrived = -1;
+        for (long tick = 0; tick < 6000 && arrived < 0; tick += 2) {
+            trip.navigator.beginTick(tick, 2, Long.MAX_VALUE);
+            if (trip.navigator.move(trip.npc, trip.at(96, 0), 4, tick, 2) == RoutineNavigator.Result.ARRIVED) arrived = tick;
+            if (departed < 0 && trip.walked > 0) departed = tick;
+        }
+        assertTrue(departed > 200, "the plan took more than ten seconds; departed at " + departed);
+        assertTrue(arrived > 0);
         assertEquals(0, trip.nativeSearches, "a slow but advancing plan still follows its markers");
     }
 
@@ -133,5 +141,52 @@ class PathfindingRegressionTest {
             if (result == RoutineNavigator.Result.ARRIVED) return;
         }
         fail("did not arrive");
+    }
+
+    @Test void aLongPaperTripDoesNotPauseBetweenSegments() {
+        var trip = new FlatTripWorld(8192);
+        trip.navigator.configureNodes(false, 12, 16, 24, 256, 8192, 256);
+        trip.segment = 5;
+        boolean moving = false;
+        int pauses = 0;
+        for (long tick = 0; tick < 1200; tick += 2) {
+            trip.navigator.beginTick(tick, 2, Long.MAX_VALUE);
+            var result = trip.navigator.move(trip.npc, trip.at(40, 0), 4, tick, 2);
+            if (result == RoutineNavigator.Result.ARRIVED) {
+                assertEquals(0, pauses, "updates standing still between segments");
+                assertTrue(trip.nativeSearches >= 8, "the trip was walked in segments");
+                return;
+            }
+            if (result == RoutineNavigator.Result.MOVING) moving = true;
+            else if (moving) pauses++;
+        }
+        fail("did not arrive");
+    }
+
+    @Test void aDiagonalMarkedRoadIsWalkedStraight() {
+        var trip = new FlatTripWorld(8192);
+        trip.marker(4, 4);
+        trip.marker(8, 8);
+        assertTrue(trip.walk(trip.at(12, 12), 4, 2, 1200) >= 0);
+        assertEquals(0, trip.nativeSearches);
+        assertTrue(trip.walked < 12 * Math.sqrt(2) + 1, "walked " + trip.walked + " instead of a staircase of 24");
+    }
+
+    @Test void aSmoothedRoadStillPassesOverEveryMarker() {
+        var trip = new FlatTripWorld(8192);
+        // A bend: the straight line from the first marker to the goal would skip the corner.
+        trip.marker(3, 0);
+        trip.marker(9, 0);
+        trip.marker(9, 6);
+        Location corner = trip.at(9, 0);
+        boolean passed = false;
+        for (long tick = 0; tick < 1200; tick += 2) {
+            trip.navigator.beginTick(tick, 2, Long.MAX_VALUE);
+            var result = trip.navigator.move(trip.npc, trip.at(9, 12), 4, tick, 2);
+            passed |= trip.position.distanceSquared(corner) < .25;
+            if (result == RoutineNavigator.Result.ARRIVED) break;
+        }
+        assertTrue(passed, "the corner marker is part of the walk");
+        assertEquals(0, trip.nativeSearches);
     }
 }

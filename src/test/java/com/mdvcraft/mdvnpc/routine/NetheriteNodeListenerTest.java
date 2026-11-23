@@ -84,7 +84,9 @@ class NetheriteNodeListenerTest {
         Block stone = block(5, 5);
         when(stone.getType()).thenReturn(org.bukkit.Material.STONE);
         listener.breakBlock(new org.bukkit.event.block.BlockBreakEvent(stone, mock(org.bukkit.entity.Player.class)));
-        verifyNoInteractions(navigator);
+        // Only the shared connections near the edit are measured again.
+        verify(navigator).invalidateTerrain(world, 5, 5);
+        verifyNoMoreInteractions(navigator);
     }
 
     private Block block(int x, int z) {

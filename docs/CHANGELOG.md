@@ -1,3 +1,42 @@
+# MDVNPC 1.15.0 — NPC que no se quedan quietos, nodos por altura y saludo
+
+Movimiento:
+- Un NPC que algún jugador tiene a la vista sigue su rutina aunque esté a más
+  de `activation-range` (48). Antes, visto desde 50–96 bloques, se quedaba
+  congelado y no reaccionaba al cambio de hora.
+- Ya no hay una pausa al final de cada tramo de un viaje largo: el siguiente
+  tramo se pide en la misma actualización.
+- El turno para buscar ruta rota entre todos los NPC, y
+  `path-starts-per-update` pasa de 2 a 4.
+- Nuevo `routines.random-walk-pause-seconds` (2 por defecto): descanso en cada
+  punto de un paseo aleatorio.
+
+Nodos de netherita:
+- `link-range` y `endpoint-range` se miden en horizontal. Nuevo
+  `routines.nodes.max-y-difference` (8 por defecto) limita aparte la altura
+  entre nodos conectados.
+- Las conexiones entre nodos se calculan en un margen de 6 bloques a los lados
+  y de `max-y-difference` en altura, así caben caminos curvos y rampas.
+- Las conexiones entre nodos se guardan y las comparten todos los NPC. Al
+  cambiar de hora con 20 NPC saliendo a la vez en viajes largos, el último
+  empezaba a andar a los 37 s; ahora a los 4 s. Romper o colocar cualquier
+  bloque cerca vuelve a medirlas.
+- El escaneo lee solo la franja de altura del viaje, no la columna entera.
+- `search-nodes-per-update` pasa de 256 a 1024; el tope de 2 ms por
+  actualización no cambia.
+- En suelo llano y despejado el NPC camina en línea recta entre nodos en vez
+  de en escalera, sin dejar de pasar por cada nodo. Saltarse un nodo que queda
+  en el camino, por ejemplo en una esquina, cuesta más que pasar por él.
+
+Saludo:
+- Si un jugador se agacha dos veces rápido a menos de 5 bloques de un NPC, el
+  más cercano lo mira, saluda con la mano y se detiene unos segundos. Sin
+  mensaje en el chat. Configurable en `npc-greetings`. Un NPC durmiendo no se
+  levanta, y un golpe interrumpe el saludo.
+- El gesto necesita la skin de jugador (LibsDisguises); sin ella, solo mira.
+
+No probado en un servidor real.
+
 # MDVNPC 1.14.1 — correcciones de auditoría y pathfinding
 
 Sin cambios en la API ni en `config.yml`.

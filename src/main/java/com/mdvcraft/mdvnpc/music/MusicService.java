@@ -113,7 +113,7 @@ public final class MusicService {
         if(!npc.entity().isValid())return instrument+": NPC descargado";
         if(!plugin.routines().canInteract(npc))return instrument+": fuera del puesto o del horario de Trabajo";
         if(plugin.traits()!=null && plugin.traits().busy(id))return instrument+": pausa para beber";
-        if(plugin.reactions()!=null && plugin.reactions().busy(id))return instrument+": pausa por un golpe";
+        if(plugin.reactions()!=null && plugin.reactions().busy(id))return instrument+(plugin.reactions().greeting(id)?": pausa para saludar":": pausa por un golpe");
         for(Session session:sessions.values())for(Member member:session.members)if(member.npc==npc) {
             String song=switch(session.song.name()) {
                 case "tourdion" -> "Tourdion";case "jabali" -> "El Jabalí";case "farol" -> "El Farol";

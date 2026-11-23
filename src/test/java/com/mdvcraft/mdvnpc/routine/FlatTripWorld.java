@@ -26,6 +26,8 @@ public final class FlatTripWorld {
     public int nativeSearches;
     public double walked, minX, firstNativeSearchX;
     public boolean loaded = true, rejectOnce;
+    /** When positive, Paper returns segments of at most this many blocks, as a long trip does. */
+    public int segment;
     private final Set<Column> markers = new HashSet<>(), panels = new HashSet<>();
     /** Further NPCs that do move, each with its own feet position. */
     private final Map<String, Location[]> walkers = new HashMap<>();
@@ -108,14 +110,15 @@ public final class FlatTripWorld {
         List<Location> points = new ArrayList<>();
         int x = from.getBlockX(), z = from.getBlockZ();
         points.add(at(x, z));
-        while (x != to.getBlockX() || z != to.getBlockZ()) {
+        while ((x != to.getBlockX() || z != to.getBlockZ()) && (segment <= 0 || points.size() <= segment)) {
             if (x != to.getBlockX()) x += Integer.signum(to.getBlockX() - x);
             else z += Integer.signum(to.getBlockZ() - z);
             points.add(at(x, z));
         }
+        boolean whole = x == to.getBlockX() && z == to.getBlockZ();
         Pathfinder.PathResult result = mock(Pathfinder.PathResult.class, withSettings().stubOnly());
         doReturn(points).when(result).getPoints();
-        doReturn(true).when(result).canReachFinalPoint();
+        doReturn(whole).when(result).canReachFinalPoint();
         return result;
     }
 

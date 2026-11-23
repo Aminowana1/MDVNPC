@@ -130,4 +130,23 @@ class NetheriteNodeIndexTest {
         assertTrue(scan.done()); assertTrue(scan.truncated()); assertTrue(scan.result().isEmpty());
         verify(world, never()).getChunkAt(anyInt(), anyInt());
     }
+
+    @Test void onlyTheHeightBandOfTheTripIsRead() {
+        buried.add(new Node(3, 6, 3));   // guides feet at y 8, the height of the trip
+        buried.add(new Node(4, 12, 4));  // guides feet at y 14, beyond a range of 2
+        NetheriteNodeIndex.Scan band = index.discover(world, start, goal, 0, 256, 2);
+        int reads = 0;
+        while (!band.done()) reads += band.advance(4096);
+        assertEquals(Set.of(new Node(3, 8, 3)), Set.copyOf(band.result()));
+        assertTrue(reads < 256 * 6, "read " + reads + " blocks for five rows");
+
+        // The cached band is narrower than a full scan, which reads the chunk again.
+        NetheriteNodeIndex.Scan full = index.discover(world, start, goal, 0, 256);
+        finish(full);
+        assertEquals(Set.of(new Node(3, 8, 3), new Node(4, 14, 4)), Set.copyOf(full.result()));
+        // And a narrower trip reuses the wider cache.
+        NetheriteNodeIndex.Scan again = index.discover(world, start, goal, 0, 256, 2);
+        assertEquals(1, again.advance(4096));
+        assertEquals(Set.of(new Node(3, 8, 3)), Set.copyOf(again.result()));
+    }
 }

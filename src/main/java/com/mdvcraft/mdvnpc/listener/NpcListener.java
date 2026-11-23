@@ -152,8 +152,14 @@ public final class NpcListener implements Listener {
     public void entitiesUnload(EntitiesUnloadEvent event) { event.getEntities().forEach(plugin.manager()::entityUnloaded); }
     @EventHandler
     public void worldLoad(WorldLoadEvent event) { plugin.manager().worldLoaded(); }
+    /** Crouching twice quickly near an NPC is a greeting it answers with a wave. */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void sneak(PlayerToggleSneakEvent event) {
+        if (event.isSneaking() && plugin.reactions() != null) plugin.reactions().sneaked(event.getPlayer());
+    }
     @EventHandler
     public void quit(PlayerQuitEvent event) {
+        if (plugin.reactions() != null) plugin.reactions().forget(event.getPlayer().getUniqueId());
         deniedAt.remove(event.getPlayer().getUniqueId());
         plugin.manager().forget(event.getPlayer().getUniqueId());
         plugin.routines().forget(event.getPlayer().getUniqueId());

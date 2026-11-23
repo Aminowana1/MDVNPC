@@ -38,6 +38,8 @@ public final class RoutineService {
     private BukkitTask task;
     private long ticks;
     private int cadence;
+    /** Rest at each point of a random walk. */
+    private long randomPauseTicks=40;
     private int passiveCadence,pathStarts;
     private double activationRange;
     private boolean danceEnabled;
@@ -102,7 +104,7 @@ public final class RoutineService {
     public void start() {
         cadence=Math.max(1,Math.min(4,plugin.settings().messages().getInt("routines.movement-interval-ticks",2)));
         passiveCadence=Math.max(2,Math.min(20,plugin.settings().messages().getInt("routines.passive-update-ticks",8)));
-        pathStarts=Math.max(1,Math.min(8,plugin.settings().messages().getInt("routines.path-starts-per-update",2)));
+        pathStarts=Math.max(1,Math.min(8,plugin.settings().messages().getInt("routines.path-starts-per-update",4)));
         activationRange=Math.max(16,Math.min(128,plugin.settings().messages().getDouble("routines.activation-range",48)));
         if(!Double.isFinite(activationRange))activationRange=48;
         danceEnabled=plugin.settings().messages().getBoolean("routines.dancing",true);
@@ -114,7 +116,9 @@ public final class RoutineService {
         navigator.configureNodes(nodesEnabled,cfg.getInt("routines.nodes.link-range",12),
                 cfg.getInt("routines.nodes.endpoint-range",16),cfg.getInt("routines.nodes.scan-margin",24),
                 cfg.getInt("routines.nodes.max-distance",256),cfg.getInt("routines.nodes.scan-blocks-per-update",8192),
-                cfg.getInt("routines.nodes.search-nodes-per-update",256));
+                cfg.getInt("routines.nodes.search-nodes-per-update",1024),
+                cfg.getInt("routines.nodes.max-y-difference",8));
+        randomPauseTicks=Math.round(20*Math.max(0,Math.min(30,cfg.getDouble("routines.random-walk-pause-seconds",2))));
         stuckHopEnabled=cfg.getBoolean("routines.stuck-hop.enabled",true);
         stuckHopDelayTicks=20L*Math.max(1,Math.min(60,cfg.getInt("routines.stuck-hop.delay-seconds",3)));
         double hopHeight=cfg.getDouble("routines.stuck-hop.height",.6),hopDistance=cfg.getDouble("routines.stuck-hop.distance",1);
@@ -136,6 +140,10 @@ public final class RoutineService {
         dialogueStates.clear(); unavailableStates.clear();staticFloors.clear();
     }
     public void close() { stop(); choices.clear(); clocks.close(); }
+    public void invalidateTerrain(World world,int blockX,int blockZ) {
+        if(navigator!=null)navigator.invalidateTerrain(world,blockX,blockZ);
+        if(plugin.companions()!=null)plugin.companions().invalidateTerrain(world,blockX,blockZ);
+    }
     public void invalidateNodes(World world,int blockX,int blockZ) {
         if(navigator!=null)navigator.invalidateNodes(world,blockX,blockZ);
         if(plugin.companions()!=null)plugin.companions().invalidateNodes(world,blockX,blockZ);
@@ -245,6 +253,11 @@ public final class RoutineService {
         return s!=null && s.npc==npc && !s.paused && s.goal!=null && s.goal.type()!=RoutineGoal.Type.SLEEP
                 && same(s.window,window(npc.definition().id(),npc.entity().getWorld())) && !failed.contains(npc.definition().id());
     }
+    /** A sleeper does not get up to greet; everyone else may pause for it. */
+    public boolean canGreet(ActiveNpc npc) {
+        State s=states.get(npc.definition().id());
+        return s==null || s.npc!=npc || s.pose==null || !s.pose.sleeping;
+    }
     public void prepareReaction(ActiveNpc npc) {
         State s=states.get(npc.definition().id());if(s==null)return;
         clearStuckHop(s);
@@ -320,7 +333,7 @@ public final class RoutineService {
         if(clockElapsed>=10) {clocks.tick(clockElapsed);clockElapsed=0;}
         var manager=plugin.manager(); if(manager==null) return;
         navigator.beginTick(ticks,pathStarts,2_000_000);
-        for(ActiveNpc npc:manager.activeNpcs()) {
+        for(ActiveNpc npc:rotated(manager.activeNpcs())) {
             String id=npc.definition().id();
             if(!npc.entity().isValid()){staticFloors.remove(id);if(blacksmiths!=null)blacksmiths.stop(id);if(fishermen!=null)fishermen.stop(id);continue;}
             if(failed.contains(id))continue;
@@ -354,6 +367,12 @@ public final class RoutineService {
             long now=System.nanoTime(); dialogueStates.values().removeIf(v->now>=v.due && now-v.lastSeen>60_000_000_000L);
         }
     }
+    /** The shared search allowance goes first to whoever is first: rotate who that is. */
+    private List<ActiveNpc> rotated(java.util.Collection<ActiveNpc> npcs) {
+        List<ActiveNpc> order=new ArrayList<>(npcs);
+        if(order.size()>1)java.util.Collections.rotate(order,-(int)Math.floorMod(ticks/cadence,(long)order.size()));
+        return order;
+    }
     /** Static NPCs share the floor helper without creating a routine, pose, or job state. */
     private void updateStaticFloor(ActiveNpc npc) {
         String id=npc.definition().id();StaticFloorState s=staticFloors.get(id);
@@ -385,7 +404,10 @@ public final class RoutineService {
             s.nextPresence=ticks+20;
             // Spectators can follow an NPC too. Keep the configured activation range;
             // the wider visibility guard below is queried only for pending recovery.
-            boolean absent=position.getWorld().getNearbyPlayers(position,range,p -> !p.isDead()).isEmpty();
+            // A player whose client draws this NPC must see it keep its schedule, even
+            // beyond the activation range: otherwise it would look frozen from afar.
+            boolean absent=position.getWorld().getNearbyPlayers(position,range,p -> !p.isDead()).isEmpty()
+                    && npc.entity().getTrackedBy().isEmpty();
             if(absent) {
                 clearStuckHop(s);
                 if(!s.paused) {
@@ -457,7 +479,7 @@ public final class RoutineService {
         if(plugin.reactions()!=null && plugin.reactions().busy(id)) {
             clearStuckHop(s);interruptBlacksmith(s);
             if(!suspendFishermanReaction(s))interruptFisherman(s);
-            gravity.reset(s.gravity);s.status="enfadado: mirando al jugador";s.travelSince=ticks;return;
+            gravity.reset(s.gravity);s.status=plugin.reactions().greeting(id)?"saludando a un jugador":"enfadado: mirando al jugador";s.travelSince=ticks;return;
         }
         if(plugin.traits()!=null && plugin.traits().busy(id)) {clearStuckHop(s);interruptBlacksmith(s);interruptFisherman(s);gravity.reset(s.gravity);s.status="bebiendo cerveza ofrecida";s.travelSince=ticks;return;}
         if(s.fishermanReactionPaused) {
@@ -624,7 +646,7 @@ public final class RoutineService {
                 s.point++;
                 if(goal.target() && s.point>=goal.points().size()) {s.chain++;s.goal=null;s.point=0;}
                 else if(s.point>=goal.points().size()) s.point=0;
-                s.destination=null;s.approach=null;s.nextPick=ticks+(goal.mode()==RoutineGoal.WalkMode.RANDOM?40:0);
+                s.destination=null;s.approach=null;s.nextPick=ticks+(goal.mode()==RoutineGoal.WalkMode.RANDOM?randomPauseTicks:0);
             }
             case SIT,SLEEP -> {
                 UUID before=internalEntity; internalEntity=npc.entity().getUniqueId();mounting=true;

@@ -22,13 +22,18 @@ public final class NetheriteNodeIndex {
     private static final int SNAPSHOTS_PER_ADVANCE = 4;
     private static final int MAX_INVALIDATIONS = 2048;
     private record ChunkKey(World world, int x, int z) {}
-    private record CachedChunk(long expires, List<Node> markers) {}
+    /** Markers whose netherite lies between {@code low} and {@code high}, the rows that were read. */
+    private record CachedChunk(long expires, List<Node> markers, int low, int high) {}
     private final int maxCachedChunks;
     private final long cacheNanos;
     private final Map<ChunkKey, CachedChunk> cache = new LinkedHashMap<>(32, .75f, true);
     private final Map<ChunkKey, Long> invalidations = new LinkedHashMap<>();
     private long revision;
     private long discardedRevision;
+    private static final int MAX_EDGES = 8192;
+    private record EdgeKey(World world, Node from, Node to) {}
+    private record CachedEdge(long expires, List<Node> path, int minX, int maxX, int minZ, int maxZ) {}
+    private final Map<EdgeKey, CachedEdge> edges = new LinkedHashMap<>(64, .75f, true);
 
     // Our listener reports marker edits; the expiry only covers silent edits (WorldEdit, /setblock).
     public NetheriteNodeIndex() { this(256, 30_000); }
@@ -40,12 +45,45 @@ public final class NetheriteNodeIndex {
     /** Full-height snapshots also discover markers on bridges and other stacked floors.
      * A trip beyond the configured horizontal span declines node routing. */
     public Scan discover(World world, Location start, Location goal, int padding, int maxDistance) {
-        return new Scan(world, start, goal, padding, maxDistance);
+        return new Scan(world, start, goal, padding, maxDistance, Integer.MAX_VALUE);
+    }
+    /** Reads only the rows that can hold a marker within {@code yRange} of the trip's heights. */
+    public Scan discover(World world, Location start, Location goal, int padding, int maxDistance, int yRange) {
+        return new Scan(world, start, goal, padding, maxDistance, yRange);
+    }
+
+    /** Marker-to-marker connections shared by every trip in {@code world}. */
+    public NetheriteNodeRouter.EdgeCache edges(World world) {
+        return new NetheriteNodeRouter.EdgeCache() {
+            @Override public List<Node> get(Node from, Node to) {
+                EdgeKey key = new EdgeKey(world, from, to);
+                CachedEdge edge = edges.get(key);
+                if (edge == null) return null;
+                if (System.nanoTime() >= edge.expires) { edges.remove(key); return null; }
+                return edge.path;
+            }
+            @Override public void put(Node from, Node to, List<Node> path) {
+                // Reach covers the corridor plus the neighbours its collision checks read.
+                int reach = NetheriteNodeRouter.CORRIDOR_MARGIN + 1;
+                edges.put(new EdgeKey(world, from, to), new CachedEdge(System.nanoTime() + cacheNanos, List.copyOf(path),
+                        (Math.min(from.x(), to.x()) - reach) >> 4, (Math.max(from.x(), to.x()) + reach) >> 4,
+                        (Math.min(from.z(), to.z()) - reach) >> 4, (Math.max(from.z(), to.z()) + reach) >> 4));
+                while (edges.size() > MAX_EDGES) edges.remove(edges.keySet().iterator().next());
+            }
+        };
+    }
+
+    /** Any block edit may open or close a shared connection; markers themselves stay cached. */
+    public void invalidateEdges(World world, int blockX, int blockZ) {
+        int cx = blockX >> 4, cz = blockZ >> 4;
+        if (!edges.isEmpty()) edges.entrySet().removeIf(e -> e.getKey().world() == world
+                && cx >= e.getValue().minX && cx <= e.getValue().maxX && cz >= e.getValue().minZ && cz <= e.getValue().maxZ);
     }
 
     public void invalidate(World world, int blockX, int blockZ) {
         ChunkKey key = new ChunkKey(world, blockX >> 4, blockZ >> 4);
         cache.remove(key);
+        invalidateEdges(world, blockX, blockZ);
         invalidations.remove(key); invalidations.put(key, ++revision);
         while (invalidations.size() > MAX_INVALIDATIONS) {
             ChunkKey oldest = invalidations.keySet().iterator().next();
@@ -53,7 +91,7 @@ public final class NetheriteNodeIndex {
         }
     }
     public void clear() {
-        cache.clear(); invalidations.clear(); discardedRevision = ++revision;
+        cache.clear(); edges.clear(); invalidations.clear(); discardedRevision = ++revision;
     }
 
     public final class Scan {
@@ -62,6 +100,8 @@ public final class NetheriteNodeIndex {
         private final LinkedHashSet<Node> markers = new LinkedHashSet<>();
         private final Map<ChunkKey, List<Node>> scanned = new HashMap<>();
         private final int minimumHeight, maximumHeight;
+        /** Netherite rows read in every column. */
+        private int bandLow, bandHigh;
         private int chunkIndex, column, y, top;
         private boolean columnStarted;
         private boolean done, truncated;
@@ -72,7 +112,7 @@ public final class NetheriteNodeIndex {
         private long scanRevision;
         private int furthest;
 
-        private Scan(World world, Location start, Location goal, int padding, int maxDistance) {
+        private Scan(World world, Location start, Location goal, int padding, int maxDistance, int yRange) {
             this.world = world;
             scanRevision = revision;
             minimumHeight = world == null ? 0 : world.getMinHeight();
@@ -80,6 +120,10 @@ public final class NetheriteNodeIndex {
             if (world == null || start == null || goal == null || start.getWorld() != world
                     || goal.getWorld() != world || !finite(start) || !finite(goal)
                     || maximumHeight <= minimumHeight) { done = true; return; }
+            // A marker's netherite lies two blocks below the feet it guides.
+            long reach = Math.max(0, yRange);
+            bandLow = (int) Math.max(minimumHeight, Math.min(start.getBlockY(), goal.getBlockY()) - reach - 2);
+            bandHigh = (int) Math.min(maximumHeight - 1, Math.max(start.getBlockY(), goal.getBlockY()) + reach - 2);
             int limit = Math.max(16, Math.min(512, maxDistance));
             if (Math.abs((long) goal.getBlockX() - start.getBlockX()) > limit
                     || Math.abs((long) goal.getBlockZ() - start.getBlockZ()) > limit) {
@@ -121,8 +165,10 @@ public final class NetheriteNodeIndex {
                         cache.remove(next); scanned.put(next, List.of()); chunkIndex++; used++; continue;
                     }
                     CachedChunk cached = cache.get(next);
-                    if (cached != null && System.nanoTime() < cached.expires) {
-                        scanned.put(next, cached.markers); add(cached.markers); chunkIndex++; used++; continue;
+                    if (cached != null && System.nanoTime() < cached.expires && cached.low <= bandLow && cached.high >= bandHigh) {
+                        List<Node> inBand = cached.markers.stream()
+                                .filter(m -> m.y() - 2 >= bandLow && m.y() - 2 <= bandHigh).toList();
+                        scanned.put(next, inBand); add(inBand); chunkIndex++; used++; continue;
                     }
                     if (snapshots >= SNAPSHOTS_PER_ADVANCE) break;
                     snapshots++; used++;
@@ -149,8 +195,8 @@ public final class NetheriteNodeIndex {
                 int x = column & 15, z = column >> 4;
                 if (!columnStarted) {
                     // Nothing can be buried above the highest block, so skip that sky.
-                    top = Math.min(maximumHeight - 1, snapshot.getHighestBlockYAt(x, z));
-                    y = minimumHeight; columnStarted = true;
+                    top = Math.min(bandHigh, Math.min(maximumHeight - 1, snapshot.getHighestBlockYAt(x, z)));
+                    y = bandLow; columnStarted = true;
                 }
                 if (y > top) { // An empty (void) column still costs one read of the height map.
                     used++; nextColumn(); continue;
@@ -182,7 +228,7 @@ public final class NetheriteNodeIndex {
         }
         private void finishChunk() {
             List<Node> found = List.copyOf(chunkMarkers);
-            cache.put(scanning, new CachedChunk(System.nanoTime() + cacheNanos, found));
+            cache.put(scanning, new CachedChunk(System.nanoTime() + cacheNanos, found, bandLow, bandHigh));
             while (cache.size() > maxCachedChunks) cache.remove(cache.keySet().iterator().next());
             scanned.put(scanning, found);
             // From the start: an edit may have reopened a chunk behind this one.

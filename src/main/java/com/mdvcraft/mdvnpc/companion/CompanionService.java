@@ -98,7 +98,8 @@ public final class CompanionService implements MdvNpcApi {
                 cfg.getInt("routines.nodes.link-range", 12), cfg.getInt("routines.nodes.endpoint-range", 16),
                 cfg.getInt("routines.nodes.scan-margin", 24), cfg.getInt("routines.nodes.max-distance", 256),
                 cfg.getInt("routines.nodes.scan-blocks-per-update", 8192),
-                cfg.getInt("routines.nodes.search-nodes-per-update", 256));
+                cfg.getInt("routines.nodes.search-nodes-per-update", 1024),
+                cfg.getInt("routines.nodes.max-y-difference", 8));
     }
 
     public void close() {
@@ -119,6 +120,11 @@ public final class CompanionService implements MdvNpcApi {
 
     public CompanionSettings settings() {
         return settings;
+    }
+
+    public void invalidateTerrain(World world, int blockX, int blockZ) {
+        if (navigator != null)
+            navigator.invalidateTerrain(world, blockX, blockZ);
     }
 
     public void invalidateNodes(World world, int blockX, int blockZ) {

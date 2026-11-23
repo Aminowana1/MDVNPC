@@ -24,7 +24,7 @@ public final class RoutineNavigator {
     private enum SearchFailure { NONE, NO_ROUTE, CHUNK, DENIED_DOOR }
     private static final int[] PAPER_SEARCH_RANGES = {16, 24, 32, 48, 64};
     private static final int MAX_PATH_POINTS = 2048;
-    private static final int LOCAL_RETRY_TICKS = 4, PARTIAL_RETRY_TICKS = 4,
+    private static final int LOCAL_RETRY_TICKS = 4,
             CHUNK_RETRY_TICKS = 20, IMPOSSIBLE_RETRY_TICKS = 100;
     private static final int STUCK_TICKS = 36;
     /** A followed player's goal moves every 1.5 blocks; its route is replaced only when
@@ -83,7 +83,7 @@ public final class RoutineNavigator {
     private final NetheriteNodeIndex nodeIndex = new NetheriteNodeIndex();
     private boolean nodesEnabled;
     private int nodeLinkRange=12, nodeEndpointRange=16, nodeScanMargin=24, nodeMaxDistance=256;
-    private int nodeBlockBudget=8192, nodeSearchBudget=256, nodeBlocksLeft, nodeSearchLeft;
+    private int nodeBlockBudget=8192, nodeSearchBudget=1024, nodeBlocksLeft, nodeSearchLeft, nodeMaxYDifference=8;
 
     private record PathPlan(List<Location> points, boolean reachesFinal, Location endpoint) {}
     private record SearchOutcome(PathPlan plan, SearchFailure failure) {}
@@ -95,6 +95,8 @@ public final class RoutineNavigator {
         Location destination;
         /** The path still leads to the previous destination: walk it until a search is free. */
         boolean stalePath;
+        /** The update in which a finished partial segment already searched for the next one. */
+        long continuedTick=Long.MIN_VALUE;
         /** False for trips that must never wait for node planning. */
         final boolean guided;
         List<Location> path;
@@ -193,7 +195,13 @@ public final class RoutineNavigator {
     /** Hidden netherite markers guide long trips; terrain replay still owns every step. */
     public void configureNodes(boolean enabled,int linkRange,int endpointRange,int scanMargin,
                                int maxDistance,int blockBudget,int searchBudget) {
+        configureNodes(enabled,linkRange,endpointRange,scanMargin,maxDistance,blockBudget,searchBudget,8);
+    }
+    /** Ranges are horizontal; {@code maxYDifference} limits the height between linked markers. */
+    public void configureNodes(boolean enabled,int linkRange,int endpointRange,int scanMargin,
+                               int maxDistance,int blockBudget,int searchBudget,int maxYDifference) {
         nodesEnabled=enabled;
+        nodeMaxYDifference=Math.max(1,Math.min(32,maxYDifference));
         nodeLinkRange=Math.max(2,Math.min(32,linkRange));
         nodeEndpointRange=Math.max(2,Math.min(48,endpointRange));
         nodeScanMargin=Math.max(0,Math.min(64,scanMargin));
@@ -204,6 +212,10 @@ public final class RoutineNavigator {
     }
     public void invalidateNodes(org.bukkit.World world,int blockX,int blockZ) {
         if(nodesEnabled)nodeIndex.invalidate(world,blockX,blockZ);
+    }
+    /** An ordinary block edit: shared marker connections near it are measured again. */
+    public void invalidateTerrain(org.bukkit.World world,int blockX,int blockZ) {
+        if(nodesEnabled)nodeIndex.invalidateEdges(world,blockX,blockZ);
     }
     /** Compatibility with older integrations; the former A* limits and route cache are unused. */
     public RoutineNavigator(DoorController doors, BiPredicate<ActiveNpc, Location> teleport, int maxNodes, int cacheSize) {
@@ -580,8 +592,14 @@ public final class RoutineNavigator {
             // The end of a stale path is not a segment of this trip: search again at once.
             if (!travel.pathReachesFinal && !travel.stalePath) rememberPartialEndpoint(travel);
             travel.riserWaypoint = null; travel.riserHeight = Double.NaN; travel.riserBaseY = Double.NaN; travel.dropHeight = Double.NaN;
-            travel.retry = travel.stalePath ? tick : tick + PARTIAL_RETRY_TICKS;
             travel.path = null; travel.pending = true; travel.stalePath = false;
+            // Keep walking in this same update: a pause at every segment end looks like a random
+            // stop. Without a search left now, the next update tries again at once.
+            travel.retry = tick;
+            if (travel.continuedTick != tick) {
+                travel.continuedTick = tick;
+                return advance(travel, current, speed, tick, cadence);
+            }
             return Result.WAITING;
         }
         Location next = travel.path.get(travel.index);
@@ -1016,7 +1034,7 @@ public final class RoutineNavigator {
     /** Discovery and every local A* connector consume shared per-update allowances. */
     private PathPlan findNodePath(Travel travel,Location current) {
         if(travel.nodeScan==null)
-            travel.nodeScan=nodeIndex.discover(current.getWorld(),current,travel.destination,nodeScanMargin,nodeMaxDistance);
+            travel.nodeScan=nodeIndex.discover(current.getWorld(),current,travel.destination,nodeScanMargin,nodeMaxDistance,nodeMaxYDifference);
         if(!travel.nodeScan.done()) {
             if(nodeBlocksLeft<=0)return null;
             nodeBlocksLeft-=travel.nodeScan.advance(nodeBlocksLeft);
@@ -1045,7 +1063,8 @@ public final class RoutineNavigator {
                             && (delta<=0 || travel.terrain.fenceClearAtBase(b.x()+.5,from,b.z()+.5));
                 }
             };
-            travel.nodeRouter=new NetheriteNodeRouter(markers,grid,start,goal,nodeLinkRange,nodeEndpointRange,2048);
+            travel.nodeRouter=new NetheriteNodeRouter(markers,grid,start,goal,nodeLinkRange,nodeEndpointRange,2048,
+                    nodeMaxYDifference,nodeIndex.edges(current.getWorld()));
         }
         if(!travel.nodeRouter.done()) {
             if(nodeSearchLeft<=0)return null;
@@ -1063,9 +1082,10 @@ public final class RoutineNavigator {
             Node raw=travel.markerSources.get(marker);
             if(raw==null || !isMarker(travel,raw))return null;
         }
+        for(Node n:route) if(!travel.terrain.stand(n))return null;
+        route=smoothed(travel,route,new HashSet<>(travel.nodeRouter.markers()));
         List<Location> points=new ArrayList<>();
         for(Node n:route) {
-            if(!travel.terrain.stand(n))return null;
             points.add(travel.terrain.location(n));
         }
         Location last=points.getLast();
@@ -1073,6 +1093,45 @@ public final class RoutineNavigator {
         if(last.distanceSquared(travel.destination)>.0001)points.add(travel.destination.clone());
         travel.routeMarkers=travel.nodeRouter.markers();travel.markerIndex=0;travel.nodePath=true;
         return new PathPlan(List.copyOf(points),true,points.getLast().clone());
+    }
+    private static final int MAX_SMOOTH_SPAN = 16;
+    /** The grid only walks in four directions. On one open, flat floor a straight line replaces
+     * its staircase; markers stay waypoints, so the marked road is still followed. */
+    private static List<Node> smoothed(Travel travel,List<Node> route,Set<Node> markers) {
+        if(route.size()<3)return route;
+        List<Node> out=new ArrayList<>();out.add(route.getFirst());
+        int i=0;
+        while(i<route.size()-1) {
+            int best=i+1;
+            for(int j=i+2;j<route.size() && j-i<=MAX_SMOOTH_SPAN;j++) {
+                if(markers.contains(route.get(j-1)) || !flatRun(travel,route,i,j))break;
+                best=j;
+            }
+            out.add(route.get(best));i=best;
+        }
+        return out;
+    }
+    private static boolean flatRun(Travel travel,List<Node> route,int from,int to) {
+        Node a=route.get(from),b=route.get(to);
+        double floor=travel.terrain.height(a);
+        for(int k=from;k<=to;k++) {
+            Node n=route.get(k);
+            if(n.y()!=a.y() || Math.abs(travel.terrain.height(n)-floor)>1e-9 || !open(travel,n))return false;
+        }
+        double ax=a.x()+.5,az=a.z()+.5,dx=b.x()-a.x(),dz=b.z()-a.z();
+        int samples=(int)Math.ceil(Math.hypot(dx,dz)/.2);
+        for(int k=1;k<samples;k++) {
+            double x=ax+dx*k/samples,z=az+dz*k/samples;
+            Node cell=new Node((int)Math.floor(x),a.y(),(int)Math.floor(z));
+            if(!open(travel,cell) || !travel.terrain.stand(cell) || Math.abs(travel.terrain.height(cell)-floor)>1e-9
+                    || !travel.terrain.fits(x,floor,z,true))return false;
+        }
+        return true;
+    }
+    /** Only air where the body stands: doors, gates and plants keep the grid's exact cells. */
+    private static boolean open(Travel travel,Node n) {
+        Block feet=travel.terrain.block(n.x(),n.y(),n.z()),head=travel.terrain.block(n.x(),n.y()+1,n.z());
+        return feet!=null && head!=null && feet.getType().isAir() && head.getType().isAir();
     }
     private boolean isMarker(Travel travel,Node raw) {
         Block block=travel.terrain.block(raw.x(),raw.y()-2,raw.z());
