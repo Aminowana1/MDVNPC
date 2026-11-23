@@ -46,6 +46,9 @@ public final class MdvNpcPlugin extends JavaPlugin {
     private com.mdvcraft.mdvnpc.skin.SkinCacheService skins;
     private com.mdvcraft.mdvnpc.companion.CompanionService companions;
     private com.mdvcraft.mdvnpc.runtime.NpcVisibilityService visibility;
+    private final com.mdvcraft.mdvnpc.runtime.NpcSpacing spacing = new com.mdvcraft.mdvnpc.runtime.NpcSpacing();
+    /** Where every NPC stands, so that none walks through another. */
+    public com.mdvcraft.mdvnpc.runtime.NpcSpacing spacing() { return spacing; }
     private final Messages messages = new Messages(this::settings);
     private Map<String, NpcDefinition> definitions = Map.of();
 

@@ -2,6 +2,8 @@ package com.mdvcraft.mdvnpc.routine;
 
 import com.mdvcraft.mdvnpc.MdvNpcPlugin;
 import com.mdvcraft.mdvnpc.runtime.ActiveNpc;
+import com.mdvcraft.mdvnpc.runtime.NpcSpacing;
+import org.bukkit.FluidCollisionMode;
 import com.mdvcraft.mdvnpc.trait.Trait;
 import org.bukkit.Location;
 import org.bukkit.World;
@@ -16,6 +18,10 @@ public final class DanceController {
     public enum Result { MOVING, DANCING, FINISHED }
     private static final double HEARING_RADIUS = 14, JUMP_HEIGHT = .70;
     private static final int JUMP_TICKS = 12;
+    /** A dancer must see the musician: checked this often, and it stops after this long without. */
+    private static final int SIGHT_CHECK_TICKS = 20, SIGHT_LOST_TICKS = 60, SPOT_SIGHT_CHECKS = 6;
+    private static final double EYE_HEIGHT = 1.62;
+    private final NpcSpacing spacing;
     private final MdvNpcPlugin plugin;
     private final RoutineNavigator navigator;
     private final BiPredicate<ActiveNpc, Location> teleport;
@@ -32,15 +38,40 @@ public final class DanceController {
         Location returnTo, destination, jumpGround;
         FloorKey floorKey; FloorEntry floor;
         long approachUntil, duration, until, nextGesture, nextMove, nextJump, jumpStart;
+        long nextSight, blindSince = -1;
         boolean started, sneaking, previousSneaking;
     }
 
     public DanceController(MdvNpcPlugin plugin, RoutineNavigator navigator, BiPredicate<ActiveNpc, Location> teleport) {
-        this(plugin, navigator, teleport, ThreadLocalRandom.current());
+        this(plugin, navigator, teleport, null, ThreadLocalRandom.current());
+    }
+    public DanceController(MdvNpcPlugin plugin, RoutineNavigator navigator, BiPredicate<ActiveNpc, Location> teleport, NpcSpacing spacing) {
+        this(plugin, navigator, teleport, spacing, ThreadLocalRandom.current());
     }
     DanceController(MdvNpcPlugin plugin, RoutineNavigator navigator, BiPredicate<ActiveNpc, Location> teleport, RandomGenerator random) {
+        this(plugin, navigator, teleport, null, random);
+    }
+    DanceController(MdvNpcPlugin plugin, RoutineNavigator navigator, BiPredicate<ActiveNpc, Location> teleport,
+                    NpcSpacing spacing, RandomGenerator random) {
         this.plugin = plugin; this.navigator = navigator; this.teleport = teleport; this.random = random;
+        this.spacing = spacing;
         doors = new DoorController(plugin);
+    }
+    /** Dancers keep their own spacing, never closer than the one every NPC keeps. */
+    private double gap(double distance) {
+        return spacing != null && spacing.enabled() ? Math.max(distance, spacing.minDistance()) : distance;
+    }
+    /** Eye to eye; glass and any other solid block hide the musician. */
+    private static boolean sees(ActiveNpc npc, ActiveNpc musician) {
+        return npc.entity().hasLineOfSight(musician.entity());
+    }
+    private static boolean visibleFrom(Location spot, ActiveNpc musician) {
+        Location eye = spot.clone().add(0, EYE_HEIGHT, 0), target = musician.entity().getEyeLocation();
+        if (target == null || target.getWorld() != eye.getWorld()) return false;
+        var direction = target.toVector().subtract(eye.toVector());
+        double distance = direction.length();
+        if (distance < .01) return true;
+        return eye.getWorld().rayTraceBlocks(eye, direction.normalize(), distance, FluidCollisionMode.NEVER, true) == null;
     }
 
     /** The owner checks sitting, unmounts afterward, and keeps this return point reserved. */
@@ -49,7 +80,8 @@ public final class DanceController {
         if (npc.definition().traits().type() != Trait.PARTYGOER || active.containsKey(id) || !npc.entity().isValid()
                 || plugin.music() == null || returnTo == null || !loaded(returnTo)) return false;
         Location current = npc.position();
-        ActiveNpc musician = plugin.music().nearestPerformer(current, HEARING_RADIUS);
+        // The nearest musician this dancer can see: one behind a wall does not count.
+        ActiveNpc musician = plugin.music().nearestPerformer(current, HEARING_RADIUS, m -> m != npc && sees(npc, m));
         if (musician == null || musician == npc) return false;
         Location source = musician.position();
         if (!loaded(source) || source.getWorld() != current.getWorld() || returnTo.getWorld() != source.getWorld()) return false;
@@ -70,6 +102,7 @@ public final class DanceController {
         state.destination = spot;
         state.duration = Math.max(1, Math.min(600, plugin.settings().messages().getInt("routines.dance-duration-seconds", 60))) * 20L;
         state.approachUntil = tick + 400;
+        state.nextSight = tick + SIGHT_CHECK_TICKS;
         state.previousSneaking = npc.disguise() != null && npc.disguise().getWatcher().isSneaking();
         state.sneaking = state.previousSneaking;
         active.put(id, state); floor.users++;
@@ -98,16 +131,23 @@ public final class DanceController {
             return Result.DANCING;
         }
         crowd.position(id, current);
+        // Walking up, a corner may hide the band for a moment; dancing, a wall ends it.
+        if (state.started && tick >= state.nextSight) {
+            state.nextSight = tick + SIGHT_CHECK_TICKS;
+            if (sees(npc, state.musician)) state.blindSince = -1;
+            else if (state.blindSince < 0) state.blindSince = tick;
+            if (state.blindSince >= 0 && tick - state.blindSince >= SIGHT_LOST_TICKS) { cancel(id); return Result.FINISHED; }
+        }
         if (!state.started) {
-            if (!state.floor.floor.stand(current) || !crowd.free(id, current, .85)) {
+            if (!state.floor.floor.stand(current) || !crowd.free(id, current, gap(.85))) {
                 if (!state.floor.floor.stand(state.destination)) { cancel(id); return Result.FINISHED; }
                 navigator.move(npc, state.destination, speed, tick, cadence);
                 current = npc.position(); crowd.position(id, current);
-                if (!state.floor.floor.stand(current) || !crowd.free(id, current, .85)) return Result.MOVING;
+                if (!state.floor.floor.stand(current) || !crowd.free(id, current, gap(.85))) return Result.MOVING;
             }
             state.started = true; state.until = tick + state.duration;
             navigator.cancel(id); state.destination = null; crowd.release(id);
-            state.nextMove = tick + 8; state.nextGesture = tick;
+            state.nextMove = tick + 8; state.nextGesture = tick; state.nextSight = tick; state.blindSince = -1;
         } else if (!state.floor.floor.stand(current)) {
             // Never snap upward/downward to repair a dance: the owner resumes its seated goal.
             cancel(id); return Result.FINISHED;
@@ -126,21 +166,29 @@ public final class DanceController {
         return Result.DANCING;
     }
 
-    /** Forty continuous candidates spread across the ring, rather than block-centred slots. */
+    /** Forty continuous candidates spread across the ring, rather than block-centred slots.
+     * The best few are checked for a clear view of the musician. */
     private Location selectSpot(State state, Location previous) {
-        DanceFloor floor = state.floor.floor; Location best = null; double bestScore = -1;
+        DanceFloor floor = state.floor.floor;
+        java.util.List<Location> spots = new java.util.ArrayList<>(); java.util.List<Double> scores = new java.util.ArrayList<>();
         double phase = random.nextDouble() * Math.PI * 2 + (state.npc.definition().id().hashCode() & 255) * Math.PI / 128;
         for (int i = 0; i < 40; i++) {
             double angle = phase + i * 2.399963229728653, radius = 1.25 + (i % 4) * .5;
             Location point = floor.center.clone(); point.setY(floor.y);
             point.add(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
             double moved = previous == null ? state.npc.position().distanceSquared(point) : previous.distanceSquared(point);
-            if (previous != null && moved < .64 || !crowd.free(state.npc.definition().id(), point, 1.05) || !floor.plannedStand(point)) continue;
+            if (previous != null && moved < .64 || !crowd.free(state.npc.definition().id(), point, gap(1.05)) || !floor.plannedStand(point)) continue;
             if (previous != null && !floor.plannedSegment(previous, point)) continue;
-            double score = previous == null ? 1 / (1 + moved) : moved;
-            if (score > bestScore) { best = point; bestScore = score; }
+            if (spacing != null && !spacing.free(state.npc.entity().getUniqueId(), point, spacing.minDistance())) continue;
+            spots.add(point); scores.add(previous == null ? 1 / (1 + moved) : moved);
         }
-        return best;
+        for (int checked = 0; checked < SPOT_SIGHT_CHECKS && !spots.isEmpty(); checked++) {
+            int best = 0;
+            for (int i = 1; i < scores.size(); i++) if (scores.get(i) > scores.get(best)) best = i;
+            Location spot = spots.remove(best); scores.remove(best);
+            if (visibleFrom(spot, state.musician)) return spot;
+        }
+        return null;
     }
 
     private void step(State state, long tick, int cadence, double speed) {
@@ -150,7 +198,9 @@ public final class DanceController {
         double amount = Math.min(distance, Math.max(.6, Math.min(1.8, speed)) * Math.max(1, Math.min(4, cadence)) / 20);
         Location next = current.clone(); next.setY(state.floor.floor.y);
         if (distance > .001) next.add(dx * amount / distance, 0, dz * amount / distance);
-        if (!state.floor.floor.segment(current, next) || !crowd.free(state.npc.definition().id(), next, .8) || !teleport.test(state.npc, next)) {
+        if (!state.floor.floor.segment(current, next) || !crowd.free(state.npc.definition().id(), next, gap(.8))
+                || spacing != null && spacing.blocker(state.npc.entity().getUniqueId(), current, next, null) != null
+                || !teleport.test(state.npc, next)) {
             state.destination = null; crowd.release(state.npc.definition().id()); state.nextMove = tick + 10; return;
         }
         crowd.position(state.npc.definition().id(), next); faceMusic(state.npc, state.musician.position());

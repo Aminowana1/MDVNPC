@@ -3,6 +3,7 @@ package com.mdvcraft.mdvnpc.routine;
 import com.destroystokyo.paper.entity.Pathfinder;
 import com.mdvcraft.mdvnpc.routine.BoundedPathfinder.Node;
 import com.mdvcraft.mdvnpc.runtime.ActiveNpc;
+import com.mdvcraft.mdvnpc.runtime.NpcSpacing;
 import org.bukkit.Location;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
@@ -13,6 +14,7 @@ import org.bukkit.util.Vector;
 import java.lang.reflect.Method;
 import java.util.*;
 import java.util.function.BiPredicate;
+import java.util.function.Predicate;
 
 /**
  * Paper calculates the route; short controlled steps replay its waypoints while the villager
@@ -72,6 +74,15 @@ public final class RoutineNavigator {
     private static final int NODE_STALL_TICKS = 200;
     /** Queueing for the shared budget is not a stall, but it cannot last forever either. */
     private static final int NODE_MAX_WAIT_TICKS = 1200;
+    /** Simulated collision with other NPCs: blocked this long, look for another way. */
+    private static final int DETOUR_TICKS = 10, MAKE_WAY_TICKS = 20, SWAP_TICKS = 60, JAM_RETRY_TICKS = 100;
+    private static final int MAKE_WAY_WAIT_TICKS = 240, DETOUR_RANGE = 14, DETOUR_EXTRA = 10;
+    private static final int DETOUR_NODES = 256, MAKE_WAY_NODES = 200, MAKE_WAY_RANGE = 8;
+    /** A jam with no way out is looked at again after this long, doubling up to the maximum. */
+    private static final int JAM_RETRY_MAX_TICKS = 1200;
+    /** First to the right, so two NPCs that meet head-on pass each other; then to the left. */
+    private static final double[] STEER_DEGREES = {30, 55, 80, 105, -30, -55, -80, -105};
+    private NpcSpacing spacing;
     private final DoorController doors;
     private final BiPredicate<ActiveNpc, Location> teleport;
     private final Map<String, Travel> travels = new LinkedHashMap<>();
@@ -136,6 +147,26 @@ public final class RoutineNavigator {
         long lastProgressTick;
         /** What walkingStep left unspent on reaching the centre of its waypoint. */
         double unusedAllowance;
+        /** Simulated collision: who stops this walk, and for how long. */
+        UUID crowdBlocker;
+        int crowdTicks;
+        boolean crowdDetourTried, makeWayTried, crowded, closeEnough;
+        long jamRetryAt;
+        int jamRetries;
+        /** Where both stood when this walk last found no way round: nothing to try again yet. */
+        Location blockedAt;
+        double blockerX, blockerZ;
+        int blockedIndex;
+        List<Location> blockedPath;
+        /** Stepping aside in a narrow passage until the other NPC has gone by. */
+        boolean makingWay;
+        UUID makeWayFor;
+        long makeWayUntil;
+        double makeWayClosest;
+        /** Only with pass-through-after-seconds: briefly walk through this one NPC. */
+        UUID ghost;
+        long ghostUntil;
+        long priority;
         Travel(ActiveNpc npc, Location destination, DoorController doors, Location start, long tick, boolean guided) {
             this.npc = npc; this.destination = destination.clone();
             this.guided = guided; nodesTried = !guided;
@@ -184,6 +215,8 @@ public final class RoutineNavigator {
     public RoutineNavigator(DoorController doors, BiPredicate<ActiveNpc, Location> teleport) {
         this.doors = doors; this.teleport = teleport;
     }
+    /** Shared positions of every NPC; null walks through other NPCs as before. */
+    public void spacing(NpcSpacing spacing) { this.spacing = spacing; }
     /** Vertical limits in blocks; invalid values fall back to the defaults. */
     public void configureHeights(double climb, double drop, double unannouncedDrop) {
         MAX_CLIMB_HEIGHT = climb > 0 && climb <= 4 ? climb : 1.30;
@@ -427,6 +460,7 @@ public final class RoutineNavigator {
         } else if (travel == null || travel.npc != npc || travel.destination.getWorld() != destination.getWorld()
                 || travel.guided != guided || travel.destination.distanceSquared(destination) > .01) {
             cancel(id); travel = new Travel(npc, destination, doors, current, tick, guided); travels.put(id, travel);
+            if (spacing != null) travel.priority = spacing.nextPriority();
         }
         try (RoutineTerrain.Update ignored = travel.terrain.beginUpdate()) {
             return advance(travel, current, speed, tick, cadence);
@@ -461,6 +495,7 @@ public final class RoutineNavigator {
 
     private Result advance(Travel travel, Location current, double speed, long tick, int cadence) {
         travel.doorDeniedDuringStep=false;
+        travel.crowded=false;
         if (travel.nodeScan != null && !travel.nodesTried && travel.planningTicks < NODE_MAX_WAIT_TICKS)
             travel.planningTicks += Math.max(1, cadence);
         ActiveNpc npc = travel.npc;
@@ -586,6 +621,16 @@ public final class RoutineNavigator {
         }
         while (travel.index < travel.path.size()
                 && reachedWaypoint(travel,current,travel.path.get(travel.index))) travel.index++;
+        // A waypoint someone stands on can never be reached: head for the next one instead.
+        if (crowdActive()) while (travel.index + 1 < travel.path.size()
+                && occupiedWaypoint(travel,current,travel.path.get(travel.index),tick)) travel.index++;
+        if (travel.makingWay && travel.index >= travel.path.size()) {
+            if (stillMakingWay(travel,current,tick)) {
+                travel.crowded=true; travel.lastProgressTick=tick; return Result.WAITING;
+            }
+            endMakeWay(travel,current,tick);
+            return Result.WAITING;
+        }
         if (travel.index >= travel.path.size()) {
             // A partial path is a valid segment of a long trip. Re-query from its endpoint;
             // the search level may already have widened if that segment represented a detour.
@@ -609,10 +654,32 @@ public final class RoutineNavigator {
             else localFailure(travel, tick);
             return Result.WAITING;
         }
+        if (crowdActive()) {
+            // Nothing has moved since this walk last had to wait: skip the step it cannot take.
+            NpcSpacing.Entry waiting = stillBlocked(travel,current,tick);
+            if (waiting != null) {
+                waitFor(travel,current,waiting,tick,cadence);
+                if (travel.closeEnough) { cancel(npc.definition().id()); return Result.ARRIVED; }
+                return Result.WAITING;
+            }
+        }
         double distance = Math.max(.01, speed) * Math.max(1, cadence) / 20.0;
         Location step = walkingStep(travel,current,next,distance,tick);
         if(step==null) {localFailure(travel,tick);return Result.WAITING;}
-        step = carryStep(travel,current,step,tick);
+        if (crowdActive()) {
+            Location walked = crowdStep(travel,current,step,tick,cadence);
+            if (walked == null && travel.closeEnough) { cancel(npc.definition().id()); return Result.ARRIVED; }
+            if (walked == null) return Result.WAITING;
+            if (walked != step) step = walked;
+            else {
+                // Carrying on past the waypoint can walk into someone the first part did not.
+                int index = travel.index;
+                Location carried = carryStep(travel,current,step,tick);
+                if (carried != step && spacing.blocker(self(travel),current,carried,ignore(travel,tick)) != null)
+                    travel.index = index;
+                else step = carried;
+            }
+        } else step = carryStep(travel,current,step,tick);
         Vector delta = step.toVector().subtract(current.toVector());
         if (Math.abs(delta.getX()) + Math.abs(delta.getZ()) > .001)
             step.setDirection(new Vector(delta.getX(), 0, delta.getZ()));
@@ -1259,6 +1326,337 @@ public final class RoutineNavigator {
         travel.planningBlocked=true;
     }
 
+
+    // ------------------------------------------------------------------ NPC collision
+
+    private boolean crowdActive() { return spacing != null && spacing.enabled(); }
+    private static UUID self(Travel travel) { return travel.npc.entity().getUniqueId(); }
+    private Predicate<NpcSpacing.Entry> ignore(Travel travel, long tick) {
+        return e -> e.id().equals(travel.ghost) && tick < travel.ghostUntil || placedTogether(travel, e);
+    }
+    /** Seated, working or static beside this trip's own destination: they were put together. */
+    private boolean placedTogether(Travel travel, NpcSpacing.Entry e) {
+        if (!spacing.settled(e)) return false;
+        Location d = travel.destination;
+        if (d.getWorld() != e.world() || Math.abs(e.y() - d.getY()) >= NpcSpacing.SAME_LEVEL) return false;
+        double dx = e.x() - d.getX(), dz = e.z() - d.getZ(), range = spacing.minDistance() + .3;
+        return dx * dx + dz * dz < range * range;
+    }
+
+    /**
+     * The step to take instead, so no body walks into another; null waits this update. In
+     * order: shove an idle NPC aside, steer round it, walk up to it, or wait while someone
+     * looks for another way.
+     */
+    private Location crowdStep(Travel travel, Location current, Location step, long tick, int cadence) {
+        UUID self = self(travel);
+        spacing.priority(self, travel.priority);
+        Predicate<NpcSpacing.Entry> ignore = ignore(travel, tick);
+        NpcSpacing.Entry blocker = spacing.blocker(self, current, step, ignore);
+        if (blocker == null) { clearCrowd(travel, self); return step; }
+        boolean level = Math.abs(step.getY() - current.getY()) < 1e-6
+                && !Double.isFinite(travel.riserHeight) && !Double.isFinite(travel.dropHeight);
+        if (spacing.pushable(blocker) && shove(travel, current, step, blocker)) {
+            blocker = spacing.blocker(self, current, step, ignore);
+            if (blocker == null) { clearCrowd(travel, self); return step; }
+        }
+        // Still waiting where it waited before, for someone who has not moved: the same
+        // turns would fail again. This keeps a long wait almost free.
+        boolean unchanged = blocker.id().equals(travel.crowdBlocker) && travel.blockedAt != null
+                && travel.blockedAt.distanceSquared(current) < 1e-8
+                && Math.abs(travel.blockerX - blocker.x()) < 1e-6 && Math.abs(travel.blockerZ - blocker.z()) < 1e-6;
+        if (level && !unchanged) {
+            Location steered = steer(travel, current, step, ignore);
+            if (steered != null) { travel.crowdTicks = 0; travel.unusedAllowance = 0; return steered; }
+            double t = spacing.allowance(self, current, step, ignore) * .98;
+            if (t > .05) {
+                Location partial = current.clone().add((step.getX() - current.getX()) * t, 0, (step.getZ() - current.getZ()) * t);
+                if (NpcSpacing.walkable(travel.terrain, partial.getX(), partial.getY(), partial.getZ())) {
+                    travel.unusedAllowance = 0; return partial;
+                }
+            }
+        }
+        travel.blockedAt = current.clone(); travel.blockerX = blocker.x(); travel.blockerZ = blocker.z();
+        travel.blockedIndex = travel.index; travel.blockedPath = travel.path;
+        waitFor(travel, current, blocker, tick, cadence);
+        return null;
+    }
+
+    /** The same NPC is in the way, from the same spot, and cannot be shoved: still waiting. */
+    private NpcSpacing.Entry stillBlocked(Travel travel, Location current, long tick) {
+        if (travel.crowdBlocker != null && travel.crowdBlocker.equals(travel.ghost) && tick < travel.ghostUntil) return null;
+        if (travel.crowdBlocker == null || travel.blockedAt == null || travel.blockedAt.distanceSquared(current) >= 1e-8
+                || travel.blockedIndex != travel.index || travel.blockedPath != travel.path) return null;
+        NpcSpacing.Entry blocker = spacing.entry(travel.crowdBlocker);
+        if (blocker == null || blocker.npc() == null || !blocker.npc().entity().isValid() || spacing.pushable(blocker)
+                || Math.abs(travel.blockerX - blocker.x()) >= 1e-6 || Math.abs(travel.blockerZ - blocker.z()) >= 1e-6) return null;
+        return blocker;
+    }
+
+    private void waitFor(Travel travel, Location current, NpcSpacing.Entry blocker, long tick, int cadence) {
+        UUID self = self(travel);
+        travel.crowded = true; travel.lastProgressTick = tick; travel.unusedAllowance = 0;
+        if (!blocker.id().equals(travel.crowdBlocker)) {
+            travel.crowdBlocker = blocker.id(); travel.crowdTicks = 0;
+            travel.crowdDetourTried = false; travel.makeWayTried = false; travel.jamRetryAt = 0;
+        }
+        travel.crowdTicks += Math.max(1, cadence);
+        // Someone stands on the destination itself: right beside it is as close as anyone gets.
+        if (travel.crowdTicks >= DETOUR_TICKS && occupiesDestination(travel, current, blocker)) {
+            travel.closeEnough = true; return;
+        }
+        spacing.blocked(self, blocker.id());
+        resolveJam(travel, current, blocker, tick);
+    }
+
+    private void clearCrowd(Travel travel, UUID self) {
+        if (travel.crowdBlocker == null) return;
+        travel.crowdBlocker = null; travel.crowdTicks = 0;
+        travel.crowdDetourTried = false; travel.makeWayTried = false; travel.jamRetryAt = 0;
+        spacing.unblocked(self);
+    }
+
+    private boolean occupiesDestination(Travel travel, Location current, NpcSpacing.Entry other) {
+        Location d = travel.destination;
+        if (d.getWorld() != current.getWorld() || Math.abs(current.getY() - d.getY()) > 1) return false;
+        double min = spacing.minDistance();
+        return horizontal(current, d.getX(), d.getZ()) <= min + .6 && horizontal(d, other.x(), other.z()) < min
+                && Math.abs(other.y() - d.getY()) < NpcSpacing.SAME_LEVEL;
+    }
+
+    private boolean occupiedWaypoint(Travel travel, Location current, Location waypoint, long tick) {
+        if (horizontal(current, waypoint.getX(), waypoint.getZ()) > spacing.minDistance() + 1) return false;
+        Predicate<NpcSpacing.Entry> ignore = ignore(travel, tick);
+        for (NpcSpacing.Entry e : spacing.near(waypoint.getWorld(), waypoint.getX(), waypoint.getZ(), spacing.minDistance(), self(travel)))
+            if (Math.abs(e.y() - waypoint.getY()) < NpcSpacing.SAME_LEVEL && !ignore.test(e)) return true;
+        return false;
+    }
+
+    /** Push an idle NPC off the walker's line: to the side it already leans, else forward. */
+    private boolean shove(Travel travel, Location current, Location step, NpcSpacing.Entry other) {
+        double dx = step.getX() - current.getX(), dz = step.getZ() - current.getZ(), length = Math.hypot(dx, dz);
+        if (length < 1e-4) return false;
+        double ux = dx / length, uz = dz / length, rx = -uz, rz = ux;
+        double lateral = (other.x() - current.getX()) * rx + (other.z() - current.getZ()) * rz;
+        // Centred on the line: to the walker's left, since the walker steers right.
+        double side = lateral > .05 ? 1 : -1, s = NpcSpacing.PUSH_STEP;
+        return spacing.push(other, rx * side * s, rz * side * s, travel.terrain)
+                || spacing.push(other, ux * s, uz * s, travel.terrain)
+                || spacing.push(other, -rx * side * s, -rz * side * s, travel.terrain);
+    }
+
+    /** The same step length, turned until it no longer walks into anyone. */
+    private Location steer(Travel travel, Location current, Location step, Predicate<NpcSpacing.Entry> ignore) {
+        double dx = step.getX() - current.getX(), dz = step.getZ() - current.getZ(), length = Math.hypot(dx, dz);
+        if (length < 1e-4) return null;
+        double ux = dx / length, uz = dz / length, rx = -uz, rz = ux;
+        double maximum = spacing.minDistance() + .35;
+        UUID self = self(travel);
+        for (double degrees : STEER_DEGREES) {
+            double a = Math.toRadians(Math.abs(degrees)), side = Math.signum(degrees);
+            double vx = ux * Math.cos(a) + rx * side * Math.sin(a), vz = uz * Math.cos(a) + rz * side * Math.sin(a);
+            Location p = current.clone().add(vx * length, 0, vz * length);
+            if (spacing.blocker(self, current, p, ignore) != null || deviation(travel, p) > maximum) continue;
+            if (!NpcSpacing.walkable(travel.terrain, p.getX(), p.getY(), p.getZ())
+                    || !NpcSpacing.walkable(travel.terrain, (p.getX() + current.getX()) / 2, p.getY(), (p.getZ() + current.getZ()) / 2))
+                continue;
+            return p;
+        }
+        return null;
+    }
+    /** How far a point strays from the route segment being walked. */
+    private static double deviation(Travel travel, Location p) {
+        if (travel.index <= 0 || travel.index >= travel.path.size()) return 0;
+        Location a = travel.path.get(travel.index - 1), b = travel.path.get(travel.index);
+        return segmentDistance(p.getX(), p.getZ(), a.getX(), a.getZ(), b.getX(), b.getZ());
+    }
+    static double segmentDistance(double px, double pz, double ax, double az, double bx, double bz) {
+        double vx = bx - ax, vz = bz - az, length2 = vx * vx + vz * vz;
+        double t = length2 < 1e-12 ? 0 : Math.max(0, Math.min(1, ((px - ax) * vx + (pz - az) * vz) / length2));
+        double cx = ax + vx * t - px, cz = az + vz * t - pz;
+        return Math.sqrt(cx * cx + cz * cz);
+    }
+    private static double horizontal(Location a, double x, double z) {
+        double dx = a.getX() - x, dz = a.getZ() - z; return Math.sqrt(dx * dx + dz * dz);
+    }
+    private static boolean clearOf(List<NpcSpacing.Entry> crowd, Location p, double distance) {
+        for (NpcSpacing.Entry e : crowd)
+            if (Math.abs(e.y() - p.getY()) < NpcSpacing.SAME_LEVEL && horizontal(p, e.x(), e.z()) < distance) return false;
+        return true;
+    }
+
+    /**
+     * Who acts when stuck behind someone. A walker that meets another head-on waits for the
+     * newer trip of the two to find a way; after a few seconds it looks for one itself.
+     */
+    private void resolveJam(Travel travel, Location current, NpcSpacing.Entry other, long tick) {
+        UUID self = self(travel);
+        long pass = spacing.passThroughTicks();
+        if (pass > 0 && travel.crowdTicks >= pass) {
+            travel.ghost = other.id(); travel.ghostUntil = tick + 60; travel.crowdTicks = 0; return;
+        }
+        if (travel.makingWay) return;
+        boolean mutual = self.equals(spacing.blockedBy(other.id()));
+        // In a queue behind someone who is walking: it will move on.
+        if (!mutual && spacing.walking(other)) return;
+        boolean yields = !mutual || travel.priority > spacing.priority(other.id()) || travel.crowdTicks >= SWAP_TICKS;
+        if (!yields) return;
+        if (travel.crowdDetourTried && (travel.makeWayTried || !mutual)) {
+            if (travel.jamRetryAt == 0)
+                travel.jamRetryAt = tick + Math.min(JAM_RETRY_MAX_TICKS, (long) JAM_RETRY_TICKS << Math.min(4, travel.jamRetries++));
+            else if (tick >= travel.jamRetryAt) {
+                travel.crowdDetourTried = false; travel.makeWayTried = false; travel.jamRetryAt = 0;
+            }
+            return;
+        }
+        if (travel.crowdTicks >= DETOUR_TICKS && !travel.crowdDetourTried && searchAvailable()) {
+            travel.crowdDetourTried = true; startsLeft--;
+            long started = System.nanoTime();
+            try { if (detour(travel, current, other, tick)) return; }
+            finally { spentNanos += System.nanoTime() - started; }
+        }
+        if (mutual && travel.crowdTicks >= MAKE_WAY_TICKS && !travel.makeWayTried && searchAvailable()) {
+            travel.makeWayTried = true; startsLeft--;
+            long started = System.nanoTime();
+            try { makeWay(travel, current, other, tick); }
+            finally { spentNanos += System.nanoTime() - started; }
+        }
+    }
+
+    private void resetStage(Travel travel, long tick) {
+        travel.riserWaypoint = null; travel.riserHeight = Double.NaN; travel.riserBaseY = Double.NaN; travel.dropHeight = Double.NaN;
+        travel.unusedAllowance = 0; travel.lastProgressTick = tick; travel.crowdTicks = 0;
+    }
+
+    /** A short local route round the NPCs in the way, back onto the route past them. */
+    private boolean detour(Travel travel, Location current, NpcSpacing.Entry other, long tick) {
+        RoutineTerrain terrain = travel.terrain;
+        Node start = terrain.near(current);
+        if (start == null) return false;
+        double min = spacing.minDistance();
+        List<NpcSpacing.Entry> crowd = spacing.near(current.getWorld(), current.getX(), current.getZ(), DETOUR_RANGE + 3, self(travel));
+        double beyond = horizontal(current, other.x(), other.z()) + .5, walked = 0;
+        Location previous = current;
+        int rejoin = -1;
+        for (int j = travel.index; j < travel.path.size(); j++) {
+            Location p = travel.path.get(j);
+            walked += horizontal(previous, p.getX(), p.getZ()); previous = p;
+            if (walked > DETOUR_RANGE) break;
+            if (horizontal(current, p.getX(), p.getZ()) <= beyond) continue;
+            if (clearOf(crowd, p, min + .3)) { rejoin = j; break; }
+        }
+        if (rejoin < 0) return false;
+        Node goal = terrain.near(travel.path.get(rejoin));
+        if (goal == null || goal.equals(start)) return false;
+        BoundedPathfinder.Grid grid = new BoundedPathfinder.Grid() {
+            public boolean stand(Node n) { return n.equals(start) || terrain.stand(n) && clearOf(crowd, terrain.location(n), min); }
+            public boolean edge(Node from, Node to) { return terrain.edge(from, to, MAX_CLIMB_HEIGHT, MAX_DROP_HEIGHT); }
+        };
+        BoundedPathfinder search = new BoundedPathfinder(grid, start, goal, DETOUR_NODES);
+        search.advance(DETOUR_NODES);
+        List<Node> route = search.result();
+        if (route == null || route.size() - 1 > (int) Math.ceil(walked) + DETOUR_EXTRA) return false;
+        List<Location> path = new ArrayList<>();
+        for (int i = 1; i < route.size(); i++) path.add(terrain.location(route.get(i)));
+        path.addAll(travel.path.subList(rejoin + 1, travel.path.size()));
+        travel.path = path; travel.index = 0;
+        resetStage(travel, tick);
+        return true;
+    }
+
+    /**
+     * Head-on in a passage too narrow to pass: walk to the nearest spot off both NPCs' lines
+     * (a doorway, a widening, the end of the passage) and wait there until the other passes.
+     */
+    private boolean makeWay(Travel travel, Location current, NpcSpacing.Entry other, long tick) {
+        RoutineTerrain terrain = travel.terrain;
+        Node start = terrain.near(current);
+        if (start == null) return false;
+        double min = spacing.minDistance();
+        List<NpcSpacing.Entry> crowd = spacing.near(current.getWorld(), current.getX(), current.getZ(), MAKE_WAY_RANGE + 3, self(travel));
+        List<List<Location>> lanes = lanes(travel, current, other);
+        List<NpcSpacing.Entry> blocking = List.of(other);
+        Map<Node, Node> parent = new HashMap<>();
+        ArrayDeque<Node> open = new ArrayDeque<>();
+        parent.put(start, null); open.add(start);
+        Node found = null;
+        while (!open.isEmpty() && parent.size() < MAKE_WAY_NODES) {
+            Node n = open.poll();
+            if (!n.equals(start)) {
+                Location at = terrain.location(n);
+                if (laneDistance(lanes, at) >= min + .35 && clearOf(crowd, at, min + .2)) { found = n; break; }
+            }
+            for (int[] d : SIDES) for (int dy = -2; dy <= 2; dy++) {
+                Node m = new Node(n.x() + d[0], n.y() + dy, n.z() + d[1]);
+                if (parent.containsKey(m) || Math.abs(m.x() - start.x()) > MAKE_WAY_RANGE
+                        || Math.abs(m.z() - start.z()) > MAKE_WAY_RANGE) continue;
+                if (!terrain.stand(m) || !terrain.edge(n, m, MAX_CLIMB_HEIGHT, MAX_DROP_HEIGHT)) continue;
+                // Walking through the other NPC is exactly what this avoids.
+                if (!clearOf(blocking, terrain.location(m), min)) continue;
+                parent.put(m, n); open.add(m);
+            }
+        }
+        if (found == null) return false;
+        LinkedList<Location> path = new LinkedList<>();
+        for (Node n = found; n != null && !n.equals(start); n = parent.get(n)) path.addFirst(terrain.location(n));
+        travel.path = new ArrayList<>(path); travel.index = 0; travel.pathReachesFinal = false;
+        travel.makingWay = true; travel.makeWayFor = other.id(); travel.makeWayUntil = tick + MAKE_WAY_WAIT_TICKS;
+        travel.makeWayClosest = Double.MAX_VALUE;
+        resetStage(travel, tick);
+        return true;
+    }
+    private static final int[][] SIDES = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+
+    /** Where both NPCs are about to walk: this route around here, and the other's if known. */
+    private List<List<Location>> lanes(Travel travel, Location current, NpcSpacing.Entry other) {
+        List<List<Location>> lanes = new ArrayList<>();
+        List<Location> own = new ArrayList<>();
+        for (int i = Math.max(0, travel.index - 12); i < Math.min(travel.path.size(), travel.index); i++) own.add(travel.path.get(i));
+        own.add(current);
+        for (int i = travel.index; i < Math.min(travel.path.size(), travel.index + 12); i++) own.add(travel.path.get(i));
+        lanes.add(own);
+        for (Travel t : travels.values()) {
+            if (t.npc.entity() == null || !t.npc.entity().getUniqueId().equals(other.id()) || t.path == null) continue;
+            List<Location> theirs = new ArrayList<>();
+            theirs.add(other.location());
+            for (int i = t.index; i < Math.min(t.path.size(), t.index + 12); i++) theirs.add(t.path.get(i));
+            lanes.add(theirs);
+        }
+        return lanes;
+    }
+    private static double laneDistance(List<List<Location>> lanes, Location p) {
+        double best = Double.MAX_VALUE;
+        for (List<Location> lane : lanes) {
+            if (lane.size() == 1) best = Math.min(best, horizontal(p, lane.getFirst().getX(), lane.getFirst().getZ()));
+            for (int i = 1; i < lane.size(); i++) {
+                Location a = lane.get(i - 1), b = lane.get(i);
+                best = Math.min(best, segmentDistance(p.getX(), p.getZ(), a.getX(), a.getZ(), b.getX(), b.getZ()));
+            }
+        }
+        return best;
+    }
+
+    private boolean stillMakingWay(Travel travel, Location current, long tick) {
+        if (tick >= travel.makeWayUntil || spacing == null) return false;
+        NpcSpacing.Entry other = spacing.entry(travel.makeWayFor);
+        if (other == null || other.npc() == null || !other.npc().entity().isValid() || other.world() != current.getWorld()) return false;
+        double d = horizontal(current, other.x(), other.z());
+        travel.makeWayClosest = Math.min(travel.makeWayClosest, d);
+        boolean passed = travel.makeWayClosest < spacing.minDistance() + 1.5 && d > travel.makeWayClosest + 1.5;
+        boolean busy = spacing.walking(other) || spacing.blockedBy(other.id()) != null;
+        return !passed && busy && d < 12;
+    }
+    private void endMakeWay(Travel travel, Location current, long tick) {
+        travel.makingWay = false; travel.makeWayFor = null;
+        travel.path = null; travel.pending = true; travel.retry = tick; travel.stalePath = false;
+        travel.partialEndpoints.clear(); travel.segmentsWithoutGoalProgress = 0;
+        travel.bestGoalDistance = current.distance(travel.destination);
+        travel.crowdBlocker = null; travel.crowdDetourTried = false; travel.makeWayTried = false; travel.jamRetryAt = 0;
+        if (travel.nodePath) resetNodePlanning(travel);
+        resetStage(travel, tick);
+        if (spacing != null) spacing.unblocked(self(travel));
+    }
+
     public boolean exhausted(String npc) {
         Travel travel=travels.get(npc);return travel!=null && travel.exhausted;
     }
@@ -1277,7 +1675,16 @@ public final class RoutineNavigator {
         Travel travel=travels.get(npc);
         return activeHop(npc) || travel!=null && (Double.isFinite(travel.riserHeight) || Double.isFinite(travel.dropHeight));
     }
-    public void cancel(String npc) { travels.remove(npc);cancelHop(npc); }
+    public void cancel(String npc) {
+        Travel travel=travels.remove(npc);cancelHop(npc);
+        if(travel!=null && spacing!=null)spacing.unblocked(self(travel));
+    }
+    /** Waiting for another NPC to move, or stepping aside for it: not a stuck walk. */
+    public boolean crowded(String npc) {
+        Travel travel=travels.get(npc);return travel!=null && (travel.crowded || travel.makingWay);
+    }
+    /** A trip in progress, planned or not. */
+    public boolean traveling(String npc) { return travels.containsKey(npc); }
     public void clear() {
         travels.clear();hops.clear();hopFailures.clear(); budgetTick = Long.MIN_VALUE;
         nodeIndex.clear();

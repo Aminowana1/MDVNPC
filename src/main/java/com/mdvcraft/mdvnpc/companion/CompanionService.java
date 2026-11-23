@@ -92,6 +92,8 @@ public final class CompanionService implements MdvNpcApi {
         settings = CompanionSettings.from(cfg);
         if (navigator == null || cfg == null)
             return;
+        var spacing = plugin.spacing();
+        navigator.spacing(spacing != null && spacing.companions() ? spacing : null);
         navigator.configureHeights(cfg.getDouble("routines.max-climb-height", 1.30),
                 cfg.getDouble("routines.max-drop-height", 2.30), cfg.getDouble("routines.max-unannounced-drop", 1.01));
         navigator.configureNodes(cfg.getBoolean("routines.nodes.enabled", true),
@@ -279,7 +281,10 @@ public final class CompanionService implements MdvNpcApi {
         UUID previous = internalEntity;
         internalEntity = npc.entity().getUniqueId();
         try {
-            return npc.entity().teleport(to);
+            boolean moved = npc.entity().teleport(to);
+            if (moved && plugin.spacing() != null)
+                plugin.spacing().moved(npc);
+            return moved;
         } finally {
             internalEntity = previous;
         }
@@ -449,6 +454,19 @@ public final class CompanionService implements MdvNpcApi {
      * un orden fijo, los últimos se quedarían siempre sin turno. Rotar el punto de partida
      * reparte los turnos sin gastar más búsquedas.
      */
+    com.mdvcraft.mdvnpc.runtime.NpcSpacing spacing() {
+        return plugin.spacing();
+    }
+
+    /** Every companion standing in a world, for the shared NPC positions. */
+    public List<ActiveNpc> activeNpcs() {
+        List<ActiveNpc> npcs = new ArrayList<>(byId.size());
+        for (CompanionRuntime companion : byId.values())
+            if (companion.npc() != null)
+                npcs.add(companion.npc());
+        return npcs;
+    }
+
     static <T> List<T> movementOrder(List<T> companions, long update) {
         int size = companions.size();
         if (size < 2)

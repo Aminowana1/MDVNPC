@@ -47,6 +47,9 @@ class DanceControllerTest {
     boolean ceiling;
     Set<String> holes, obstacles;
     Map<String,Block> blockCache;
+    /** Performers in order of distance, and entities no dancer can see. */
+    List<ActiveNpc> performers;
+    Set<Object> unseen;
 
     @BeforeEach @SuppressWarnings("unchecked") void setup() {
         MockBukkit.mock();
@@ -69,9 +72,15 @@ class DanceControllerTest {
             return blockCache.computeIfAbsent(key, ignored -> block(x, y, z, solid));
         });
         positions = new HashMap<>();
+        unseen = new HashSet<>();
         seated = npc("seated", 7.5);
         musician = npc("musician", .5);
-        when(music.nearestPerformer(any(Location.class), eq(14d))).thenReturn(musician);
+        performers = new ArrayList<>(List.of(musician));
+        when(music.nearestPerformer(any(Location.class), eq(14d), any())).thenAnswer(call -> {
+            java.util.function.Predicate<ActiveNpc> accept = call.getArgument(2);
+            for (ActiveNpc performer : performers) if (accept == null || accept.test(performer)) return performer;
+            return null;
+        });
         when(music.isPerforming(musician)).thenReturn(true);
         when(navigator.move(any(), any(), anyDouble(), anyLong(), anyInt())).thenAnswer(invocation -> {
             ActiveNpc npc = invocation.getArgument(0);
@@ -112,6 +121,8 @@ class DanceControllerTest {
         Location position = new Location(world, x, 64, .5);
         positions.put(id, position);
         when(entity.getLocation()).thenAnswer(i -> positions.get(id).clone());
+        when(entity.getEyeLocation()).thenAnswer(i -> positions.get(id).clone().add(0, 1.62, 0));
+        when(entity.hasLineOfSight(any(org.bukkit.entity.Entity.class))).thenAnswer(i -> !unseen.contains(i.getArgument(0)));
         doAnswer(call -> {
             Location p = positions.get(id).clone(); p.setYaw(call.getArgument(0)); p.setPitch(call.getArgument(1)); positions.put(id, p); return null;
         }).when(entity).setRotation(anyFloat(), anyFloat());
@@ -131,6 +142,54 @@ class DanceControllerTest {
         }
         verifyNoInteractions(music, navigator, teleport);
         verify(world, never()).getBlockAt(anyInt(), anyInt(), anyInt());
+    }
+
+    @Test void aWallBetweenDancerAndMusicianKeepsTheDancerSeated() {
+        unseen.add(musician.entity());
+        assertFalse(dances.start(seated, seated.position(), 0), "behind a wall or glass");
+        verifyNoInteractions(navigator, teleport);
+        unseen.clear();
+        assertTrue(dances.start(seated, seated.position(), 0));
+    }
+
+    @Test void theDancerJoinsTheMusicianItCanSeeEvenIfAnotherIsCloser() {
+        ActiveNpc hidden = npc("hidden", 5.5), visible = musician;
+        when(music.isPerforming(hidden)).thenReturn(true);
+        performers.addFirst(hidden);
+        unseen.add(hidden.entity());
+        assertTrue(dances.start(seated, seated.position(), 0));
+        assertEquals(DanceController.Result.DANCING, dances.tick(seated, 0, 2, 2.4));
+        assertTrue(seated.position().distanceSquared(visible.position()) <= 9, "dancing round the visible musician");
+    }
+
+    @Test void losingSightOfTheMusicianWhileDancingEndsTheDance() {
+        assertTrue(dances.start(seated, seated.position(), 0));
+        assertEquals(DanceController.Result.DANCING, dances.tick(seated, 0, 2, 2.4));
+        unseen.add(musician.entity());
+        int tick = 2;
+        for (; tick <= 120 && dances.tick(seated, tick, 2, 2.4) != DanceController.Result.FINISHED; tick += 2) {}
+        assertTrue(tick >= 60 && tick <= 100, "a moment without sight is not enough; three seconds is: " + tick);
+    }
+
+    @Test void aCornerOnTheWayDoesNotStopTheApproach() {
+        doReturn(RoutineNavigator.Result.MOVING).when(navigator).move(any(), any(), anyDouble(), anyLong(), anyInt());
+        assertTrue(dances.start(seated, seated.position(), 0));
+        unseen.add(musician.entity());
+        for (int tick = 2; tick <= 200; tick += 2)
+            assertEquals(DanceController.Result.MOVING, dances.tick(seated, tick, 2, 2.4));
+    }
+
+    @Test void danceSpotsHiddenFromTheMusicianAreNotChosen() {
+        // Every spot west of the musician is behind a pillar.
+        when(world.rayTraceBlocks(any(Location.class), any(), anyDouble(), any(), anyBoolean())).thenAnswer(call -> {
+            Location eye = call.getArgument(0);
+            return eye.getX() < musician.position().getX() ? mock(org.bukkit.util.RayTraceResult.class) : null;
+        });
+        assertTrue(dances.start(seated, seated.position(), 0));
+        for (int tick = 0; tick <= 200; tick += 2) {
+            assertEquals(DanceController.Result.DANCING, dances.tick(seated, tick, 2, 2.4));
+            assertTrue(seated.position().getX() >= musician.position().getX() - .01, "at " + seated.position());
+        }
     }
 
     @Test void startPreservesSeatAndReturnPointUntilOwnerUnmounts() {

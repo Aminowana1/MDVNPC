@@ -1,3 +1,36 @@
+# MDVNPC 1.16.0 — choque entre NPC y bailarines que ven al músico
+
+Choque entre NPC (nuevo `npc-spacing`):
+- Ningún NPC camina a través de otro: entre sus centros queda al menos
+  `min-distance` (1 bloque por defecto). Vale para NPC de rutina y
+  acompañantes, y entre NPC en el mismo piso.
+- Quien camina rodea al otro por su derecha, así dos que se cruzan de frente
+  se esquivan. Si no hay sitio, se acerca hasta el borde y espera.
+- Un NPC quieto de pie se puede apartar un poco al pasar (`push-idle`). Los
+  sentados, trabajando, bailando, en barca, reaccionando o sin rutina nunca
+  se mueven: se les rodea.
+- Si un NPC queda bloqueado, busca un rodeo corto. En un pasillo de un bloque,
+  el de viaje más reciente se aparta a un hueco cercano y deja pasar al otro.
+- Si el destino lo ocupa otro NPC, quedarse al lado cuenta como llegar.
+- Los NPC que aparecen uno dentro de otro se separan poco a poco.
+- Esperar a otro NPC no cuenta como atasco: no recalcula la ruta en bucle ni
+  hace el salto para destrabarse.
+- `pass-through-after-seconds: 0` (por defecto): nunca se atraviesan.
+- Los puntos de rutina que pusiste a menos de 1 bloque de un NPC sentado o
+  trabajando se respetan al llegar.
+- Coste: alrededor de 1 µs por paso con 300 NPC cerca; un NPC que espera sin que
+  nada cambie casi no consume.
+
+Bailarines:
+- Solo empiezan a bailar si ven al músico: una pared o un cristal entre ellos
+  lo impide y siguen su rutina normal. Si el más cercano está tapado, bailan
+  con otro que sí ven.
+- No eligen un sitio de la pista tapado por una columna.
+- Si pierden de vista al músico 3 s mientras bailan, dejan de bailar. Al
+  acercarse no se comprueba, para que una esquina no los detenga.
+
+No probado en un servidor real.
+
 # MDVNPC 1.15.0 — NPC que no se quedan quietos, nodos por altura y saludo
 
 Movimiento:

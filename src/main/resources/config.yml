@@ -42,7 +42,7 @@ routines:
     delay-seconds: 3 # 1..60; espera sin desplazamiento antes de intentar/reintentar
     height: 0.6 # 0.05..4; altura del impulso, siempre se intenta aunque esté flotando
     distance: 1.0 # 0.05..4; impulso hacia la mirada; bloques/vallas recortan el movimiento al chocar
-  dancing: true # solo NPC con rasgo Fiestero: dejan la silla, bailan junto a músicos y vuelven
+  dancing: true # solo NPC con rasgo Fiestero: dejan la silla, bailan junto a músicos y vuelven; necesitan ver al músico (una pared o un cristal lo tapan)
   dance-duration-seconds: 60 # tiempo bailando; empieza al llegar a la pista (1..600)
   dance-seated-seconds: 30 # descanso completo desde que vuelve a sentarse (1..600)
   seat-offset-y: 0.5 # altura del asiento respecto del bloque de escalera (-4..4)
@@ -204,6 +204,13 @@ npc-reactions:
     - '&7{npc} &f» &c¡Eh, no me pegues!'
     - '&7{npc} &f» &c¡Un poco de respeto, {player}!'
     - '&7{npc} &f» &c¡Estate quieto con esas manos!'
+# Choque entre NPC: ninguno camina a través de otro. Rodean, esperan o se apartan en pasillos.
+npc-spacing:
+  enabled: true
+  min-distance: 1.0              # 0..3; distancia horizontal mínima entre centros (0 = como antes, se atraviesan)
+  push-idle: true                # quien camina puede apartar a un NPC quieto de pie (nunca a uno sentado o trabajando)
+  pass-through-after-seconds: 0  # 0..120; 0 = nunca se atraviesan; si no, tras ese atasco lo cruza
+  companions: true               # los acompañantes también chocan al caminar
 # Saludo: un jugador que se agacha dos veces rápido cerca de un NPC recibe un saludo.
 # El NPC más cercano lo mira, saluda con la mano (si tiene skin de jugador) y pausa su rutina.
 npc-greetings:

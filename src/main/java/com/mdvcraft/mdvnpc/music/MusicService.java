@@ -89,18 +89,24 @@ public final class MusicService {
     }
     /** Indexed local lookup for seated spectators; refreshed with the existing session maintenance. */
     public ActiveNpc nearestPerformer(Location from,double radius) {
+        return nearestPerformer(from,radius,null);
+    }
+    /** The nearest performer that {@code accept} takes; it is asked nearest first. */
+    public ActiveNpc nearestPerformer(Location from,double radius,java.util.function.Predicate<ActiveNpc> accept) {
         if(from.getWorld()==null || performers.isEmpty())return null;
         radius=Math.min(audioRadius,Math.max(0,radius));
         Cell center=cell(from);int span=(int)Math.ceil(radius/groupRadius);
-        ActiveNpc nearest=null;double best=radius*radius;
+        List<Map.Entry<ActiveNpc,Double>> found=new ArrayList<>();
         for(int dx=-span;dx<=span;dx++)for(int dz=-span;dz<=span;dz++)
             for(ActiveNpc npc:performers.getOrDefault(new Cell(center.world(),center.x()+dx,center.z()+dz),List.of())) {
                 if(!isPerforming(npc))continue;
                 Location p=npc.position();if(p.getWorld()!=from.getWorld())continue;
                 double distance=from.distanceSquared(p);
-                if(distance<=best){best=distance;nearest=npc;}
+                if(distance<=radius*radius)found.add(Map.entry(npc,distance));
             }
-        return nearest;
+        found.sort(Map.Entry.comparingByValue());
+        for(var entry:found)if(accept==null || accept.test(entry.getKey()))return entry.getKey();
+        return null;
     }
     public boolean isPerforming(ActiveNpc npc) {
         return npc!=null && eligible(npc);

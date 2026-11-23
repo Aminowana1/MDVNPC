@@ -396,6 +396,11 @@ final class CompanionRuntime implements Companion {
             case MOVING, LEADING -> tickMove(ticks, settings);
             default -> idle(ticks, settings);
         }
+        var spacing = service.spacing();
+        if (spacing != null && npc != null && npc.entity().isValid())
+            spacing.idle(npc, gesture.isEmpty() && (state == CompanionState.IDLE || state == CompanionState.FOLLOWING)
+                    && !service.navigator().traveling(navId()) && !gravityState.falling(),
+                    !service.navigator().traveling(navId()), service::teleportInternal);
     }
 
     private void idle(long ticks, CompanionSettings settings) {
@@ -438,6 +443,8 @@ final class CompanionRuntime implements Companion {
         RoutineNavigator.Result result = service.navigator().moveWithoutNodes(npc, followDestination,
                 FollowMath.speed(distance, settings), ticks, settings.cadence());
         trackProgress(ticks);
+        if (service.navigator().crowded(navId()))
+            resetProgress(); // esperar a que pase otro NPC no es estar atascado
         boolean stuck = ticks - progressTick >= settings.stuckTeleportTicks();
         if (result == RoutineNavigator.Result.WAITING && (stuck || service.navigator().exhausted(navId()))
                 && distance > followDistance + 2) {
@@ -485,8 +492,8 @@ final class CompanionRuntime implements Companion {
             return;
         }
         trackProgress(ticks);
-        if (service.navigator().advancingNodes(navId()))
-            resetProgress(); // planificar no es estar atascado
+        if (service.navigator().advancingNodes(navId()) || service.navigator().crowded(navId()))
+            resetProgress(); // planificar o esperar a otro NPC no es estar atascado
         if (service.navigator().exhausted(navId()) || ticks - progressTick >= settings.stuckFailTicks())
             finish(MoveResult.FAILED);
     }

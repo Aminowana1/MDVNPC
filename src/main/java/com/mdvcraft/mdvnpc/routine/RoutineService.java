@@ -28,6 +28,7 @@ public final class RoutineService {
     private final RoutineGravity gravity;
     private RoutineNavigator navigator;
     private DanceController dancers;
+    private com.mdvcraft.mdvnpc.runtime.NpcSpacing spacing;
     private BlacksmithController blacksmiths;
     private long blacksmithRetryTicks;
     private FishermanController fishermen;
@@ -111,6 +112,8 @@ public final class RoutineService {
         danceSeatedTicks=Math.max(1,Math.min(600,plugin.settings().messages().getInt("routines.dance-seated-seconds",30)))*20L;
         navigator=new RoutineNavigator(doors,this::teleport); failed.clear();
         var cfg=plugin.settings().messages();
+        spacing=plugin.spacing();
+        if(spacing!=null){spacing.configure(cfg);navigator.spacing(spacing);}
         navigator.configureHeights(cfg.getDouble("routines.max-climb-height",1.30),cfg.getDouble("routines.max-drop-height",2.30),cfg.getDouble("routines.max-unannounced-drop",1.01));
         boolean nodesEnabled=cfg.getBoolean("routines.nodes.enabled",true);
         navigator.configureNodes(nodesEnabled,cfg.getInt("routines.nodes.link-range",12),
@@ -124,7 +127,7 @@ public final class RoutineService {
         double hopHeight=cfg.getDouble("routines.stuck-hop.height",.6),hopDistance=cfg.getDouble("routines.stuck-hop.distance",1);
         stuckHopHeight=Double.isFinite(hopHeight)?Math.max(.05,Math.min(4,hopHeight)):.6;
         stuckHopDistance=Double.isFinite(hopDistance)?Math.max(.05,Math.min(4,hopDistance)):1;
-        dancers=new DanceController(plugin,navigator,this::teleport);
+        dancers=new DanceController(plugin,navigator,this::teleport,spacing);
         blacksmiths=new BlacksmithController(plugin,navigator,this::teleport);
         blacksmithRetryTicks=20L*Math.max(1,Math.min(600,cfg.getInt("blacksmith.retry-seconds",30)));
         fishermen=new FishermanController(plugin,navigator,this::teleport,this::mount);
@@ -194,7 +197,11 @@ public final class RoutineService {
         World world=to.getWorld();
         if(world==null || world!=npc.entity().getWorld() || !world.isChunkLoaded(to.getBlockX()>>4,to.getBlockZ()>>4)) return false;
         UUID previous=internalEntity; internalEntity=npc.entity().getUniqueId();
-        try { return npc.entity().teleport(to); } finally { internalEntity=previous; }
+        try {
+            boolean moved=npc.entity().teleport(to);
+            if(moved && spacing!=null)spacing.moved(npc);
+            return moved;
+        } finally { internalEntity=previous; }
     }
     private RoutineSchedule.Window window(String id,World world) {
         var plan=repository.snapshot().plans().get(id);
@@ -333,12 +340,19 @@ public final class RoutineService {
         if(clockElapsed>=10) {clocks.tick(clockElapsed);clockElapsed=0;}
         var manager=plugin.manager(); if(manager==null) return;
         navigator.beginTick(ticks,pathStarts,2_000_000);
+        if(spacing!=null && spacing.enabled()) {
+            List<ActiveNpc> everyone=new ArrayList<>(manager.activeNpcs());
+            if(plugin.companions()!=null)everyone.addAll(plugin.companions().activeNpcs());
+            spacing.refresh(everyone);
+            if(ticks%10<cadence)spacing.separate(world->new RoutineTerrain(world,doors));
+        }
         for(ActiveNpc npc:rotated(manager.activeNpcs())) {
             String id=npc.definition().id();
             if(!npc.entity().isValid()){staticFloors.remove(id);if(blacksmiths!=null)blacksmiths.stop(id);if(fishermen!=null)fishermen.stop(id);continue;}
             if(failed.contains(id))continue;
             if(!enabled(id)) {
                 State held=states.get(id);if(held!=null){clearStuckHop(held);stopBlacksmith(held);stopFisherman(held);}
+                if(spacing!=null)spacing.idle(npc,false,true,this::teleport);
                 try{updateStaticFloor(npc);}
                 catch(RuntimeException ex) {
                     failed.add(id);staticFloors.remove(id);
@@ -352,6 +366,10 @@ public final class RoutineService {
             if(previous!=null && ticks<previous.nextUpdate && ticks<previous.nextPresence && previous.lastMinute==minute)continue;
             try {
                 update(npc);
+                if(spacing!=null) {
+                    State updated=states.get(id);
+                    spacing.idle(npc,pushable(updated),updated!=null && updated.destination==null && !navigator.traveling(id),this::teleport);
+                }
             }
             catch(RuntimeException ex) {
                 failed.add(id); try { remove(id); } catch(RuntimeException cleanup) { ex.addSuppressed(cleanup); }
@@ -366,6 +384,16 @@ public final class RoutineService {
             doors.tick(ticks,false); if(plugin.routineCommands()!=null)plugin.routineCommands().prune();
             long now=System.nanoTime(); dialogueStates.values().removeIf(v->now>=v.due && now-v.lastSeen>60_000_000_000L);
         }
+    }
+    /** Standing about with nothing to do: another NPC walking by may shove it aside. */
+    private boolean pushable(State s) {
+        if(s==null || s.paused)return false;
+        ActiveNpc npc=s.npc;String id=npc.definition().id();
+        return s.destination==null && s.pose==null && !s.dancing && !s.working && !s.returningFromDance
+                && !npc.entity().isInsideVehicle() && !s.gravity.falling() && !navigator.traveling(id)
+                && !(plugin.reactions()!=null && plugin.reactions().busy(id))
+                && !(plugin.traits()!=null && plugin.traits().busy(id))
+                && !(blacksmiths!=null && blacksmiths.active(id)) && !(fishermen!=null && fishermen.active(id));
     }
     /** The shared search allowance goes first to whoever is first: rotate who that is. */
     private List<ActiveNpc> rotated(java.util.Collection<ActiveNpc> npcs) {
@@ -596,6 +624,9 @@ public final class RoutineService {
         var result=s.returningFromDance && readyToSit(npc,s.approach)
                 ?RoutineNavigator.Result.ARRIVED:navigator.move(npc,s.approach,goal.speed(),ticks,cadence);
         boolean progressed=travelProgress(s,beforeMove,npc.position(),result);
+        boolean crowded=navigator.crowded(id);
+        // Waiting for another NPC to get out of the way is neither stuck nor an unreachable goal.
+        if(crowded){resetTravelProgress(s,npc.position());s.stuckAnchor=null;s.returnWaitingSince=0;}
         observeStuckMotion(s,npc.position());
         if(result==RoutineNavigator.Result.WAITING && recoverFloor(s))return;
         if(!s.returningFromDance && result==RoutineNavigator.Result.WAITING && navigator.exhausted(id)
@@ -635,7 +666,7 @@ public final class RoutineService {
             // made of short segments would reset it forever and never produce a glance.
             looks.tick(npc,s.look,ticks,s.look.initialized?s.look.bodyYaw:beforeMove.getYaw(),false,false);
         } else looks.clear(npc,s.look);
-        s.status=s.returningFromDance
+        s.status=crowded?"esperando a que pase otro NPC":s.returningFromDance
                 ?result==RoutineNavigator.Result.WAITING?"volviendo al asiento: esperando ruta":"volviendo al asiento"
                 :result==RoutineNavigator.Result.WAITING?"esperando ruta (reintentos limitados)":"caminando a "+goal.type();
         if(result!=RoutineNavigator.Result.ARRIVED) return;
@@ -836,7 +867,7 @@ public final class RoutineService {
         ActiveNpc npc=s.npc;String id=npc.definition().id();
         if(!stuckHopEnabled || npc.entity().isInsideVehicle()) {clearStuckHop(s);return false;}
         boolean hopping=navigator.activeHop(id);
-        if(!hopping && navigator.planningNodes(id)) {
+        if(!hopping && (navigator.planningNodes(id) || navigator.crowded(id))) {
             s.nextHopAttempt=ticks+stuckHopDelayTicks;return false;
         }
         if(s.stuckAnchor==null && s.destination==null && !hopping)return false;
@@ -999,6 +1030,13 @@ public final class RoutineService {
             if(distance<.25 && goal.points().size()>1) continue;
             if(distance<best) {best=distance;nearest=point;}
             if(distance<=goal.radius()*goal.radius()) candidates.add(point);
+        }
+        if(spacing!=null && spacing.enabled() && goal.type()==RoutineGoal.Type.WALK && candidates.size()>1) {
+            // Someone already standing there: walking up would only stop short of it.
+            UUID self=state.npc.entity().getUniqueId();
+            List<RoutineGoal.Point> free=candidates.stream()
+                    .filter(point->spacing.free(self,point.location(from.getWorld()),spacing.minDistance())).toList();
+            if(!free.isEmpty())candidates=new ArrayList<>(free);
         }
         return candidates.isEmpty()?nearest:candidates.get(ThreadLocalRandom.current().nextInt(candidates.size()));
     }
