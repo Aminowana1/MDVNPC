@@ -17,10 +17,11 @@ shop-allow-cancelled-interaction: false
 routines:
   default-speed: 2.5 # bloques/segundo; cada goal puede sustituirlo
   random-radius: 20
-  activation-range: 48
+  random-walk-pause-seconds: 2 # 0..30; descanso en cada punto de un paseo aleatorio
+  activation-range: 48 # además, siguen activos mientras algún jugador los tenga a la vista (rango de seguimiento del servidor)
   movement-interval-ticks: 2 # 1..4; seguimiento de rutas Paper, IA autónoma apagada
   passive-update-ticks: 8 # 2..20; NPC quietos actualizan menos, horario/presencia siguen vigilados
-  path-starts-per-update: 2 # 1..8; máximo compartido de nuevas búsquedas Paper por actualización
+  path-starts-per-update: 4 # 1..8; máximo compartido de salidas nuevas por actualización (los que ya caminan no esperan turno)
   max-climb-height: 1.3 # bloques que un NPC puede subir al caminar (0..4)
   max-drop-height: 2.3 # bloques que un NPC puede bajar/caer al caminar (0..8)
   max-unannounced-drop: 1.01 # bajada máxima sin nodo explícito en la ruta Paper (<= max-drop-height)
@@ -28,19 +29,20 @@ routines:
   # Se buscan conexiones transitables: los desniveles necesitan escalones/camino real.
   nodes:
     enabled: true
-    link-range: 12 # distancia máxima entre nodos vecinos; conviene colocarlos cada 4..8 bloques
-    endpoint-range: 16 # alcance del NPC al primer nodo y del último nodo al destino
+    link-range: 12 # distancia horizontal máxima entre nodos vecinos; conviene colocarlos cada 4..8 bloques
+    endpoint-range: 16 # alcance horizontal del NPC al primer nodo y del último nodo al destino
+    max-y-difference: 8 # 1..32; diferencia de altura máxima entre nodos conectados (no cuenta en las distancias)
     scan-margin: 24 # margen alrededor del rectángulo origen-destino, en bloques
     max-distance: 256 # trayectos más largos conservan el buscador Paper
     scan-blocks-per-update: 8192 # presupuesto compartido de lectura de instantáneas
-    search-nodes-per-update: 256 # presupuesto compartido de búsqueda; repartido entre actualizaciones
+    search-nodes-per-update: 1024 # presupuesto compartido de búsqueda; las conexiones entre nodos se comparten entre NPC
   # Recuperación sólo al caminar hacia un goal; no salta vallas ni atraviesa obstáculos.
   stuck-hop:
     enabled: true
     delay-seconds: 3 # 1..60; espera sin desplazamiento antes de intentar/reintentar
     height: 0.6 # 0.05..4; altura del impulso, siempre se intenta aunque esté flotando
     distance: 1.0 # 0.05..4; impulso hacia la mirada; bloques/vallas recortan el movimiento al chocar
-  dancing: true # solo NPC con rasgo Fiestero: dejan la silla, bailan junto a músicos y vuelven
+  dancing: true # solo NPC con rasgo Fiestero: dejan la silla, bailan junto a músicos y vuelven; necesitan ver al músico (una pared o un cristal lo tapan)
   dance-duration-seconds: 60 # tiempo bailando; empieza al llegar a la pista (1..600)
   dance-seated-seconds: 30 # descanso completo desde que vuelve a sentarse (1..600)
   seat-offset-y: 0.5 # altura del asiento respecto del bloque de escalera (-4..4)
@@ -113,6 +115,25 @@ routines:
   meal-max-seconds: 90
   beer-type: CONSUMABLE # ID interno de categoría MMOItems, no nombre traducido
   beer-id: CERVEZA
+# Acompañantes temporales que crean otros plugins mediante la API (MdvNpcApi).
+# No se guardan en npcs.yml ni tienen rutinas; sobreviven a /mdvnpc reload y
+# desaparecen al reiniciar. Cada uno solo es visible para sus jugadores visores.
+companions:
+  enabled: true
+  max-active: 20 # límite total en el servidor
+  movement-interval-ticks: 2 # 1..4; menor = movimiento más suave
+  follow-distance: 2.5 # bloques que deja entre él y el jugador al seguirlo
+  follow-speed: 4.3 # bloques/segundo (un jugador andando va a ~4.3)
+  catch-up-speed: 5.6 # cuando se ha quedado lejos (jugador corriendo)
+  catch-up-distance: 7
+  teleport-distance: 24 # más lejos que esto, reaparece detrás del jugador
+  stuck-teleport-seconds: 3 # atascado siguiendo: reaparece detrás del jugador
+  move-speed: 3.5 # velocidad por defecto de moveTo
+  lead-speed: 3.2 # velocidad al guiar
+  lead-max-gap: 7 # si el jugador guiado se aleja más, se para a esperarlo
+  stuck-fail-seconds: 20 # moveTo/lead sin progreso: termina con FAILED
+  default-name: '&6Guía'
+  default-skin: '' # nombre de jugador; vacío = Steve (si no hay plantilla)
 messages:
   prefix: '&8[&2MDVNPC&8] &7'
   no-permission: '&cNo tienes permiso.'
@@ -145,6 +166,7 @@ messages:
     - '&e/mdvnpc skin <id> <jugador> &7- Cambiar skin.'
     - '&e/mdvnpc enable <id> <true|false> &7- Activar/desactivar.'
     - '&e/mdvnpc rutinas <id> &7- Abrir el editor gráfico de rutinas.'
+    - '&e/mdvnpc companion &7- Probar un acompañante temporal visible solo para ti.'
     - '&e/mdvnpc reload &7- Recargar config.yml y la carpeta NPCs.'
 
 # Sonidos locales; una secuencia por NPC, aunque haya varios oyentes.
@@ -182,6 +204,21 @@ npc-reactions:
     - '&7{npc} &f» &c¡Eh, no me pegues!'
     - '&7{npc} &f» &c¡Un poco de respeto, {player}!'
     - '&7{npc} &f» &c¡Estate quieto con esas manos!'
+# Choque entre NPC: ninguno camina a través de otro. Rodean, esperan o se apartan en pasillos.
+npc-spacing:
+  enabled: true
+  min-distance: 1.0              # 0..3; distancia horizontal mínima entre centros (0 = como antes, se atraviesan)
+  push-idle: true                # quien camina puede apartar a un NPC quieto de pie (nunca a uno sentado o trabajando)
+  pass-through-after-seconds: 0  # 0..120; 0 = nunca se atraviesan; si no, tras ese atasco lo cruza
+  companions: true               # los acompañantes también chocan al caminar
+# Saludo: un jugador que se agacha dos veces rápido cerca de un NPC recibe un saludo.
+# El NPC más cercano lo mira, saluda con la mano (si tiene skin de jugador) y pausa su rutina.
+npc-greetings:
+  enabled: true
+  range: 5 # 1..16; distancia máxima entre el jugador y el NPC
+  double-sneak-seconds: 0.6 # 0.1..2; tiempo máximo entre las dos veces que se agacha
+  pause-seconds: 3 # 0.5..15; tiempo que el NPC se detiene mirando al jugador
+  cooldown-seconds: 10 # 0..600; espera por jugador y NPC antes de volver a saludar
 music:
   group-radius: 8 # Distancia entre músicos vecinos de la misma sesión (2..16)
   audio-radius: 14 # Límite estricto por NPC, en bloques (12..15)

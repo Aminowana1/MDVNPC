@@ -1,6 +1,7 @@
 package com.mdvcraft.mdvnpc.routine;
 
 import org.bukkit.Chunk;
+import org.bukkit.Material;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.BlockState;
@@ -23,38 +24,53 @@ public final class NetheriteNodeListener implements Listener {
     @FunctionalInterface private interface Invalidation {
         void apply(org.bukkit.World world,int blockX,int blockZ);
     }
-    private final Invalidation invalidation;
+    private final Invalidation invalidation, terrain;
 
     public NetheriteNodeListener(RoutineNavigator navigator) {
-        this.invalidation = navigator::invalidateNodes;
+        this.invalidation = navigator::invalidateNodes; this.terrain = navigator::invalidateTerrain;
     }
     /** Resolve the service's current navigator after every configuration reload. */
     public NetheriteNodeListener(RoutineService service) {
-        this.invalidation = service::invalidateNodes;
+        this.invalidation = service::invalidateNodes; this.terrain = service::invalidateTerrain;
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void place(BlockPlaceEvent event) {
-        invalidate(event.getBlockPlaced());
+        // Only markers live in the cache; the cover above them is checked live by the navigator.
+        if (marker(event.getBlockPlaced())) invalidate(event.getBlockPlaced());
+        else edited(event.getBlockPlaced());
         if (event instanceof BlockMultiPlaceEvent multi)
             for (BlockState state : multi.getReplacedBlockStates())
-                invalidation.apply(state.getWorld(), state.getX(), state.getZ());
+                if (state.getType() == Material.NETHERITE_BLOCK)
+                    invalidation.apply(state.getWorld(), state.getX(), state.getZ());
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void breakBlock(BlockBreakEvent event) {
-        invalidate(event.getBlock());
+        if (marker(event.getBlock())) invalidate(event.getBlock());
+        else edited(event.getBlock());
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void entityExplosion(EntityExplodeEvent event) {
-        for (Block block : event.blockList()) invalidate(block);
+        explosion(event.blockList());
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void blockExplosion(BlockExplodeEvent event) {
-        invalidate(event.getBlock());
-        for (Block block : event.blockList()) invalidate(block);
+        explosion(event.blockList());
+    }
+
+    private void explosion(Iterable<Block> blocks) {
+        java.util.Set<Long> chunks = new java.util.HashSet<>();
+        for (Block block : blocks) {
+            if (marker(block)) invalidate(block);
+            else if (chunks.add(((long) (block.getX() >> 4) << 32) ^ ((block.getZ() >> 4) & 0xffffffffL))) edited(block);
+        }
+    }
+
+    private void edited(Block block) {
+        terrain.apply(block.getWorld(), block.getX(), block.getZ());
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -67,7 +83,12 @@ public final class NetheriteNodeListener implements Listener {
         piston(event.getBlock(), event.getDirection(), event.getBlocks());
     }
 
+    private static boolean marker(Block block) { return block.getType() == Material.NETHERITE_BLOCK; }
+
     private void piston(Block piston, BlockFace direction, Iterable<Block> moved) {
+        boolean movesMarker = false;
+        for (Block block : moved) movesMarker |= marker(block);
+        if (!movesMarker) return;
         invalidate(piston);
         invalidateOffset(piston, direction, 1);
         for (Block block : moved) {

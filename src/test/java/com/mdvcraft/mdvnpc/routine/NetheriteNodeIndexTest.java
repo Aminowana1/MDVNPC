@@ -33,7 +33,9 @@ class NetheriteNodeIndexTest {
         when(world.isChunkLoaded(anyInt(), anyInt())).thenReturn(false);
         when(world.isChunkLoaded(0, 0)).thenReturn(true);
         when(world.getChunkAt(0, 0)).thenReturn(chunk);
-        when(chunk.getChunkSnapshot(false, false, false)).thenReturn(snapshot);
+        // The height map must be requested: CraftBukkit has none unless includeMaxBlockY is set.
+        when(chunk.getChunkSnapshot(true, false, false)).thenReturn(snapshot);
+        when(snapshot.getHighestBlockYAt(anyInt(), anyInt())).thenReturn(15);
         when(snapshot.contains(any(BlockData.class))).thenAnswer(call -> !buried.isEmpty());
         when(snapshot.getBlockType(anyInt(), anyInt(), anyInt())).thenAnswer(call ->
                 buried.contains(new Node(call.getArgument(0), call.getArgument(1), call.getArgument(2)))
@@ -127,5 +129,24 @@ class NetheriteNodeIndexTest {
         NetheriteNodeIndex.Scan scan = index.discover(world, start, goal, 24, 256);
         assertTrue(scan.done()); assertTrue(scan.truncated()); assertTrue(scan.result().isEmpty());
         verify(world, never()).getChunkAt(anyInt(), anyInt());
+    }
+
+    @Test void onlyTheHeightBandOfTheTripIsRead() {
+        buried.add(new Node(3, 6, 3));   // guides feet at y 8, the height of the trip
+        buried.add(new Node(4, 12, 4));  // guides feet at y 14, beyond a range of 2
+        NetheriteNodeIndex.Scan band = index.discover(world, start, goal, 0, 256, 2);
+        int reads = 0;
+        while (!band.done()) reads += band.advance(4096);
+        assertEquals(Set.of(new Node(3, 8, 3)), Set.copyOf(band.result()));
+        assertTrue(reads < 256 * 6, "read " + reads + " blocks for five rows");
+
+        // The cached band is narrower than a full scan, which reads the chunk again.
+        NetheriteNodeIndex.Scan full = index.discover(world, start, goal, 0, 256);
+        finish(full);
+        assertEquals(Set.of(new Node(3, 8, 3), new Node(4, 14, 4)), Set.copyOf(full.result()));
+        // And a narrower trip reuses the wider cache.
+        NetheriteNodeIndex.Scan again = index.discover(world, start, goal, 0, 256, 2);
+        assertEquals(1, again.advance(4096));
+        assertEquals(Set.of(new Node(3, 8, 3)), Set.copyOf(again.result()));
     }
 }

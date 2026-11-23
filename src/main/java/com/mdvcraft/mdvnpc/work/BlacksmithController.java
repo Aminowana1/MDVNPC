@@ -37,6 +37,7 @@ public final class BlacksmithController {
     private static final double PROGRESS_DISTANCE_SQUARED = .1 * .1;
     private static final int NO_PROGRESS_TICKS = 160, FLIGHT_TICKS = 16;
     private final MdvNpcPlugin plugin;
+    private final WorkFailures failures;
     private final RoutineNavigator navigator;
     private final DoorController geometryDoors;
     private final Function<Material, ItemStack> items;
@@ -68,7 +69,7 @@ public final class BlacksmithController {
     /** Item factory/geometry seam keeps tests independent of Paper's item registry. */
     BlacksmithController(MdvNpcPlugin plugin, RoutineNavigator navigator,
                          DoorController geometryDoors, Function<Material, ItemStack> items) {
-        this.plugin = plugin; this.navigator = navigator;
+        this.plugin = plugin; failures = new WorkFailures(plugin, "herrero"); this.navigator = navigator;
         this.geometryDoors = geometryDoors; this.items = items;
     }
 
@@ -143,6 +144,7 @@ public final class BlacksmithController {
             }
             return Result.RUNNING;
         } catch (RuntimeException | LinkageError error) {
+            failures.report(id, error);
             // Cosmetics never prevent the NPC from returning to its ordinary shop post.
             stop(id);
             return Result.FALLBACK;
@@ -341,6 +343,7 @@ public final class BlacksmithController {
             entity.setTransformation(new Transformation(new Vector3f(),new Quaternionf(),new Vector3f(.4f),new Quaternionf()));
         });
         if(display==null || !display.isValid())throw new IllegalStateException("No se pudo crear el objeto visual del herrero");
+        com.mdvcraft.mdvnpc.runtime.NpcVisibilityService.track(plugin,display);
         if(state.flights.stream().noneMatch(flight->flight.display()==display))
             state.flights.add(new Flight(display,start,end,tick,material,smelting));
         state.npc.entity().swingMainHand();
@@ -364,8 +367,8 @@ public final class BlacksmithController {
             if(!loaded(current) || !flight.display().teleport(current)) {flight.display().remove();iterator.remove();}
         }
     }
-    private static void cleanupFlights(State state) {
-        for(Flight flight:state.flights)try{flight.display().remove();}catch(RuntimeException ignored){}
+    private void cleanupFlights(State state) {
+        for(Flight flight:state.flights)try{flight.display().remove();}catch(RuntimeException error){failures.report(state.npc.definition().id(),error);}
         state.flights.clear();
     }
     private static boolean sameItem(ItemStack first,ItemStack second) {
@@ -375,7 +378,7 @@ public final class BlacksmithController {
     private Result fallback(String id) {stop(id);return Result.FALLBACK;}
     public void stop(String id) {
         State state=states.remove(id);if(state==null)return;
-        try{navigator.cancel(id);}catch(RuntimeException | LinkageError ignored){}
+        try{navigator.cancel(id);}catch(RuntimeException | LinkageError error){failures.report(id,error);}
         cleanupFlights(state);
         try {
             if(state.handSaved && state.npc.disguise()!=null) {
@@ -387,7 +390,7 @@ public final class BlacksmithController {
                     if(state.raisedApplied && !watcher.isMainHandRaised())watcher.setMainHandRaised(state.previousRaised);
                 }
             }
-        } catch(RuntimeException | LinkageError ignored) {}
+        } catch(RuntimeException | LinkageError error){failures.report(id,error);}
         try {
             EntityEquipment equipment=state.npc.entity().getEquipment();
             if(state.entityHandSaved && equipment!=null) {
@@ -396,7 +399,7 @@ public final class BlacksmithController {
                 if(state.dropChanceApplied && equipment.getItemInMainHandDropChance()==0)
                     equipment.setItemInMainHandDropChance(state.previousDropChance);
             }
-        } catch(RuntimeException | LinkageError ignored) {}
+        } catch(RuntimeException | LinkageError error){failures.report(id,error);}
         try {
             if(state.headApplied && state.npc.entity().isValid()) {
                 Location current=state.npc.position();
@@ -405,7 +408,7 @@ public final class BlacksmithController {
                 if(sameAngle(state.npc.entity().getBodyYaw(),state.appliedBodyYaw))
                     state.npc.entity().setBodyYaw(state.previousBodyYaw);
             }
-        } catch(RuntimeException | LinkageError ignored) {}
+        } catch(RuntimeException | LinkageError error){failures.report(id,error);}
     }
     private static boolean sameAngle(float first,float second) {
         double delta=(first-second)%360;

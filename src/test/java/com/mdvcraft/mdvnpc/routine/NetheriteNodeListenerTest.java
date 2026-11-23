@@ -80,11 +80,21 @@ class NetheriteNodeListenerTest {
         verifyNoMoreInteractions(navigator);
     }
 
+    @Test void ordinaryBlockEditsKeepTheMarkerCache() {
+        Block stone = block(5, 5);
+        when(stone.getType()).thenReturn(org.bukkit.Material.STONE);
+        listener.breakBlock(new org.bukkit.event.block.BlockBreakEvent(stone, mock(org.bukkit.entity.Player.class)));
+        // Only the shared connections near the edit are measured again.
+        verify(navigator).invalidateTerrain(world, 5, 5);
+        verifyNoMoreInteractions(navigator);
+    }
+
     private Block block(int x, int z) {
         Block block = mock(Block.class);
         when(block.getWorld()).thenReturn(world);
         when(block.getX()).thenReturn(x);
         when(block.getZ()).thenReturn(z);
+        when(block.getType()).thenReturn(org.bukkit.Material.NETHERITE_BLOCK);
         return block;
     }
 }

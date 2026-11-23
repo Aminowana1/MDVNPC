@@ -28,6 +28,7 @@ public final class RoutineService {
     private final RoutineGravity gravity;
     private RoutineNavigator navigator;
     private DanceController dancers;
+    private com.mdvcraft.mdvnpc.runtime.NpcSpacing spacing;
     private BlacksmithController blacksmiths;
     private long blacksmithRetryTicks;
     private FishermanController fishermen;
@@ -38,6 +39,8 @@ public final class RoutineService {
     private BukkitTask task;
     private long ticks;
     private int cadence;
+    /** Rest at each point of a random walk. */
+    private long randomPauseTicks=40;
     private int passiveCadence,pathStarts;
     private double activationRange;
     private boolean danceEnabled;
@@ -102,44 +105,60 @@ public final class RoutineService {
     public void start() {
         cadence=Math.max(1,Math.min(4,plugin.settings().messages().getInt("routines.movement-interval-ticks",2)));
         passiveCadence=Math.max(2,Math.min(20,plugin.settings().messages().getInt("routines.passive-update-ticks",8)));
-        pathStarts=Math.max(1,Math.min(8,plugin.settings().messages().getInt("routines.path-starts-per-update",2)));
+        pathStarts=Math.max(1,Math.min(8,plugin.settings().messages().getInt("routines.path-starts-per-update",4)));
         activationRange=Math.max(16,Math.min(128,plugin.settings().messages().getDouble("routines.activation-range",48)));
         if(!Double.isFinite(activationRange))activationRange=48;
         danceEnabled=plugin.settings().messages().getBoolean("routines.dancing",true);
         danceSeatedTicks=Math.max(1,Math.min(600,plugin.settings().messages().getInt("routines.dance-seated-seconds",30)))*20L;
         navigator=new RoutineNavigator(doors,this::teleport); failed.clear();
         var cfg=plugin.settings().messages();
+        spacing=plugin.spacing();
+        if(spacing!=null){spacing.configure(cfg);navigator.spacing(spacing);}
         navigator.configureHeights(cfg.getDouble("routines.max-climb-height",1.30),cfg.getDouble("routines.max-drop-height",2.30),cfg.getDouble("routines.max-unannounced-drop",1.01));
         boolean nodesEnabled=cfg.getBoolean("routines.nodes.enabled",true);
         navigator.configureNodes(nodesEnabled,cfg.getInt("routines.nodes.link-range",12),
                 cfg.getInt("routines.nodes.endpoint-range",16),cfg.getInt("routines.nodes.scan-margin",24),
                 cfg.getInt("routines.nodes.max-distance",256),cfg.getInt("routines.nodes.scan-blocks-per-update",8192),
-                cfg.getInt("routines.nodes.search-nodes-per-update",256));
+                cfg.getInt("routines.nodes.search-nodes-per-update",1024),
+                cfg.getInt("routines.nodes.max-y-difference",8));
+        randomPauseTicks=Math.round(20*Math.max(0,Math.min(30,cfg.getDouble("routines.random-walk-pause-seconds",2))));
         stuckHopEnabled=cfg.getBoolean("routines.stuck-hop.enabled",true);
         stuckHopDelayTicks=20L*Math.max(1,Math.min(60,cfg.getInt("routines.stuck-hop.delay-seconds",3)));
         double hopHeight=cfg.getDouble("routines.stuck-hop.height",.6),hopDistance=cfg.getDouble("routines.stuck-hop.distance",1);
         stuckHopHeight=Double.isFinite(hopHeight)?Math.max(.05,Math.min(4,hopHeight)):.6;
         stuckHopDistance=Double.isFinite(hopDistance)?Math.max(.05,Math.min(4,hopDistance)):1;
-        dancers=new DanceController(plugin,navigator,this::teleport);
+        dancers=new DanceController(plugin,navigator,this::teleport,spacing);
         blacksmiths=new BlacksmithController(plugin,navigator,this::teleport);
         blacksmithRetryTicks=20L*Math.max(1,Math.min(600,cfg.getInt("blacksmith.retry-seconds",30)));
         fishermen=new FishermanController(plugin,navigator,this::teleport,this::mount);
         fishermanRetryTicks=20L*Math.max(1,Math.min(600,cfg.getInt("fisherman.retry-seconds",30)));
-        clocks.configure(repository.snapshot().clocks());
+        updateClocks(()->clocks.configure(repository.snapshot().clocks()));
         task=Bukkit.getScheduler().runTaskTimer(plugin,this::tick,cadence,cadence);
     }
     public void stop() {
         if(task!=null) {task.cancel();task=null;}
         for(String id:List.copyOf(states.keySet())) remove(id);
         if(navigator!=null) navigator.clear(); doors.close();
-        if(dancers!=null)dancers.clear();if(blacksmiths!=null)blacksmiths.clear();if(fishermen!=null)fishermen.clear();choices.clear();windows.clear();
+        if(dancers!=null)dancers.clear();if(blacksmiths!=null)blacksmiths.clear();if(fishermen!=null)fishermen.clear();windows.clear();
         dialogueStates.clear(); unavailableStates.clear();staticFloors.clear();
     }
-    public void close() { stop(); clocks.close(); }
+    public void close() { stop(); choices.clear(); clocks.close(); }
+    public void invalidateTerrain(World world,int blockX,int blockZ) {
+        if(navigator!=null)navigator.invalidateTerrain(world,blockX,blockZ);
+        if(plugin.companions()!=null)plugin.companions().invalidateTerrain(world,blockX,blockZ);
+    }
     public void invalidateNodes(World world,int blockX,int blockZ) {
         if(navigator!=null)navigator.invalidateNodes(world,blockX,blockZ);
+        if(plugin.companions()!=null)plugin.companions().invalidateNodes(world,blockX,blockZ);
     }
-    public void worldLoaded() { clocks.sync(); }
+    public void worldLoaded() { updateClocks(clocks::sync); }
+    /** An optional clock must never prevent the NPC from starting. */
+    private void updateClocks(Runnable update) {
+        try { update.run(); }
+        catch(IllegalStateException ex) {
+            plugin.getLogger().log(java.util.logging.Level.SEVERE,"No se pudo aplicar un reloj de mundo; los NPC siguen funcionando",ex);
+        }
+    }
     public boolean enabled(String id) { var plan=repository.snapshot().plans().get(id); return plan!=null && plan.enabled() && !plan.goals().isEmpty(); }
     public List<RoutineGoal.Point> points(String id) {
         var plan=repository.snapshot().plans().get(id);
@@ -178,7 +197,11 @@ public final class RoutineService {
         World world=to.getWorld();
         if(world==null || world!=npc.entity().getWorld() || !world.isChunkLoaded(to.getBlockX()>>4,to.getBlockZ()>>4)) return false;
         UUID previous=internalEntity; internalEntity=npc.entity().getUniqueId();
-        try { return npc.entity().teleport(to); } finally { internalEntity=previous; }
+        try {
+            boolean moved=npc.entity().teleport(to);
+            if(moved && spacing!=null)spacing.moved(npc);
+            return moved;
+        } finally { internalEntity=previous; }
     }
     private RoutineSchedule.Window window(String id,World world) {
         var plan=repository.snapshot().plans().get(id);
@@ -236,6 +259,11 @@ public final class RoutineService {
                 || s.pose.seat==null || !s.pose.seat.isValid() || npc.entity().getVehicle()!=s.pose.seat))return false;
         return s!=null && s.npc==npc && !s.paused && s.goal!=null && s.goal.type()!=RoutineGoal.Type.SLEEP
                 && same(s.window,window(npc.definition().id(),npc.entity().getWorld())) && !failed.contains(npc.definition().id());
+    }
+    /** A sleeper does not get up to greet; everyone else may pause for it. */
+    public boolean canGreet(ActiveNpc npc) {
+        State s=states.get(npc.definition().id());
+        return s==null || s.npc!=npc || s.pose==null || !s.pose.sleeping;
     }
     public void prepareReaction(ActiveNpc npc) {
         State s=states.get(npc.definition().id());if(s==null)return;
@@ -312,12 +340,19 @@ public final class RoutineService {
         if(clockElapsed>=10) {clocks.tick(clockElapsed);clockElapsed=0;}
         var manager=plugin.manager(); if(manager==null) return;
         navigator.beginTick(ticks,pathStarts,2_000_000);
-        for(ActiveNpc npc:manager.activeNpcs()) {
+        if(spacing!=null && spacing.enabled()) {
+            List<ActiveNpc> everyone=new ArrayList<>(manager.activeNpcs());
+            if(plugin.companions()!=null)everyone.addAll(plugin.companions().activeNpcs());
+            spacing.refresh(everyone);
+            if(ticks%10<cadence)spacing.separate(world->new RoutineTerrain(world,doors));
+        }
+        for(ActiveNpc npc:rotated(manager.activeNpcs())) {
             String id=npc.definition().id();
             if(!npc.entity().isValid()){staticFloors.remove(id);if(blacksmiths!=null)blacksmiths.stop(id);if(fishermen!=null)fishermen.stop(id);continue;}
             if(failed.contains(id))continue;
             if(!enabled(id)) {
                 State held=states.get(id);if(held!=null){clearStuckHop(held);stopBlacksmith(held);stopFisherman(held);}
+                if(spacing!=null)spacing.idle(npc,false,true,this::teleport);
                 try{updateStaticFloor(npc);}
                 catch(RuntimeException ex) {
                     failed.add(id);staticFloors.remove(id);
@@ -331,6 +366,10 @@ public final class RoutineService {
             if(previous!=null && ticks<previous.nextUpdate && ticks<previous.nextPresence && previous.lastMinute==minute)continue;
             try {
                 update(npc);
+                if(spacing!=null) {
+                    State updated=states.get(id);
+                    spacing.idle(npc,pushable(updated),updated!=null && updated.destination==null && !navigator.traveling(id),this::teleport);
+                }
             }
             catch(RuntimeException ex) {
                 failed.add(id); try { remove(id); } catch(RuntimeException cleanup) { ex.addSuppressed(cleanup); }
@@ -345,6 +384,22 @@ public final class RoutineService {
             doors.tick(ticks,false); if(plugin.routineCommands()!=null)plugin.routineCommands().prune();
             long now=System.nanoTime(); dialogueStates.values().removeIf(v->now>=v.due && now-v.lastSeen>60_000_000_000L);
         }
+    }
+    /** Standing about with nothing to do: another NPC walking by may shove it aside. */
+    private boolean pushable(State s) {
+        if(s==null || s.paused)return false;
+        ActiveNpc npc=s.npc;String id=npc.definition().id();
+        return s.destination==null && s.pose==null && !s.dancing && !s.working && !s.returningFromDance
+                && !npc.entity().isInsideVehicle() && !s.gravity.falling() && !navigator.traveling(id)
+                && !(plugin.reactions()!=null && plugin.reactions().busy(id))
+                && !(plugin.traits()!=null && plugin.traits().busy(id))
+                && !(blacksmiths!=null && blacksmiths.active(id)) && !(fishermen!=null && fishermen.active(id));
+    }
+    /** The shared search allowance goes first to whoever is first: rotate who that is. */
+    private List<ActiveNpc> rotated(java.util.Collection<ActiveNpc> npcs) {
+        List<ActiveNpc> order=new ArrayList<>(npcs);
+        if(order.size()>1)java.util.Collections.rotate(order,-(int)Math.floorMod(ticks/cadence,(long)order.size()));
+        return order;
     }
     /** Static NPCs share the floor helper without creating a routine, pose, or job state. */
     private void updateStaticFloor(ActiveNpc npc) {
@@ -377,7 +432,10 @@ public final class RoutineService {
             s.nextPresence=ticks+20;
             // Spectators can follow an NPC too. Keep the configured activation range;
             // the wider visibility guard below is queried only for pending recovery.
-            boolean absent=position.getWorld().getNearbyPlayers(position,range,p -> !p.isDead()).isEmpty();
+            // A player whose client draws this NPC must see it keep its schedule, even
+            // beyond the activation range: otherwise it would look frozen from afar.
+            boolean absent=position.getWorld().getNearbyPlayers(position,range,p -> !p.isDead()).isEmpty()
+                    && npc.entity().getTrackedBy().isEmpty();
             if(absent) {
                 clearStuckHop(s);
                 if(!s.paused) {
@@ -449,7 +507,7 @@ public final class RoutineService {
         if(plugin.reactions()!=null && plugin.reactions().busy(id)) {
             clearStuckHop(s);interruptBlacksmith(s);
             if(!suspendFishermanReaction(s))interruptFisherman(s);
-            gravity.reset(s.gravity);s.status="enfadado: mirando al jugador";s.travelSince=ticks;return;
+            gravity.reset(s.gravity);s.status=plugin.reactions().greeting(id)?"saludando a un jugador":"enfadado: mirando al jugador";s.travelSince=ticks;return;
         }
         if(plugin.traits()!=null && plugin.traits().busy(id)) {clearStuckHop(s);interruptBlacksmith(s);interruptFisherman(s);gravity.reset(s.gravity);s.status="bebiendo cerveza ofrecida";s.travelSince=ticks;return;}
         if(s.fishermanReactionPaused) {
@@ -566,6 +624,9 @@ public final class RoutineService {
         var result=s.returningFromDance && readyToSit(npc,s.approach)
                 ?RoutineNavigator.Result.ARRIVED:navigator.move(npc,s.approach,goal.speed(),ticks,cadence);
         boolean progressed=travelProgress(s,beforeMove,npc.position(),result);
+        boolean crowded=navigator.crowded(id);
+        // Waiting for another NPC to get out of the way is neither stuck nor an unreachable goal.
+        if(crowded){resetTravelProgress(s,npc.position());s.stuckAnchor=null;s.returnWaitingSince=0;}
         observeStuckMotion(s,npc.position());
         if(result==RoutineNavigator.Result.WAITING && recoverFloor(s))return;
         if(!s.returningFromDance && result==RoutineNavigator.Result.WAITING && navigator.exhausted(id)
@@ -605,7 +666,7 @@ public final class RoutineService {
             // made of short segments would reset it forever and never produce a glance.
             looks.tick(npc,s.look,ticks,s.look.initialized?s.look.bodyYaw:beforeMove.getYaw(),false,false);
         } else looks.clear(npc,s.look);
-        s.status=s.returningFromDance
+        s.status=crowded?"esperando a que pase otro NPC":s.returningFromDance
                 ?result==RoutineNavigator.Result.WAITING?"volviendo al asiento: esperando ruta":"volviendo al asiento"
                 :result==RoutineNavigator.Result.WAITING?"esperando ruta (reintentos limitados)":"caminando a "+goal.type();
         if(result!=RoutineNavigator.Result.ARRIVED) return;
@@ -616,7 +677,7 @@ public final class RoutineService {
                 s.point++;
                 if(goal.target() && s.point>=goal.points().size()) {s.chain++;s.goal=null;s.point=0;}
                 else if(s.point>=goal.points().size()) s.point=0;
-                s.destination=null;s.approach=null;s.nextPick=ticks+(goal.mode()==RoutineGoal.WalkMode.RANDOM?40:0);
+                s.destination=null;s.approach=null;s.nextPick=ticks+(goal.mode()==RoutineGoal.WalkMode.RANDOM?randomPauseTicks:0);
             }
             case SIT,SLEEP -> {
                 UUID before=internalEntity; internalEntity=npc.entity().getUniqueId();mounting=true;
@@ -806,7 +867,7 @@ public final class RoutineService {
         ActiveNpc npc=s.npc;String id=npc.definition().id();
         if(!stuckHopEnabled || npc.entity().isInsideVehicle()) {clearStuckHop(s);return false;}
         boolean hopping=navigator.activeHop(id);
-        if(!hopping && navigator.planningNodes(id)) {
+        if(!hopping && (navigator.planningNodes(id) || navigator.crowded(id))) {
             s.nextHopAttempt=ticks+stuckHopDelayTicks;return false;
         }
         if(s.stuckAnchor==null && s.destination==null && !hopping)return false;
@@ -969,6 +1030,13 @@ public final class RoutineService {
             if(distance<.25 && goal.points().size()>1) continue;
             if(distance<best) {best=distance;nearest=point;}
             if(distance<=goal.radius()*goal.radius()) candidates.add(point);
+        }
+        if(spacing!=null && spacing.enabled() && goal.type()==RoutineGoal.Type.WALK && candidates.size()>1) {
+            // Someone already standing there: walking up would only stop short of it.
+            UUID self=state.npc.entity().getUniqueId();
+            List<RoutineGoal.Point> free=candidates.stream()
+                    .filter(point->spacing.free(self,point.location(from.getWorld()),spacing.minDistance())).toList();
+            if(!free.isEmpty())candidates=new ArrayList<>(free);
         }
         return candidates.isEmpty()?nearest:candidates.get(ThreadLocalRandom.current().nextInt(candidates.size()));
     }

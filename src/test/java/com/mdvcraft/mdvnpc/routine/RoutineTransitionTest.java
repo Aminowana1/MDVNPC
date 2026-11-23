@@ -135,12 +135,13 @@ class RoutineTransitionTest {
         assertFalse(service.status("thurg").contains("suspendido"));assertWalkingSteps(initial);
     }
 
-    @Test void entityTrackersBeyondTheLocalVisibilityGuardAlsoPreventCatchup() throws Exception {
+    @Test void aPlayerWhoseClientDrawsTheNpcKeepsItsRoutineMovingBeyondActivationRange() throws Exception {
         following=false;observerPosition=new Location(world,-130,64,.5);
         when(entity.getTrackedBy()).thenReturn(Set.of(observer));
         service.repository().put("thurg",goal(1,RoutineGoal.Type.WORK,RoutineGoal.WalkMode.CYCLE,0,0,160));
         Location initial=position.clone();service.start();advance(120);
-        assertTrue(service.status("thurg").contains("suspendido"));assertEquals(initial,position);assertTrue(moves.isEmpty());
+        // Seen from afar it must keep its schedule, never freeze nor jump to the destination.
+        assertFalse(service.status("thurg").contains("suspendido"));assertWalkingSteps(initial);
     }
 
     @Test void unseenSleepIsPreservedUntilTheScheduleChangesAndCatchupRunsOnce() throws Exception {

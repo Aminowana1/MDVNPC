@@ -1,3 +1,147 @@
+# MDVNPC 1.16.0 — choque entre NPC y bailarines que ven al músico
+
+Choque entre NPC (nuevo `npc-spacing`):
+- Ningún NPC camina a través de otro: entre sus centros queda al menos
+  `min-distance` (1 bloque por defecto). Vale para NPC de rutina y
+  acompañantes, y entre NPC en el mismo piso.
+- Quien camina rodea al otro por su derecha, así dos que se cruzan de frente
+  se esquivan. Si no hay sitio, se acerca hasta el borde y espera.
+- Un NPC quieto de pie se puede apartar un poco al pasar (`push-idle`). Los
+  sentados, trabajando, bailando, en barca, reaccionando o sin rutina nunca
+  se mueven: se les rodea.
+- Si un NPC queda bloqueado, busca un rodeo corto. En un pasillo de un bloque,
+  el de viaje más reciente se aparta a un hueco cercano y deja pasar al otro.
+- Si el destino lo ocupa otro NPC, quedarse al lado cuenta como llegar.
+- Los NPC que aparecen uno dentro de otro se separan poco a poco.
+- Esperar a otro NPC no cuenta como atasco: no recalcula la ruta en bucle ni
+  hace el salto para destrabarse.
+- `pass-through-after-seconds: 0` (por defecto): nunca se atraviesan.
+- Los puntos de rutina que pusiste a menos de 1 bloque de un NPC sentado o
+  trabajando se respetan al llegar.
+- Coste: alrededor de 1 µs por paso con 300 NPC cerca; un NPC que espera sin que
+  nada cambie casi no consume.
+
+Bailarines:
+- Solo empiezan a bailar si ven al músico: una pared o un cristal entre ellos
+  lo impide y siguen su rutina normal. Si el más cercano está tapado, bailan
+  con otro que sí ven.
+- No eligen un sitio de la pista tapado por una columna.
+- Si pierden de vista al músico 3 s mientras bailan, dejan de bailar. Al
+  acercarse no se comprueba, para que una esquina no los detenga.
+
+No probado en un servidor real.
+
+# MDVNPC 1.15.0 — NPC que no se quedan quietos, nodos por altura y saludo
+
+Movimiento:
+- Un NPC que algún jugador tiene a la vista sigue su rutina aunque esté a más
+  de `activation-range` (48). Antes, visto desde 50–96 bloques, se quedaba
+  congelado y no reaccionaba al cambio de hora.
+- Ya no hay una pausa al final de cada tramo de un viaje largo: el siguiente
+  tramo se pide en la misma actualización.
+- El turno para buscar ruta rota entre todos los NPC, y
+  `path-starts-per-update` pasa de 2 a 4.
+- Nuevo `routines.random-walk-pause-seconds` (2 por defecto): descanso en cada
+  punto de un paseo aleatorio.
+
+Nodos de netherita:
+- `link-range` y `endpoint-range` se miden en horizontal. Nuevo
+  `routines.nodes.max-y-difference` (8 por defecto) limita aparte la altura
+  entre nodos conectados.
+- Las conexiones entre nodos se calculan en un margen de 6 bloques a los lados
+  y de `max-y-difference` en altura, así caben caminos curvos y rampas.
+- Las conexiones entre nodos se guardan y las comparten todos los NPC. Al
+  cambiar de hora con 20 NPC saliendo a la vez en viajes largos, el último
+  empezaba a andar a los 37 s; ahora a los 4 s. Romper o colocar cualquier
+  bloque cerca vuelve a medirlas.
+- El escaneo lee solo la franja de altura del viaje, no la columna entera.
+- `search-nodes-per-update` pasa de 256 a 1024; el tope de 2 ms por
+  actualización no cambia.
+- En suelo llano y despejado el NPC camina en línea recta entre nodos en vez
+  de en escalera, sin dejar de pasar por cada nodo. Saltarse un nodo que queda
+  en el camino, por ejemplo en una esquina, cuesta más que pasar por él.
+
+Saludo:
+- Si un jugador se agacha dos veces rápido a menos de 5 bloques de un NPC, el
+  más cercano lo mira, saluda con la mano y se detiene unos segundos. Sin
+  mensaje en el chat. Configurable en `npc-greetings`. Un NPC durmiendo no se
+  levanta, y un golpe interrumpe el saludo.
+- El gesto necesita la skin de jugador (LibsDisguises); sin ella, solo mira.
+
+No probado en un servidor real.
+
+# MDVNPC 1.14.1 — correcciones de auditoría y pathfinding
+
+Sin cambios en la API ni en `config.yml`.
+
+Auditoría interna (16 fallos): guardado del editor de tienda al apagar,
+cooldowns que sobreviven a relog, reload y reinicio (`cooldowns.dat`), archivos
+dañados aislados por NPC, trueques validados por contenido, jugadores ocultos
+fuera de la cerveza y la tienda, clics que actúan una sola vez, reintento de
+aparición de NPC estáticos, reload que restaura el estado si falla y
+confirmación al borrar en el editor de rutinas, entre otros.
+
+Pathfinding:
+- Los viajes largos con nodos de netherita ya no los abandonan mientras el
+  cálculo avanza. Solo se pasa al navegador de Paper tras 10 s sin progreso
+  teniendo presupuesto, o tras 60 s en total.
+- `follow` no usa nodos: antes, con nodos cerca, el acompañante no caminaba y
+  reaparecía detrás del jugador. `lead` ya no falla ni recalcula desde cero
+  mientras calcula una ruta por nodos o espera al jugador.
+- La entrada a la red se elige por el coste del viaje completo. Un viaje corto
+  ya no da la vuelta a un nodo que queda detrás, y una red que obliga a andar
+  más del doble que un camino directo no se usa.
+- Las rutas por nodos ya no cruzan paneles finos en el borde entre bloques,
+  como una trampilla abierta. Si una ruta por nodos falla al caminarla, el
+  resto del viaje usa Paper en vez de repetirla sin fin.
+- Los NPC andan a la velocidad configurada. Antes se quedaban por debajo, con
+  un máximo de 5 bloques/s.
+- Ya no se quedan colgados en el borde al subir escalones de 1,5 o 2 bloques.
+- Con muchos acompañantes siguiendo a la vez, ninguno se queda sin turno para
+  buscar ruta.
+
+No probado en un servidor real.
+
+# MDVNPC 1.14.0 — ocultar NPC por jugador
+
+- `MdvNpcApi` gana `hideNpcs(owner, viewer)`, `showNpcs(owner, viewer)` e
+  `isHidingNpcs(viewer)`. Ocultan a un jugador todos los NPC normales y sus
+  entidades auxiliares (asiento, bote, objetos del herrero, anzuelo).
+- Mientras están ocultos, esos NPC no le hablan, no lo miran, no reaccionan, no
+  abren tiendas y no le suena su música.
+- Se mantiene aunque el NPC reaparezca o se haga `/mdvnpc reload`. Se olvida al
+  desconectarse el jugador o al deshabilitarse el plugin que la pidió.
+- Los acompañantes no se ven afectados.
+- Detalles: `docs/CAMBIOS-1.14.0.md`.
+
+# MDVNPC 1.13.1 — comando de prueba de acompañantes
+
+- Nuevo `/mdvnpc companion` (solo `mdvnpc.admin`) para probar la API en el
+  juego: `spawn [plantilla]`, `follow`, `lead <x y z>`, `moveto <x y z>`,
+  `stop`, `tp`, `wave`, `swing`, `crouch`, `say`, `show`, `hide`, `remove` y
+  `list`. Cada admin controla un acompañante visible solo para él.
+- La plantilla solo copia nombre y aspecto (skin y visibilidad del nombre) del
+  NPC existente, sin editarlo; ya no copia su prefijo de chat.
+
+# MDVNPC 1.13.0 — acompañantes temporales para otros plugins
+
+- Nueva API pública `com.mdvcraft.mdvnpc.api` registrada en el
+  `ServicesManager` (`MdvNpcApi`). Permite a otros plugins crear acompañantes:
+  NPC temporales que siguen, guían (`lead`) o caminan a un punto (`moveTo`),
+  hacen gestos (`WAVE`, `SWING`, `CROUCH`), hablan por chat y emiten
+  `CompanionInteractEvent` / `CompanionRemoveEvent`.
+- Los acompañantes no se guardan en `npcs.yml`, no tienen rutinas, sobreviven a
+  `/mdvnpc reload` y solo los ven sus jugadores visores. Pueden copiar nombre,
+  skin y prefijo de un NPC existente como plantilla sin modificarlo.
+- Nueva sección `companions:` en `config.yml` (límite `max-active: 20`,
+  velocidades y distancias). Las configuraciones antiguas usan los defaults del
+  JAR.
+- Los NPC configurados, sus rutinas, tiendas y skins guardadas no cambian: los
+  acompañantes usan su propio marcador (`companion-id`), listener y navegador.
+  La excepción de spawn de WorldGuard también los cubre.
+- El build genera además `MDVNPC-<versión>-api.jar` con solo la API.
+- Guía de uso: `docs/GUIA-ACOMPANANTES.md`.
+
 # MDVNPC 1.11.16 — yunque configurable y pesca vanilla
 
 - Cada martillazo del Herrero en la estación de yunque usa ahora

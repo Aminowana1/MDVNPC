@@ -21,18 +21,27 @@ public final class WorldClockManager {
     }
     public void configure(Map<String,RoutineRepository.Clock> clocks) { this.clocks=clocks; sync(); }
     public void sync() {
+        IllegalStateException failure=null;
         for (World world:Bukkit.getWorlds()) {
             String id=world.getUID().toString();
             try {
                 if (clocks.containsKey(world.getName())) {
-                    if (!owned.contains(id)) { owned.set(id,Boolean.TRUE.equals(world.getGameRuleValue(GameRule.DO_DAYLIGHT_CYCLE))); persist(); }
+                    if (!owned.contains(id)) {
+                        owned.set(id,Boolean.TRUE.equals(world.getGameRuleValue(GameRule.DO_DAYLIGHT_CYCLE)));
+                        // Without the saved original this world is not ours to advance.
+                        try { persist(); } catch (Exception ex) { owned.set(id,null); throw ex; }
+                    }
                     world.setGameRule(GameRule.DO_DAYLIGHT_CYCLE,false);
                 } else if (owned.contains(id)) {
                     world.setGameRule(GameRule.DO_DAYLIGHT_CYCLE,owned.getBoolean(id)); owned.set(id,null); persist();
                     fractions.remove(world.getUID()); last.remove(world.getUID());
                 }
-            } catch (Exception ex) { throw new IllegalStateException("No se pudo guardar/restaurar el reloj de "+world.getName(),ex); }
+            } catch (Exception ex) {
+                var current=new IllegalStateException("No se pudo guardar/restaurar el reloj de "+world.getName(),ex);
+                if (failure==null) failure=current; else failure.addSuppressed(current);
+            }
         }
+        if (failure!=null) throw failure;
     }
     private void persist() throws Exception { AtomicFile.write(file,owned.saveToString()); }
     public void tick(int elapsedTicks) {

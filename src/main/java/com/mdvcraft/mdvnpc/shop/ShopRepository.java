@@ -2,6 +2,7 @@ package com.mdvcraft.mdvnpc.shop;
 
 import com.mdvcraft.mdvnpc.config.NpcParser;
 import com.mdvcraft.mdvnpc.storage.AtomicFile;
+import com.mdvcraft.mdvnpc.storage.NpcFolders;
 import com.mdvcraft.mdvnpc.storage.NpcPaths;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -23,8 +24,22 @@ public final class ShopRepository {
         return offers == null ? Collections.emptyNavigableMap() : Collections.unmodifiableNavigableMap(offers);
     }
     public int pages(String npc) { var offers = offers(npc); return offers.isEmpty() ? 1 : offers.lastKey() / PAGE_SIZE + 1; }
-    public void load() throws Exception { migrateLegacy(); var yaml = readAll(); data = parse(yaml); drafts = parseDrafts(yaml); }
-    public void validate() throws Exception { var yaml = readAll(); parse(yaml); parseDrafts(yaml); }
+    private Map<String, String> damaged = Map.of();
+    /** Shop files skipped by the last load; those shops keep their last valid offers. */
+    public List<String> problems() { return List.copyOf(damaged.values()); }
+    public void load() throws Exception {
+        migrateLegacy();
+        Map<String, String> failed = new LinkedHashMap<>();
+        var yaml = readAll(failed);
+        var offers = parse(yaml); var partial = parseDrafts(yaml);
+        for (String id : failed.keySet()) {
+            if (data.containsKey(id)) offers.put(id, data.get(id));
+            if (drafts.containsKey(id)) partial.put(id, drafts.get(id));
+        }
+        data = offers; drafts = partial; damaged = failed;
+    }
+    /** Checks the storage itself is readable; a damaged shop file is isolated by load(). */
+    public void validate() throws Exception { readAll(new HashMap<>()); }
     public ShopItem[] editorPage(String npc, int page) { return editorPage(data, drafts, npc, page); }
     private static ShopItem[] editorPage(Map<String, NavigableMap<Integer, ShopOffer>> offers,
             Map<String, Map<Integer, List<ShopItem>>> partial, String npc, int page) {
@@ -101,6 +116,7 @@ public final class ShopRepository {
     public void saveEditorPage(String npc, int page, ShopItem[] slots) throws Exception {
         NpcParser.validateId(npc); if (page < 0 || page >= MAX_PAGES) throw new IllegalArgumentException("Página fuera de rango");
         if (slots.length != 27) throw new IllegalArgumentException("Se requieren 27 slots");
+        if (damaged.containsKey(npc)) throw new IllegalStateException("Corrige el archivo antes de editar esta tienda. " + damaged.get(npc));
         YamlConfiguration yaml = readNpc(npc);
         if (!Arrays.equals(editorPage(parse(yaml), parseDrafts(yaml), npc, page), editorPage(npc, page)))
             throw new IllegalStateException("La página cambió en disco; cierra el editor y recarga antes de editar.");
@@ -131,17 +147,15 @@ public final class ShopRepository {
         if (yaml.getConfigurationSection("shops." + npc) == null) yaml.createSection("shops." + npc);
         return yaml;
     }
-    private YamlConfiguration readAll() throws Exception {
+    private YamlConfiguration readAll(Map<String, String> failed) throws Exception {
         var all = new YamlConfiguration(); all.createSection("shops");
         Files.createDirectories(npcRoot);
-        try (var dirs = Files.list(npcRoot)) {
-            for (Path dir : dirs.filter(Files::isDirectory).sorted().toList()) {
-                String id = dir.getFileName().toString(); NpcParser.validateId(id); Path path = dir.resolve("shop.yml"); if (!Files.exists(path)) continue;
-                var local = new YamlConfiguration(); local.loadFromString(Files.readString(path, StandardCharsets.UTF_8));
-                var section = local.getConfigurationSection("shops." + id); if (section == null) throw new IllegalArgumentException("Falta shops." + id + " en " + path);
-                copy(section, all, "shops." + id);
-            }
-        }
+        failed.putAll(NpcFolders.readEach(npcRoot, "shop.yml", (id, path) -> {
+            var local = new YamlConfiguration(); local.loadFromString(Files.readString(path, StandardCharsets.UTF_8));
+            var section = local.getConfigurationSection("shops." + id); if (section == null) throw new IllegalArgumentException("Falta shops." + id + " en " + path);
+            var own = new YamlConfiguration(); copy(section, own, "shops." + id); parse(own); parseDrafts(own);
+            copy(section, all, "shops." + id);
+        }));
         return all;
     }
     private void migrateLegacy() throws Exception {

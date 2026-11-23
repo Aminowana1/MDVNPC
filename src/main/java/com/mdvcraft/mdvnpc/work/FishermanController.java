@@ -18,7 +18,9 @@ import org.bukkit.inventory.EntityEquipment;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.Vector;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -41,7 +43,12 @@ public final class FishermanController {
     }
     private static final Vector STILL=new Vector();
     private static final int CAST_TICKS=16, RECAST_TICKS=300, NO_PROGRESS_TICKS=160;
+    /** A* nodes shared by every fisherman in one update, about 2 ms. */
+    private static final int BOAT_NODES_PER_TICK=96;
+    private long searchTick=Long.MIN_VALUE;
+    private int searchNodesLeft;
     private final MdvNpcPlugin plugin;
+    private final WorkFailures failures;
     private final RoutineNavigator navigator;
     private final DoorController doors;
     private final BiPredicate<ActiveNpc,Location> teleport;
@@ -64,6 +71,9 @@ public final class FishermanController {
         long travelStarted,lastProgress,stageStarted,nextEffect,castStarted,nextCast,lastTick;
         long suspendedAt;
         boolean suspended;
+        Deque<Location> routeCandidates;
+        BoatNavigator.Search routeSearch;
+        Location routeTarget;
         boolean handSaved,entityHandSaved,previousRaised,raisedApplied,dropChanceApplied,headApplied;
         ItemStack previousHand,previousEntityHand,appliedHand;
         float previousYaw,previousPitch,previousBodyYaw,previousDropChance,appliedYaw,appliedBodyYaw;
@@ -82,11 +92,11 @@ public final class FishermanController {
     FishermanController(MdvNpcPlugin plugin,RoutineNavigator navigator,DoorController doors,
                         BiPredicate<ActiveNpc,Location> teleport,BiPredicate<ActiveNpc,Entity> mount,
                         Function<Material,ItemStack> items,RandomGenerator random,BobberFactory bobbers) {
-        this.plugin=plugin;this.navigator=navigator;this.doors=doors;this.teleport=teleport;
+        this.plugin=plugin; failures = new WorkFailures(plugin, "pescador");this.navigator=navigator;this.doors=doors;this.teleport=teleport;
         this.mount=mount;this.items=items;this.random=random;this.bobbers=bobbers;
     }
     public boolean active(String id) {return states.containsKey(id);}
-    public boolean walking(String id) {State state=states.get(id);return state!=null && walking(state.stage);}
+    public boolean walking(String id) {State state=states.get(id);return state!=null && state.routeCandidates==null && walking(state.stage);}
     public boolean boating(String id) {State state=states.get(id);return state!=null && state.boat!=null;}
     /** A merchant session pauses at the current location so purchase distance checks remain valid. */
     public boolean pause(String id) {
@@ -97,7 +107,7 @@ public final class FishermanController {
             if(state.boat!=null && (!state.boat.isValid() || state.npc.entity().getVehicle()!=state.boat
                     || !state.boat.getPassengers().contains(state.npc.entity()) || !holdBoat(state)))return false;
             hand(state,Material.AIR);return true;
-        } catch(RuntimeException | LinkageError error) {return false;}
+        } catch(RuntimeException | LinkageError error) {failures.report(id,error);return false;}
     }
     /** Reactions borrow the hand/head but keep this boat, passenger and work stage. */
     public boolean suspend(String id,long tick) {
@@ -109,7 +119,7 @@ public final class FishermanController {
                 navigator.cancel(id);removeBobber(state);hand(state,Material.AIR);
             }
             return true;
-        } catch(RuntimeException | LinkageError error) {return false;}
+        } catch(RuntimeException | LinkageError error) {failures.report(id,error);return false;}
     }
     public boolean resume(String id,long tick) {
         State state=states.get(id);if(state==null || state.boat==null)return false;
@@ -119,10 +129,10 @@ public final class FishermanController {
                 long elapsed=Math.max(0,tick-state.suspendedAt);
                 state.stageStarted+=elapsed;state.travelStarted+=elapsed;state.lastProgress+=elapsed;
                 state.lastTick=state.nextCast=state.nextEffect=tick;state.suspended=false;
-                hand(state,state.stage==Stage.BOAT_FISH?Material.FISHING_ROD:Material.AIR);
+                hand(state,state.stage==Stage.BOAT_FISH && state.routeCandidates==null?Material.FISHING_ROD:Material.AIR);
             }
             return true;
-        } catch(RuntimeException | LinkageError error) {return false;}
+        } catch(RuntimeException | LinkageError error) {failures.report(id,error);return false;}
     }
     private static boolean ownedPassenger(State state) {
         return state.npc.entity().isValid() && !state.npc.entity().isDead() && state.boat!=null && state.boat.isValid()
@@ -142,6 +152,7 @@ public final class FishermanController {
     }
     public String status(String id) {
         State state=states.get(id);if(state==null)return "";
+        if(state.routeCandidates!=null)return "calculando la ruta del bote";
         return switch(state.stage) {
             case SHORE_WALK -> "caminando al punto de pesca";
             case SHORE_FISH -> "pescando en la orilla";
@@ -180,6 +191,12 @@ public final class FishermanController {
                     || npc.entity().getVehicle()!=state.boat || !state.boat.getPassengers().contains(npc.entity())))return fallback(id);
             if(state.boat==null && npc.entity().isInsideVehicle())return fallback(id);
             if(state.suspended)return holdBoat(state)?Result.RUNNING:fallback(id);
+            if(state.routeCandidates!=null) {
+                // Planning can last several updates: keep the same safety checks as standing there.
+                if(state.boat==null?!arrived(npc.position(),state.target) || !supported(npc.position()):!holdBoat(state))
+                    return fallback(id);
+                return planRoute(state,tick)?Result.RUNNING:fallback(id);
+            }
             if(walking(state.stage))return walk(state,speed,tick,cadence);
             if(state.stage==Stage.BOAT_OUT || state.stage==Stage.BOAT_BACK)return sail(state,tick,cadence);
             if(state.stage==Stage.SHORE_FISH) {
@@ -192,11 +209,11 @@ public final class FishermanController {
                 if(state.stage==Stage.SHORE_FISH) {
                     if(!prepareDock(state))return fallback(id);
                     beginWalk(state,Stage.DOCK_WALK,state.dock,tick);
-                } else if(!beginBoatRoute(state,Stage.BOAT_BACK,state.dockWater,tick))return fallback(id);
+                } else if(!beginReturn(state,tick))return fallback(id);
             }
             return Result.RUNNING;
         } catch(RuntimeException | LinkageError error) {
-            stop(id);return Result.FALLBACK;
+            failures.report(id,error);stop(id);return Result.FALLBACK;
         }
     }
     private boolean prepareDock(State state) {
@@ -264,13 +281,38 @@ public final class FishermanController {
             Location requested=point.location(state.dock.getWorld());Location position=water.position(requested);
             if(position!=null && castTarget(position)!=null)candidates.add(position);
         }
-        shuffle(candidates);List<Location> route=List.of();state.boatPoint=null;
+        shuffle(candidates);state.boatPoint=null;
+        if(candidates.isEmpty())return false;
         // Try a small fixed number per cycle instead of multiplying the bounded search by a large configured list.
-        for(Location candidate:candidates.subList(0,Math.min(3,candidates.size()))) {
-            route=water.route(state.dockWater,candidate);
-            if(!route.isEmpty()) {state.boatPoint=candidate;break;}
+        state.routeCandidates=new ArrayDeque<>(candidates.subList(0,Math.min(3,candidates.size())));
+        return planRoute(state,tick);
+    }
+    /** @return false once no candidate has a route; true while searching or once under way */
+    private boolean planRoute(State state,long tick) {
+        if(searchTick!=tick) {searchTick=tick;searchNodesLeft=BOAT_NODES_PER_TICK;}
+        state.travelStarted=state.lastProgress=tick;
+        boolean returning=state.boat!=null;
+        while(true) {
+            if(state.routeSearch==null) {
+                state.routeTarget=state.routeCandidates.poll();
+                if(state.routeTarget==null) {state.routeCandidates=null;return false;}
+                Location from=returning?state.boatPosition:state.dockWater;
+                state.routeSearch=new BoatNavigator(from.getWorld()).search(from,state.routeTarget);
+            }
+            if(!state.routeSearch.done()) {
+                if(searchNodesLeft<=0)return true;
+                searchNodesLeft-=state.routeSearch.advance(searchNodesLeft);
+                if(!state.routeSearch.done())return true;
+            }
+            List<Location> route=state.routeSearch.route();state.routeSearch=null;
+            if(route.isEmpty())continue;
+            state.routeCandidates=null;
+            if(!returning) {state.boatPoint=state.routeTarget;return embark(state,route,tick);}
+            state.stage=Stage.BOAT_BACK;state.boatRoute=route;state.routeIndex=0;state.lastTick=tick;
+            return true;
         }
-        if(state.boatPoint==null)return false;
+    }
+    private boolean embark(State state,List<Location> route,long tick) {
         state.boatPosition=state.dockWater.clone();state.lastTick=tick;
         OakBoat boat=state.dock.getWorld().spawn(state.boatPosition,OakBoat.class,entity->{
             // Register ownership before any callbacks or mount events can observe the boat.
@@ -279,16 +321,16 @@ public final class FishermanController {
         });
         if(boat==null || !boat.isValid())return false;
         state.boat=boat;
+        com.mdvcraft.mdvnpc.runtime.NpcVisibilityService.track(plugin,boat);
         if(!mount.test(state.npc,boat) || state.npc.entity().getVehicle()!=boat)return false;
         state.stage=Stage.BOAT_OUT;state.boatRoute=route;state.routeIndex=0;
         state.travelStarted=tick;state.dock.getWorld().playSound(state.dock,Sound.ENTITY_BOAT_PADDLE_WATER,.35f,1);
         hand(state,Material.AIR);return true;
     }
-    private boolean beginBoatRoute(State state,Stage stage,Location target,long tick) {
-        removeBobber(state);BoatNavigator water=new BoatNavigator(state.boatPosition.getWorld());
-        List<Location> route=water.route(state.boatPosition,target);if(route.isEmpty())return false;
-        state.stage=stage;state.boatRoute=route;state.routeIndex=0;state.travelStarted=state.lastTick=tick;
-        hand(state,Material.AIR);return true;
+    private boolean beginReturn(State state,long tick) {
+        removeBobber(state);hand(state,Material.AIR);
+        state.routeCandidates=new ArrayDeque<>(List.of(state.dockWater));
+        return planRoute(state,tick);
     }
     private Result sail(State state,long tick,int cadence) {
         BoatNavigator water=new BoatNavigator(state.boatPosition.getWorld());
@@ -460,18 +502,18 @@ public final class FishermanController {
     private static boolean sameAngle(float first,float second) {
         return Math.abs(((first-second+540)%360+360)%360-180)<.001;
     }
-    private static void removeBobber(State state) {
-        if(state.bobber!=null)try{state.bobber.remove();}catch(RuntimeException | LinkageError ignored){}
+    private void removeBobber(State state) {
+        if(state.bobber!=null)try{state.bobber.remove();}catch(RuntimeException | LinkageError error){failures.report(state.npc.definition().id(),error);}
         state.bobber=null;
     }
-    private static void removeBoat(State state) {
-        if(state.boat!=null)try{state.boat.remove();}catch(RuntimeException | LinkageError ignored){}
+    private void removeBoat(State state) {
+        if(state.boat!=null)try{state.boat.remove();}catch(RuntimeException | LinkageError error){failures.report(state.npc.definition().id(),error);}
         state.boat=null;state.boatRoute=List.of();
     }
     private Result fallback(String id) {stop(id);return Result.FALLBACK;}
     public void stop(String id) {
         State state=states.get(id);if(state==null)return;
-        try{navigator.cancel(id);}catch(RuntimeException | LinkageError ignored){}
+        try{navigator.cancel(id);}catch(RuntimeException | LinkageError error){failures.report(id,error);}
         removeBobber(state);
         // Retain ownership through exit callbacks; interruptions return the passenger to the configured safe dock.
         try {
@@ -481,7 +523,7 @@ public final class FishermanController {
                 if(!state.npc.entity().isInsideVehicle() && state.npc.entity().isValid() && !state.npc.entity().isDead()
                         && dock!=null && supported(dock))teleport.test(state.npc,dock);
             }
-        } catch(RuntimeException | LinkageError ignored) {}
+        } catch(RuntimeException | LinkageError error){failures.report(id,error);}
         removeBoat(state);states.remove(id,state);
         try {
             if(state.handSaved && state.npc.disguise()!=null) {
@@ -489,21 +531,21 @@ public final class FishermanController {
                 if(state.appliedHand!=null && sameItem(watcher.getItemInMainHand(),state.appliedHand))watcher.setItemInMainHand(copy(state.previousHand));
                 if(state.raisedApplied && !watcher.isMainHandRaised())watcher.setMainHandRaised(state.previousRaised);
             }
-        } catch(RuntimeException | LinkageError ignored) {}
+        } catch(RuntimeException | LinkageError error){failures.report(id,error);}
         try {
             EntityEquipment equipment=state.npc.entity().getEquipment();
             if(state.entityHandSaved && equipment!=null) {
                 if(state.appliedHand!=null && sameItem(equipment.getItemInMainHand(),state.appliedHand))equipment.setItemInMainHand(copy(state.previousEntityHand),true);
                 if(state.dropChanceApplied && equipment.getItemInMainHandDropChance()==0)equipment.setItemInMainHandDropChance(state.previousDropChance);
             }
-        } catch(RuntimeException | LinkageError ignored) {}
+        } catch(RuntimeException | LinkageError error){failures.report(id,error);}
         try {
             if(state.headApplied && state.npc.entity().isValid()) {
                 Location current=state.npc.position();
                 if(sameAngle(current.getYaw(),state.appliedYaw) && Math.abs(current.getPitch())<.001)state.npc.entity().setRotation(state.previousYaw,state.previousPitch);
                 if(sameAngle(state.npc.entity().getBodyYaw(),state.appliedBodyYaw))state.npc.entity().setBodyYaw(state.previousBodyYaw);
             }
-        } catch(RuntimeException | LinkageError ignored) {}
+        } catch(RuntimeException | LinkageError error){failures.report(id,error);}
     }
     public void clear() {for(String id:List.copyOf(states.keySet()))stop(id);}
 }

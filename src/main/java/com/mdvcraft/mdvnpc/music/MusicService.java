@@ -89,18 +89,24 @@ public final class MusicService {
     }
     /** Indexed local lookup for seated spectators; refreshed with the existing session maintenance. */
     public ActiveNpc nearestPerformer(Location from,double radius) {
+        return nearestPerformer(from,radius,null);
+    }
+    /** The nearest performer that {@code accept} takes; it is asked nearest first. */
+    public ActiveNpc nearestPerformer(Location from,double radius,java.util.function.Predicate<ActiveNpc> accept) {
         if(from.getWorld()==null || performers.isEmpty())return null;
         radius=Math.min(audioRadius,Math.max(0,radius));
         Cell center=cell(from);int span=(int)Math.ceil(radius/groupRadius);
-        ActiveNpc nearest=null;double best=radius*radius;
+        List<Map.Entry<ActiveNpc,Double>> found=new ArrayList<>();
         for(int dx=-span;dx<=span;dx++)for(int dz=-span;dz<=span;dz++)
             for(ActiveNpc npc:performers.getOrDefault(new Cell(center.world(),center.x()+dx,center.z()+dz),List.of())) {
                 if(!isPerforming(npc))continue;
                 Location p=npc.position();if(p.getWorld()!=from.getWorld())continue;
                 double distance=from.distanceSquared(p);
-                if(distance<=best){best=distance;nearest=npc;}
+                if(distance<=radius*radius)found.add(Map.entry(npc,distance));
             }
-        return nearest;
+        found.sort(Map.Entry.comparingByValue());
+        for(var entry:found)if(accept==null || accept.test(entry.getKey()))return entry.getKey();
+        return null;
     }
     public boolean isPerforming(ActiveNpc npc) {
         return npc!=null && eligible(npc);
@@ -113,7 +119,7 @@ public final class MusicService {
         if(!npc.entity().isValid())return instrument+": NPC descargado";
         if(!plugin.routines().canInteract(npc))return instrument+": fuera del puesto o del horario de Trabajo";
         if(plugin.traits()!=null && plugin.traits().busy(id))return instrument+": pausa para beber";
-        if(plugin.reactions()!=null && plugin.reactions().busy(id))return instrument+": pausa por un golpe";
+        if(plugin.reactions()!=null && plugin.reactions().busy(id))return instrument+(plugin.reactions().greeting(id)?": pausa para saludar":": pausa por un golpe");
         for(Session session:sessions.values())for(Member member:session.members)if(member.npc==npc) {
             String song=switch(session.song.name()) {
                 case "tourdion" -> "Tourdion";case "jabali" -> "El Jabalí";case "farol" -> "El Farol";
@@ -169,7 +175,9 @@ public final class MusicService {
             }
             for(Member member:session.members) {
                 Location p=positions.get(member.npc.definition().id());
-                member.audience=List.copyOf(p.getWorld().getNearbyPlayers(p,audioRadius));
+                // Players from whom NPC are hidden neither hear the music nor see its notes.
+                member.audience=p.getWorld().getNearbyPlayers(p,audioRadius).stream()
+                        .filter(player->!com.mdvcraft.mdvnpc.runtime.PlayerFilter.hidden(player)).toList();
             }
             next.put(key,session);
         }

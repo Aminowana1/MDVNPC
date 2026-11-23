@@ -94,8 +94,25 @@ class RoutineCommandTest {
         assertEquals(RoutineGoal.Type.WALK,root.choice(2).type());assertEquals(420,root.choice(2).start());assertEquals(1080,root.choice(2).end());assertEquals(20,root.choice(2).points().getFirst().x());
     }
     @Test void deletingAlternativeKeepsPrincipalAndOtherSchedule()throws Exception {
-        var original=rootWithBarOption();commands.editor().openOptions(player,"shop",1);menuClick(1);menuClick(16);
+        var original=rootWithBarOption();commands.editor().openOptions(player,"shop",1);menuClick(1);menuClick(16);menuClick(11);
         var root=service.repository().read().plans().get("shop").goals().getFirst();assertEquals(original.choice(0),root);assertFalse(root.randomChoice());
+    }
+    @Test void deletingAGoalWaitsForConfirmation()throws Exception {
+        var original=rootWithBarOption();commands.editor().openGoal(player,"shop",1);menuClick(16);
+        assertEquals(original,service.repository().read().plans().get("shop").goals().getFirst());
+        menuClick(15);
+        assertEquals(original,service.repository().read().plans().get("shop").goals().getFirst());
+    }
+    @Test void secondHalfOfADoubleClickIsIgnored()throws Exception {
+        var original=rootWithBarOption();commands.editor().openGoal(player,"shop",1);
+        var event=new InventoryClickEvent(player.getOpenInventory(),InventoryType.SlotType.CONTAINER,16,ClickType.DOUBLE_CLICK,InventoryAction.COLLECT_TO_CURSOR);
+        commands.editor().inventory(event);assertTrue(event.isCancelled());menuClick(11);
+        assertEquals(original,service.repository().read().plans().get("shop").goals().getFirst());
+    }
+    @Test void togglingARoutineWritesNothingWhenTheShopCannotBeSaved()throws Exception {
+        rootWithBarOption();var shops=plugin.shops();doThrow(new IllegalStateException("open page")).when(shops).prepareReload();
+        commands.editor().openMain(player,"shop");menuClick(47);
+        assertTrue(service.repository().read().plans().get("shop").enabled());
     }
     @Test void reselectingPrincipalDoesNotEraseRandomOptions()throws Exception {
         var original=rootWithBarOption();commands.beginReselect(player,"shop",original);click(Action.RIGHT_CLICK_BLOCK,4,EquipmentSlot.HAND);

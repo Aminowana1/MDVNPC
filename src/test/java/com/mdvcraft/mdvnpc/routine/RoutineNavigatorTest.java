@@ -286,7 +286,8 @@ class RoutineNavigatorTest {
         Location far = new Location(world, 8.5, 64, 8.5);
         for (int tick = 0; tick <= 14; tick += 2)
             assertNotEquals(RoutineNavigator.Result.ARRIVED, navigator.move(npc, far, 2.4, tick, 2));
-        verify(pathfinders.get("partial"), times(1)).findPath(any(Location.class));
+        // The end of the segment asks for the next one in the same update, without a pause.
+        verify(pathfinders.get("partial"), times(2)).findPath(any(Location.class));
         assertEquals(0, navigator.activeRoutes()); assertEquals(1, navigator.searches());
     }
 

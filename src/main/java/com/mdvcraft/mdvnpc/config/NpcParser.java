@@ -127,8 +127,9 @@ public final class NpcParser {
         if(value!=Math.rint(value))throw new IllegalArgumentException(s.getCurrentPath()+"."+key+" debe ser un bloque entero");
         return (int)value;
     }
+    public static final String ID_PATTERN = "[a-z0-9_-]{1,48}";
     public static void validateId(String id) {
-        if (!id.matches("[a-z0-9_-]{1,48}")) throw new IllegalArgumentException("ID: 1..48 letras minúsculas, números, _ o -");
+        if (!id.matches(ID_PATTERN)) throw new IllegalArgumentException("ID: 1..48 letras minúsculas, números, _ o -");
     }
     private static UUID uuid(String value) { return value.isBlank() ? null : UUID.fromString(value); }
     private static double number(ConfigurationSection s, String key, double fallback, double min, double max) {

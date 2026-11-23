@@ -166,6 +166,58 @@ class FishermanControllerTest {
         }
     }
 
+    @Test void unreachableBoatPointIsSearchedOverSeveralUpdates() {
+        // A full search reads millions of blocks, so these mocks must not record their invocations.
+        var reads=new java.util.concurrent.atomic.AtomicLong();
+        world=mock(World.class,withSettings().stubOnly());
+        when(world.getUID()).thenReturn(UUID.randomUUID());when(world.getName()).thenReturn("world");
+        when(world.getMinHeight()).thenReturn(-64);when(world.getMaxHeight()).thenReturn(320);
+        when(world.isChunkLoaded(anyInt(),anyInt())).thenReturn(true);
+        Block stone=unrecorded(Material.STONE),water=unrecorded(Material.WATER),air=unrecorded(Material.AIR);
+        when(world.getBlockAt(anyInt(),anyInt(),anyInt())).thenAnswer(call->{
+            reads.incrementAndGet();
+            int x=call.getArgument(0),y=call.getArgument(1),z=call.getArgument(2);
+            int ring=Math.max(Math.abs(x-30),Math.abs(z));
+            if(ring>=7 && ring<=9 && (y==63 || y==64))return stone;
+            return y!=63?air:x>=1?water:stone;
+        });
+        when(entity.getWorld()).thenReturn(world);
+        workPost=new Location(world,-8.5,64,.5,20,5);position.set(workPost.clone());
+        var work=new ShopWorkDefinition(ShopWorkDefinition.Category.FISHERMAN,null,null,null,
+                new FishingDefinition(List.of(point(-1.5,.5,-90)),point(-.5,.5,-90),List.of(point(30.5,.5,0))));
+        npc=new ActiveNpc(definition(npc.definition(),work),workPost.clone(),entity,npc.disguise());
+        config.set("fisherman.shore-seconds",1);
+        long time=0,total=0,worst=0;int planning=0;
+        FishermanController.Result result=tick(time);
+        while(result==FishermanController.Result.RUNNING && time<500) {
+            reads.set(0);
+            result=tick(++time);
+            worst=Math.max(worst,reads.get());total+=reads.get();
+            if(controller.status("fisher").equals("calculando la ruta del bote"))planning++;
+        }
+        assertEquals(FishermanController.Result.FALLBACK,result);assertTrue(boats.isEmpty());
+        assertTrue(planning>1,"the search must span several updates; worst update read "+worst+" of "+total+" blocks");
+        assertTrue(worst*10<total,worst+" of "+total+" block reads happened in one update");
+    }
+    private static Block unrecorded(Material material) {
+        Block block=mock(Block.class,withSettings().stubOnly());when(block.getType()).thenReturn(material);
+        VoxelShape shape=mock(VoxelShape.class,withSettings().stubOnly());
+        when(shape.getBoundingBoxes()).thenReturn(material==Material.STONE?List.of(new BoundingBox(0,0,0,1,1,1)):List.of());
+        when(block.getCollisionShape()).thenReturn(shape);
+        if(material==Material.WATER) {Levelled level=mock(Levelled.class,withSettings().stubOnly());when(block.getBlockData()).thenReturn(level);}
+        return block;
+    }
+    @Test void repeatedWorkFailureIsLoggedOnce() {
+        var logger=mock(java.util.logging.Logger.class);when(plugin.getLogger()).thenReturn(logger);
+        doThrow(new IllegalStateException("broken")).when(navigator).move(any(),any(),anyDouble(),anyLong(),anyInt());
+        for(long time=0;time<3;time++)assertEquals(FishermanController.Result.FALLBACK,tick(time));
+        verify(logger,times(1)).log(eq(java.util.logging.Level.WARNING),anyString(),any(Throwable.class));
+    }
+    @Test void bobberFailureReachesTheControllerInsteadOfBeingSwallowed() {
+        when(entity.getTrackedBy()).thenThrow(new IllegalStateException("packets"));
+        var bobber=new VanillaFishingBobber(npc,workPost);
+        assertThrows(IllegalStateException.class,()->bobber.move(workPost));
+    }
     @Test void startsOnlyAfterReachingOrdinaryWorkPost() {
         position.set(workPost.clone().add(1,0,0));assertEquals(FishermanController.Result.FALLBACK,tick(0));
         assertFalse(controller.active("fisher"));verifyNoInteractions(navigator);

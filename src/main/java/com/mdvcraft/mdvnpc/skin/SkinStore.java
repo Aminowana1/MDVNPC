@@ -3,6 +3,7 @@ package com.mdvcraft.mdvnpc.skin;
 import com.mdvcraft.mdvnpc.config.NpcParser;
 import com.mdvcraft.mdvnpc.model.NpcDefinition.Skin;
 import com.mdvcraft.mdvnpc.storage.AtomicFile;
+import com.mdvcraft.mdvnpc.storage.NpcFolders;
 import com.mdvcraft.mdvnpc.storage.NpcPaths;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -15,19 +16,24 @@ public final class SkinStore {
     private final Path npcRoot;
     private final Map<String, Skin> skins = new LinkedHashMap<>();
     public SkinStore(Path folder) { this.folder=folder; this.npcRoot=NpcPaths.root(folder); }
+    private List<String> problems = List.of();
+    /** Cache files skipped by the last load. They are regenerated, never fatal. */
+    public List<String> problems() { return problems; }
     public void load() throws Exception {
-        Files.createDirectories(npcRoot); migrateLegacy();
+        Files.createDirectories(npcRoot);
+        Exception legacyFailure=null;
+        try { migrateLegacy(); } catch(Exception ex) { legacyFailure=ex; }
         Map<String,Skin> parsed=new LinkedHashMap<>();
-        try(var dirs=Files.list(npcRoot)) {
-            for(Path dir:dirs.filter(Files::isDirectory).sorted().toList()) {
-                String id=dir.getFileName().toString(); NpcParser.validateId(id); Path file=dir.resolve("skin-cache.yml"); if(!Files.exists(file)) continue;
-                YamlConfiguration yaml=new YamlConfiguration(); yaml.loadFromString(Files.readString(file));
-                var root=yaml.getConfigurationSection("skins"); if(root==null) throw new IllegalArgumentException("Falta skins: {} en "+file);
-                var s=root.getConfigurationSection(id); if(s==null || root.getKeys(false).size()!=1) throw new IllegalArgumentException(file+" debe contener solo skins."+id);
-                Skin skin=parseSkin(s,id); parsed.put(id,skin);
-            }
-        }
+        var damaged=NpcFolders.readEach(npcRoot,"skin-cache.yml",(id,file)->{
+            YamlConfiguration yaml=new YamlConfiguration(); yaml.loadFromString(Files.readString(file));
+            var root=yaml.getConfigurationSection("skins"); if(root==null) throw new IllegalArgumentException("Falta skins: {} en "+file);
+            var s=root.getConfigurationSection(id); if(s==null || root.getKeys(false).size()!=1) throw new IllegalArgumentException(file+" debe contener solo skins."+id);
+            parsed.put(id,parseSkin(s,id));
+        });
+        problems=List.copyOf(damaged.values());
         skins.clear(); skins.putAll(parsed);
+        // The per-NPC caches above are usable even when the old global file is not.
+        if(legacyFailure!=null) throw legacyFailure;
     }
     private static Skin parseSkin(ConfigurationSection s,String id) {
         Skin skin=new Skin(s.getString("name",""),s.getString("texture",""),s.getString("signature",""),UUID.fromString(s.getString("uuid","")));
@@ -64,7 +70,7 @@ public final class SkinStore {
         }
         if(Files.isDirectory(npcRoot)) try(var dirs=Files.list(npcRoot)) {
             for(Path dir:dirs.filter(Files::isDirectory).toList()) {
-                String id=dir.getFileName().toString(); if(ids.contains(id)) continue;
+                String id=dir.getFileName().toString(); if(ids.contains(id) || !id.matches(NpcParser.ID_PATTERN)) continue;
                 Files.deleteIfExists(dir.resolve("skin-cache.yml")); NpcPaths.cleanupIfEmpty(folder,id);
             }
         }

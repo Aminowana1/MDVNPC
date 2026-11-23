@@ -44,6 +44,7 @@ class NetheriteNavigationTest {
     private Location position;
     private long tick;
     private boolean elevated;
+    private double speed = 4;
 
     @BeforeEach void setup() {
         MockBukkit.mock();
@@ -68,6 +69,7 @@ class NetheriteNavigationTest {
         when(chunk.getX()).thenReturn(0);
         when(chunk.getZ()).thenReturn(0);
         when(chunk.getChunkSnapshot()).thenReturn(snapshot);
+        when(snapshot.getHighestBlockYAt(anyInt(), anyInt())).thenReturn(71);
         when(chunk.getChunkSnapshot(anyBoolean(), anyBoolean(), anyBoolean())).thenReturn(snapshot);
         when(world.getChunkAt(anyInt(), anyInt())).thenAnswer(call -> {
             assertEquals(0, (int) call.getArgument(0), "must not load another chunk");
@@ -152,9 +154,9 @@ class NetheriteNavigationTest {
     private RoutineNavigator.Result step(Location goal) {
         Location before = position.clone();
         navigator.beginTick(tick, 2, Long.MAX_VALUE);
-        RoutineNavigator.Result result = navigator.move(npc, goal, 4, tick, 2);
+        RoutineNavigator.Result result = navigator.move(npc, goal, speed, tick, 2);
         tick += 2;
-        assertTrue(before.distance(position) <= .400001, "marker routes obey the same walking speed");
+        assertTrue(before.distance(position) <= speed / 10 + .000001, "marker routes obey the same walking speed");
         if (result == RoutineNavigator.Result.ARRIVED) {
             assertTrue(position.distance(goal) <= .150001, "intermediate markers are not final arrival");
             assertEquals(goal.getY(), position.getY(), .0001, "arrival preserves the destination floor");
@@ -168,7 +170,15 @@ class NetheriteNavigationTest {
     }
 
     private boolean visited(Location point) {
-        return visited.stream().anyMatch(p -> p.distance(point) <= .16);
+        // A step spends all its allowance, so it may pass a waypoint instead of ending on it.
+        for (int i = 1; i < visited.size(); i++) {
+            Location from = visited.get(i - 1);
+            var segment = visited.get(i).toVector().subtract(from.toVector());
+            double along = segment.lengthSquared() == 0 ? 0 : Math.max(0, Math.min(1,
+                    point.toVector().subtract(from.toVector()).dot(segment) / segment.lengthSquared()));
+            if (from.toVector().add(segment.multiply(along)).distance(point.toVector()) <= .16) return true;
+        }
+        return false;
     }
 
     @Test void hiddenMarkersGuideTheTripBeforeNativeFallbackAndOnlyFinalGoalCountsAsArrival() {
@@ -217,6 +227,33 @@ class NetheriteNavigationTest {
         assertTrue(visited(at(9, 66, 3)), "a second legal climb reaches the top marker");
         assertEquals(66, position.getY(), .0001);
         verify(finder, never()).findPath(any(Location.class));
+    }
+
+    @Test void nodeRoutesUseTheConfiguredClimb() {
+        navigator.configureHeights(2, 2.3, 2.3);
+        configure(8, 6, 8192);
+        for (int x = 6; x < 16; x++) for (int z = 0; z < 16; z++) for (int y = 64; y <= 65; y++)
+            overrides.put(new Cell(x, y, z), Material.STONE);
+        marker(3, 62, 5);
+        marker(8, 64, 5);
+        walk(at(10, 66, 2));
+        assertTrue(visited(at(8, 66, 5)), "a two-block climb allowed by the configuration joins the markers");
+        verify(finder, never()).findPath(any(Location.class));
+    }
+
+    @Test void climbingDoesNotHangOnTheLastFloatingPointBit() {
+        for (double blocksPerSecond : new double[]{2, 2.6, 3.4, 4, 4.2, 5, 5.8, 7.6}) {
+            cleanup(); overrides.clear(); blocks.clear(); visited.clear(); tick = 0; setup();
+            speed = blocksPerSecond;
+            navigator.configureHeights(2, 2.3, 2.3);
+            configure(8, 6, 8192);
+            for (int x = 6; x < 16; x++) for (int z = 0; z < 16; z++) for (int y = 64; y <= 65; y++)
+                overrides.put(new Cell(x, y, z), Material.STONE);
+            marker(3, 62, 5);
+            marker(8, 64, 5);
+            walk(at(10, 66, 2));
+            verify(finder, never()).findPath(any(Location.class));
+        }
     }
 
     @Test void absentMarkersFinishABoundedScanThenUseTheExistingNativeNavigator() {

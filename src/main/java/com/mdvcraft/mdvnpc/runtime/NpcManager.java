@@ -36,12 +36,18 @@ public final class NpcManager {
     private final DialogueService dialogue;
     private final InteractionService interactions;
 
+    // Spawning retries every 30 s; the same failure is logged once until it changes or NPC reload.
+    private final Map<String, String> spawnFailures = new HashMap<>();
+
     public NpcManager(MdvNpcPlugin plugin) {
+        this(plugin, new InteractionService(plugin.messages(), plugin.getLogger()));
+    }
+    public NpcManager(MdvNpcPlugin plugin, InteractionService interactions) {
         this.plugin = plugin;
+        this.interactions = interactions;
         dialogue = new DialogueService(plugin.sounds());
         marker = new NamespacedKey(plugin, "npc-id");
         legacyNameMarker = new NamespacedKey(plugin, "npc-name");
-        interactions = new InteractionService(plugin.messages(), plugin.getLogger());
     }
     public void start(Map<String, NpcDefinition> definitions) {
         this.definitions = definitions;
@@ -59,7 +65,7 @@ public final class NpcManager {
         if (ticker != null) { ticker.cancel(); ticker = null; }
         for (ActiveNpc npc : List.copyOf(active.values())) remove(npc);
         active.clear(); byEntity.clear(); spawning.clear(); spawnOutcomes.clear(); byChunk.clear(); pending.clear();
-        dialogue.clear(); interactions.clear(); spawnRetry.clear();
+        dialogue.clear(); interactions.resetEvents(); spawnRetry.clear(); spawnFailures.clear();
     }
     private void indexWorlds() {
         byChunk.clear();
@@ -113,7 +119,8 @@ public final class NpcManager {
         if (now < spawnRetry.getOrDefault(definition.id(), 0L)) return;
         spawnRetry.put(definition.id(), now + 30_000_000_000L);
         if (p.y() < world.getMinHeight() || p.y() >= world.getMaxHeight()) {
-            plugin.getLogger().warning("NPC " + definition.id() + ": altura fuera de los límites del mundo.");
+            if (newFailure(definition.id(), "height"))
+                plugin.getLogger().warning("NPC " + definition.id() + ": altura fuera de los límites del mundo.");
             return;
         }
         Villager entity = null;
@@ -150,18 +157,23 @@ public final class NpcManager {
             ActiveNpc npc = new ActiveNpc(definition, anchor, entity, disguise);
             active.put(definition.id(), npc);
             byEntity.put(entity.getUniqueId(), npc);
-            spawnRetry.remove(definition.id());
+            NpcVisibilityService.track(plugin, entity);
+            spawnRetry.remove(definition.id()); spawnFailures.remove(definition.id());
         } catch (RuntimeException | LinkageError ex) {
             if (entity != null) entity.remove();
-            plugin.getLogger().log(Level.SEVERE, "No se pudo crear NPC " + definition.id() + " en "
+            if (newFailure(definition.id(), ex.getClass().getName() + ": " + ex.getMessage()))
+                plugin.getLogger().log(Level.SEVERE, "No se pudo crear NPC " + definition.id() + " en "
                     + world.getName() + " [" + p.x() + ", " + p.y() + ", " + p.z() + "] al "
-                    + stage + ". /mdvnpc reload solo reintentará la aparición.", ex);
+                    + stage + ". Se reintentará cada 30 s; no se repetirá este aviso mientras el error sea el mismo.", ex);
         } finally {
             if (spawningId[0] != null) {
                 spawning.remove(spawningId[0]);
                 spawnOutcomes.remove(spawningId[0]);
             }
         }
+    }
+    private boolean newFailure(String id, String reason) {
+        return !reason.equals(spawnFailures.put(id, reason));
     }
     private void remove(ActiveNpc npc) {
         if(plugin.music()!=null)plugin.music().remove(npc.definition().id());
@@ -223,7 +235,7 @@ public final class NpcManager {
         if ((!checkLook && !checkDialogue) || Bukkit.getOnlinePlayers().isEmpty()) return;
         if (tickCounter >= nextRespawn) {
             nextRespawn = tickCounter + 40;
-            for (var definition : definitions.values()) if (definition.enabled() && plugin.routines().enabled(definition.id()) && !active.containsKey(definition.id())) {
+            for (var definition : definitions.values()) if (definition.enabled() && !active.containsKey(definition.id())) {
                 World world = resolveWorld(definition); if (world != null) spawn(definition, world);
             }
         }

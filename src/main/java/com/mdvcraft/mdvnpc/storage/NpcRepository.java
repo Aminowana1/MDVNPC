@@ -19,6 +19,10 @@ public final class NpcRepository {
         this.npcRoot = NpcPaths.root(directory);
     }
     public record Snapshot(Settings settings, Map<String, NpcDefinition> npcs) {}
+    private Map<String, NpcDefinition> lastGood = Map.of();
+    private List<String> problems = List.of();
+    /** NPC files skipped by the last load; those NPC keep their last valid definition. */
+    public List<String> problems() { return problems; }
 
     public Snapshot load() throws Exception {
         Files.createDirectories(npcRoot);
@@ -30,9 +34,17 @@ public final class NpcRepository {
     public void edit(Consumer<YamlConfiguration> edit) throws Exception {
         Files.createDirectories(npcRoot);
         migrateLegacy();
-        YamlConfiguration aggregate = aggregate();
+        YamlConfiguration aggregate = new YamlConfiguration();
+        aggregate.createSection("npcs");
+        Map<String, String> damaged = NpcFolders.readEach(npcRoot, "npc.yml", (id, file) -> {
+            YamlConfiguration local = readRequired(file);
+            parseOne(local, id, file);
+            copy(local.getConfigurationSection("npcs." + id), aggregate, "npcs." + id);
+        });
         Map<String, NpcDefinition> before = NpcParser.parse(aggregate);
+        NpcFolders.hold(aggregate, damaged);
         edit.accept(aggregate);
+        NpcFolders.release(aggregate, damaged);
         Map<String, NpcDefinition> parsed = NpcParser.parse(aggregate); // validate before touching disk
         for (var entry : parsed.entrySet()) {
             if (!Objects.equals(before.get(entry.getKey()), entry.getValue())) writeDefinition(aggregate, entry.getKey());
@@ -45,39 +57,19 @@ public final class NpcRepository {
 
     private Map<String, NpcDefinition> loadDefinitions() throws Exception {
         Map<String, NpcDefinition> all = new LinkedHashMap<>();
-        if (!Files.isDirectory(npcRoot)) return all;
-        try (var dirs = Files.list(npcRoot)) {
-            for (Path folder : dirs.filter(Files::isDirectory).sorted().toList()) {
-                String id = folder.getFileName().toString();
-                NpcParser.validateId(id);
-                Path file = folder.resolve("npc.yml");
-                if (!Files.exists(file)) continue;
-                YamlConfiguration yaml = readRequired(file);
-                Map<String, NpcDefinition> parsed = NpcParser.parse(yaml);
-                if (parsed.size() != 1 || !parsed.containsKey(id))
-                    throw new IllegalArgumentException(file + " debe contener únicamente npcs." + id);
-                if (all.put(id, parsed.get(id)) != null) throw new IllegalArgumentException("NPC duplicado: " + id);
-            }
-        }
+        Map<String, String> damaged = NpcFolders.readEach(npcRoot, "npc.yml",
+                (id, file) -> all.put(id, parseOne(readRequired(file), id, file)));
+        for (String id : damaged.keySet()) if (lastGood.containsKey(id)) all.put(id, lastGood.get(id));
+        problems = List.copyOf(damaged.values());
+        lastGood = new LinkedHashMap<>(all);
         return all;
     }
 
-    private YamlConfiguration aggregate() throws Exception {
-        YamlConfiguration aggregate = new YamlConfiguration();
-        aggregate.createSection("npcs");
-        if (!Files.isDirectory(npcRoot)) return aggregate;
-        try (var dirs = Files.list(npcRoot)) {
-            for (Path folder : dirs.filter(Files::isDirectory).sorted().toList()) {
-                String id = folder.getFileName().toString();
-                Path file = folder.resolve("npc.yml");
-                if (!Files.exists(file)) continue;
-                YamlConfiguration local = readRequired(file);
-                ConfigurationSection section = local.getConfigurationSection("npcs." + id);
-                if (section == null) throw new IllegalArgumentException("Falta npcs." + id + " en " + file);
-                copy(section, aggregate, "npcs." + id);
-            }
-        }
-        return aggregate;
+    private static NpcDefinition parseOne(YamlConfiguration yaml, String id, Path file) {
+        Map<String, NpcDefinition> parsed = NpcParser.parse(yaml);
+        if (parsed.size() != 1 || !parsed.containsKey(id))
+            throw new IllegalArgumentException(file + " debe contener únicamente npcs." + id);
+        return parsed.get(id);
     }
 
     private void writeDefinition(YamlConfiguration aggregate, String id) throws Exception {
